@@ -50,6 +50,8 @@ Edit the paths in the config file accordingly:
 
 in `configs/examples/config_example_basic.json`.
 
+For the moment, the blender file and hdri assets are under this [folder](https://gtvault-my.sharepoint.com/:f:/g/personal/ivelentzas3_gatech_edu/IgDCVzfY6FrUR6kv23ktq4BrAWC0mL0DFF9N7xTztAOlTUo?e=Op9Eki)
+
 ### 3) Generate a reference trajectory file
 
 SISIFOS expects a reference trajectory text file containing the target pose, camera pose, and sun angles per frame.
