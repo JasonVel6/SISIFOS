@@ -56,7 +56,7 @@ if [ ! -d "$BLENDER_DIR" ]; then
     update_progress "Blender not found. Downloading..."
     
     cd "$SCRIPT_DIR" || return
-    curl -L -o "$DOWNLOAD_FILE" "$BLENDER_URL" --silent --show-error
+    curl -L -o "$DOWNLOAD_FILE" "$BLENDER_URL" --show-error
 
     update_progress "Extracting Blender..."
     
@@ -86,7 +86,7 @@ fi
 # Python Setup
 
 # Assign Blender Python executable
-BLENDER_PYTHON="$BLENDER_PYTHON_BIN_DIR/python"
+BLENDER_PYTHON="$BLENDER_PYTHON_BIN_DIR/python3.11"
 
 if [ ! -f "$BLENDER_PYTHON" ]; then
     echo ""
