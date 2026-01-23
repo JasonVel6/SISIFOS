@@ -15,6 +15,7 @@ __pycache__/
 
 # Blender
 *blend
+renders/
 
 # Environment
 env/Blender_*/
