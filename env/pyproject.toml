@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sisifos"
+version = "0.1.0"
+description = "Specialized Illumination Simulator For Orbiting Spacecraft"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = []
