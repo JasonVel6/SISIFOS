@@ -11,16 +11,37 @@ function Update-Progress ($Message) {
     Write-Host -NoNewline ("`r{0,-60}" -f "[SISIFOS] $Message")
 }
 
-if (-not (Test-Path $BlenderPython)) {
-    Write-Host "[SISIFOS] Error: Blender Python not found." -ForegroundColor Red
-    exit 1
-}
-
 try {
+    # Check for Blender Installation
+    if (-not (Test-Path $BlenderDir)) {
+        $BlenderUrl = "https://ftp.halifax.rwth-aachen.de/blender/release/Blender4.5/blender-4.5.6-windows-x64.zip"
+        $ZipPath = Join-Path $ScriptDir "blender.zip"
+        $ExtractedFolderName = "blender-4.5.6-windows-x64"
+        $ExtractedPath = Join-Path $ScriptDir $ExtractedFolderName
+
+        Update-Progress "Blender not found. Downloading ..."
+        Invoke-WebRequest -Uri $BlenderUrl -OutFile $ZipPath
+
+        Update-Progress "Extracting Blender..."
+        Expand-Archive -Path $ZipPath -DestinationPath $ScriptDir -Force
+
+        # Rename to the folder name expected by the rest of the script
+        Rename-Item -Path $ExtractedPath -NewName "Blender_4.5"
+
+        # Cleanup
+        if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
+    }
+
+    # Check for Python Executable
+    if (-not (Test-Path $BlenderPython)) {
+        throw "Blender Python not found at $BlenderPython"
+    }
+
+    # Setup Python Environment
     Update-Progress "Bootstrapping pip..."
     & $BlenderPython -m ensurepip --upgrade *>$null
     
-    Update-Progress "Upgrading build tools (pip, uv, wheel)..."
+    Update-Progress "Upgrading build tools ..."
     & $BlenderPython -m pip install --upgrade pip setuptools wheel uv -q *>$null
     
     $UvReqFile = Join-Path $env:TEMP "sisifos-uv-req.txt"
@@ -92,11 +113,11 @@ try {
     
     # Clear the progress line before the final message
     Write-Host -NoNewline ("`r" + (" " * 60) + "`r")
-    Write-Host "[SISIFOS] Environment activated successfully." -ForegroundColor Green
+    Write-Host "SISIFOS Environment activated successfully." -ForegroundColor Green
     exit 0
 } catch {
     # Clear the progress line so the error shows cleanly
     Write-Host -NoNewline ("`r" + (" " * 60) + "`r")
-    Write-Host "[SISIFOS] Setup failed: $_" -ForegroundColor Red
+    Write-Host "SISIFOS Setup failed: $_" -ForegroundColor Red
     exit 1
 }
