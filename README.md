@@ -8,32 +8,40 @@ This project is an independent research tool and is **not affiliated with, endor
 
 ## Quick start
 
-### 1) Install Blender
+### 1) Setup Environment 
 
-We recommend installing **Blender 4.5 LTS** (tested with **4.5.3 LTS**). If an NVIDIA GPU is available, enable **OptiX** in Blender preferences for faster Cycles rendering.
+#### Windows
 
-Blender uses its **own Python**. Various functionalities of the simulator require python packages that need to be accessible by Blender's python.
+Run the setup script from the `SISIFOS` directory:
 
-Run:
-
-```bash
-blender -b --python-expr "import sys; print(sys.executable)"
+```powershell
+.\env\activate.ps1
 ```
 
-This prints the path to Blender’s Python executable. Use that Python to run pip:
-
+#### MacOS & Linux
 ```bash
-<BLENDER_PYTHON> -m ensurepip --upgrade
-<BLENDER_PYTHON> -m pip install --upgrade pip
-<BLENDER_PYTHON> -m pip install -r requirements-blender.txt
+source env/activate.sh
 ```
 
-Notes:
+This script will:
+- Automatically download and extract **Blender 4.5.6** (if not already present)
+- Bootstrap and configure Blender's Python environment
+- Install all required dependencies using `uv`
+- Set up environment variables (`blender`, `python`)
+- Provide a `deactivate` command to clean up the environment
 
-- On Linux/macOS, `<BLENDER_PYTHON>` is usually inside the Blender install directory.
-- On Windows, it is under `Blender\<version>\python\bin\python.exe`.
+**Notes:**
+- This script requires PowerShell 5.0+
+- If you already have Blender 4.5 installed elsewhere, you can skip the auto-download by placing it in `env/Blender_4.5/`
+- If an NVIDIA GPU is available, enable **OptiX** in Blender preferences for faster Cycles rendering
 
-### 2) Download yout assets
+To deactivate the environment later:
+
+```powershell
+deactivate
+```
+
+### 2) Download your assets
 
 As of this moment, this repo does **not** ship ThirdParty Software, meaning ESA/NASA models. The user needs to bring their own spacecraft model as a blend file:
 
@@ -42,17 +50,19 @@ assets/
   spacecraft_models.blend
 ```
 
+### 3) Configure your scene
+
 Edit the paths in the config file accordingly:
 
 - `scene_blend_path`
 - `hdri_path`
-- each object’s `blend_path`
+- each object's `blend_path`
 
 in `configs/examples/config_example_basic.json`.
 
 For the moment, the blender file and hdri assets are under this [folder](https://gtvault-my.sharepoint.com/:f:/g/personal/ivelentzas3_gatech_edu/IgDCVzfY6FrUR6kv23ktq4BrAWC0mL0DFF9N7xTztAOlTUo?e=Op9Eki)
 
-### 3) Generate a reference trajectory file
+### 4) Generate a reference trajectory file
 
 SISIFOS expects a reference trajectory text file containing the target pose, camera pose, and sun angles per frame.
 
@@ -76,12 +86,12 @@ Where:
 
 - Earth / clouds / atmosphere stay at inertial origin (0,0,0) with fixed orientation.
 
-### 4) Run inside Blender
+### 5) Run the simulator
 
-From the root of the repo:
+After activating the environment, run the simulator from the root of the repo:
 
-```bash
-blender -b -P main.py --config configs/examples/config_example_basic.json
+```powershell
+blender -b -P main.py -- configs/examples/config_example_basic.json
 ```
 
 Outputs, unless modified in the code, go to:
@@ -90,7 +100,7 @@ Outputs, unless modified in the code, go to:
 renders/<timestamp>/
 ```
 
-### 4) Enable GT exports (optional)
+### 6) Enable GT exports (optional)
 
 If you have the [Vision Add-On](https://github.com/Cartucho/vision_blender)
 , enable it and run:
