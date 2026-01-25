@@ -15,18 +15,18 @@ __pycache__/
 *.zip
 
 # Blender
-*blend
+*.blend
+*.blend1
 renders/
 
 # Environment
 env/Blender_*/
 env/*.egg-info/
 
-
 # UV cache
 .uv_cache/
 
-# Large media files (keep starmap assets)
+# Large media files
 *.exr
 
 # OS
