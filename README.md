@@ -8,59 +8,79 @@ This project is an independent research tool and is **not affiliated with, endor
 
 ## Quick start
 
-### 1) Setup Environment 
+### 1) Setup & Activate Environment
+
+The project uses a two-step process: **Setup** (one-time installation) and **Activation** (per session).
 
 #### Windows
 
-Run the setup script from the `SISIFOS` directory:
+**First-time Setup:**
+Downloads Blender, the Starmap asset, and installs dependencies.
+```powershell
+.\env\Setup.ps1
+```
+
+**Activate Environment:**
+Run this whenever you start a new session. It will automatically sync dependencies if the lockfile changes.
 
 ```powershell
-.\env\activate.ps1
+.\env\Activate.ps1
 ```
 
 #### MacOS & Linux
+
+**First-time Setup:**
+Downloads Blender, the Starmap asset, and installs dependencies.
+
 ```bash
-source env/activate.sh
+source ./env/setup.sh
 ```
 
-This script will:
-- Automatically download and extract **Blender 4.5.6** (if not already present)
-- Bootstrap and configure Blender's Python environment
-- Install all required dependencies using `uv`
-- Set up environment variables (`blender`, `python`)
-- Provide a `deactivate` command to clean up the environment
+**Activate Environment:**
+Run this whenever you start a new session.
 
-**Notes:**
-- This script requires PowerShell 5.0+
-- If you already have Blender 4.5 installed elsewhere, you can skip the auto-download by placing it in `env/Blender_4.5/`
-- If an NVIDIA GPU is available, enable **OptiX** in Blender preferences for faster Cycles rendering
+```bash
+source ./env/activate.sh
+```
 
-To deactivate the environment later:
+---
 
-```powershell
+**What happens under the hood?**
+
+1. **Setup:** Downloads **Blender 4.5.6**, the **NASA Starmap (16k)**, bootstraps the Python environment, and installs dependencies via `uv`.
+2. **Activation:** Adds the bundled Blender and Python to your `PATH` and sets required environment variables.
+
+**To deactivate:**
+Simply run:
+
+```bash
 deactivate
 ```
 
-### 2) Download your assets
+### 2) Prepare your assets
 
-As of this moment, this repo does **not** ship ThirdParty Software, meaning ESA/NASA models. The user needs to bring their own spacecraft model as a blend file:
+The **Setup** script automatically downloads the required starmap to `assets/starmap_2020_16k.exr`.
 
-```
+However, this repo does **not** ship with spacecraft models (e.g., ESA/NASA models). You must provide your own spacecraft model as a `.blend` file:
+
+1. Place your model in the `assets/` folder (e.g., `assets/spacecraft_models.blend`).
+2. Ensure the file structure looks like this:
+```text
 assets/
-  spacecraft_models.blend
+├── starmap_2020_16k.exr  (Downloaded by Setup)
+└── spacecraft_models.blend (Provided by you)
+
 ```
+
+
 
 ### 3) Configure your scene
 
-Edit the paths in the config file accordingly:
+Edit the config file `configs/examples/config_example_basic.json` to match your filenames:
 
-- `scene_blend_path`
-- `hdri_path`
-- each object's `blend_path`
-
-in `configs/examples/config_example_basic.json`.
-
-For the moment, the blender file and hdri assets are under this [folder](https://gtvault-my.sharepoint.com/:f:/g/personal/ivelentzas3_gatech_edu/IgDCVzfY6FrUR6kv23ktq4BrAWC0mL0DFF9N7xTztAOlTUo?e=Op9Eki)
+* `scene_blend_path`
+* `hdri_path` (should point to `assets/starmap_2020_16k.exr` or your own starmap)
+* Each object's `blend_path`
 
 ### 4) Generate a reference trajectory file
 
@@ -74,17 +94,12 @@ p_G_I(x) p_G_I(y) p_G_I(z)   q_I_G(w) q_I_G(x) q_I_G(y) q_I_G(z)   p_C_I(x) p_C_
 
 Where:
 
-- p_G_I = position of target (G) in inertial frame (I) at radius R_LEO
-
-- q_I_G = orientation of target frame (G) relative to inertial (I), quaternion wxyz
-
-- p_C_I = position of camera (C) in inertial frame (I) at radius (R_LEO + R_RPO)
-
-- q_I_C = orientation of camera frame (C) relative to inertial (I), quaternion wxyz
-
-- sun_az, sun_el = sun azimuth/elevation (recommended: degrees, document your choice and keep it consistent)
-
-- Earth / clouds / atmosphere stay at inertial origin (0,0,0) with fixed orientation.
+* p_G_I = position of target (G) in inertial frame (I) at radius R_LEO
+* q_I_G = orientation of target frame (G) relative to inertial (I), quaternion wxyz
+* p_C_I = position of camera (C) in inertial frame (I) at radius (R_LEO + R_RPO)
+* q_I_C = orientation of camera frame (C) relative to inertial (I), quaternion wxyz
+* sun_az, sun_el = sun azimuth/elevation (recommended: degrees, document your choice and keep it consistent)
+* Earth / clouds / atmosphere stay at inertial origin (0,0,0) with fixed orientation.
 
 ### 5) Run the simulator
 
