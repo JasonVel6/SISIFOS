@@ -1,5 +1,6 @@
 # SISIFOS Environment Activation Script
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+$ProjectRoot = Resolve-Path (Join-Path $ScriptDir "..")
 
 $BlenderDir = Join-Path $ScriptDir "Blender_4.5"
 $BlenderPythonDir = Join-Path $BlenderDir "4.5\python\bin"
@@ -13,6 +14,21 @@ if (-not (Test-Path $BlenderPython)) {
     return
 }
 
+# Auto-sync dependencies if lock file or pyproject.toml changed
+$LockFile = Join-Path $ProjectRoot "uv.lock"
+$PyprojectFile = Join-Path $ProjectRoot "pyproject.toml"
+
+if ((Test-Path $LockFile) -and (Test-Path $PyprojectFile)) {
+    Write-Host "[SISIFOS] Syncing dependencies..." -ForegroundColor Cyan
+    & $BlenderPython -m uv sync --no-editable -q *>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[SISIFOS] Warning: Failed to sync dependencies. Run '.\env\Setup.ps1' to fix." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "[SISIFOS] Dependencies synced." -ForegroundColor Green
+    }
+}
+
 # 1. Environment Variables
 $env:SISIFOS_OLD_PATH = $env:PATH
 
@@ -20,7 +36,8 @@ $env:SISIFOS_OLD_PATH = $env:PATH
 if (-not (Test-Path variable:SISIFOS_OLD_PROMPT)) {
     if (Test-Path variable:Global:__VSCodeState) {
         Set-Variable -Name SISIFOS_OLD_PROMPT -Value $Global:__VSCodeState.OriginalPrompt -Scope Global
-    } else {
+    }
+    else {
         Set-Variable -Name SISIFOS_OLD_PROMPT -Value { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } -Scope Global
     }
 }
@@ -36,7 +53,8 @@ if (Test-Path variable:Global:__VSCodeState) {
     $Global:__VSCodeState.OriginalPrompt = {
         "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
     }
-} else {
+}
+else {
     Set-Variable -Name SISIFOS_OLD_PROMPT -Value { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } -Scope Global
     function prompt {
         "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
@@ -50,7 +68,8 @@ function global:deactivate {
         
         if (Test-Path variable:Global:__VSCodeState) {
             $Global:__VSCodeState.OriginalPrompt = $Global:SISIFOS_OLD_PROMPT
-        } else {
+        }
+        else {
             Remove-Item function:prompt -ErrorAction SilentlyContinue
         }
         
@@ -60,7 +79,8 @@ function global:deactivate {
         Remove-Item env:\PYTHON -ErrorAction SilentlyContinue
         Remove-Item function:deactivate -ErrorAction SilentlyContinue
         Write-Host "[SISIFOS] Environment deactivated." -ForegroundColor Yellow
-    } else {
+    }
+    else {
         Write-Host "[SISIFOS] No active environment to deactivate." -ForegroundColor Yellow
     }
 }
