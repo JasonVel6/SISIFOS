@@ -8,10 +8,13 @@ version = "0.1.0"
 description = "Specialized Illumination Simulator For Orbiting Spacecraft"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy",
-    "matplotlib",
-    "tqdm",
+    "matplotlib>=3.10.8",
+    "numpy>=2.2.6",
+    "tqdm>=4.67.1",
 ]
 
 [project.optional-dependencies]
 dev = []
+
+[tool.setuptools]
+packages = ["modules"]

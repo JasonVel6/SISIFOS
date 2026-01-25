@@ -707,9 +707,9 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "tqdm" },
+    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 provides-extras = ["dev"]
 

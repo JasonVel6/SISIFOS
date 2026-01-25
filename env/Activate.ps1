@@ -1,123 +1,68 @@
+# SISIFOS Environment Activation Script
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+
 $BlenderDir = Join-Path $ScriptDir "Blender_4.5"
 $BlenderPythonDir = Join-Path $BlenderDir "4.5\python\bin"
 $BlenderPython = Join-Path $BlenderPythonDir "python.exe"
 $BlenderExe = Join-Path $BlenderDir "blender.exe"
 
-# Helper function to overwrite the current line
-function Update-Progress ($Message) {
-    # `r moves cursor to start of line. 
-    # {0,-60} pads the string to 60 chars to overwrite previous text.
-    Write-Host -NoNewline ("`r{0,-60}" -f "[SISIFOS] $Message")
+# Validation
+if (-not (Test-Path $BlenderPython)) {
+    Write-Host "[SISIFOS] Error: Environment not found." -ForegroundColor Red
+    Write-Host "Please run '.\env\Setup.ps1' first."
+    return
 }
 
-try {
-    # Check for Blender Installation
-    if (-not (Test-Path $BlenderDir)) {
-        $BlenderUrl = "https://ftp.halifax.rwth-aachen.de/blender/release/Blender4.5/blender-4.5.6-windows-x64.zip"
-        $ZipPath = Join-Path $ScriptDir "blender.zip"
-        $ExtractedFolderName = "blender-4.5.6-windows-x64"
-        $ExtractedPath = Join-Path $ScriptDir $ExtractedFolderName
+# 1. Environment Variables
+$env:SISIFOS_OLD_PATH = $env:PATH
 
-        Update-Progress "Blender not found. Downloading ..."
-        Invoke-WebRequest -Uri $BlenderUrl -OutFile $ZipPath
-
-        Update-Progress "Extracting Blender..."
-        Expand-Archive -Path $ZipPath -DestinationPath $ScriptDir -Force
-
-        # Rename to the folder name expected by the rest of the script
-        Rename-Item -Path $ExtractedPath -NewName "Blender_4.5"
-
-        # Cleanup
-        if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
-    }
-
-    # Check for Python Executable
-    if (-not (Test-Path $BlenderPython)) {
-        throw "Blender Python not found at $BlenderPython"
-    }
-
-    # Setup Python Environment
-    Update-Progress "Bootstrapping pip..."
-    & $BlenderPython -m ensurepip --upgrade *>$null
-    
-    Update-Progress "Upgrading build tools ..."
-    & $BlenderPython -m pip install --upgrade pip setuptools wheel uv -q *>$null
-    
-    $UvReqFile = Join-Path $env:TEMP "sisifos-uv-req.txt"
-    if (Test-Path $UvReqFile) { Remove-Item $UvReqFile -Force }
-    
-    Update-Progress "Resolving dependencies..."
-    Push-Location $ScriptDir
-    & $BlenderPython -m uv export --format requirements.txt --locked --no-emit-project --output-file $UvReqFile -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "uv export failed" }
-    Pop-Location
-    
-    Update-Progress "Installing dependencies..."
-    & $BlenderPython -m uv pip install --require-hashes --requirements $UvReqFile -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
-    
-    Update-Progress "Installing project in editable mode..."
-    Push-Location $ScriptDir
-    & $BlenderPython -m uv pip install --no-deps --editable . -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "editable install failed" }
-    Pop-Location
-    
-    Update-Progress "Configuring environment variables..."
-    $env:SISIFOS_OLD_PATH = $env:PATH
-    
-    if (-not (Test-Path variable:SISIFOS_OLD_PROMPT)) {
-        if (Test-Path variable:Global:__VSCodeState) {
-            Set-Variable -Name SISIFOS_OLD_PROMPT -Value $Global:__VSCodeState.OriginalPrompt -Scope Global
-        } else {
-            Set-Variable -Name SISIFOS_OLD_PROMPT -Value { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } -Scope Global
-        }
-    }
-    
-    $env:PATH = "$BlenderPythonDir;$BlenderDir;$env:PATH"
-    $env:BLENDER = $BlenderExe
-    $env:PYTHON = $BlenderPython
-    
+# Save Prompt
+if (-not (Test-Path variable:SISIFOS_OLD_PROMPT)) {
     if (Test-Path variable:Global:__VSCodeState) {
-        Set-Variable -Name SISIFOS_OLD_PROMPT -Value $Global:__VSCodeState.OriginalPrompt -Scope Global -Force
-        $Global:__VSCodeState.OriginalPrompt = {
-            "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
-        }
+        Set-Variable -Name SISIFOS_OLD_PROMPT -Value $Global:__VSCodeState.OriginalPrompt -Scope Global
     } else {
         Set-Variable -Name SISIFOS_OLD_PROMPT -Value { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } -Scope Global
-        function prompt {
-            "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
-        }
     }
-    
-    function global:deactivate {
-        if ($env:SISIFOS_OLD_PATH) {
-            $env:PATH = $env:SISIFOS_OLD_PATH
-            
-            if (Test-Path variable:Global:__VSCodeState) {
-                $Global:__VSCodeState.OriginalPrompt = $Global:SISIFOS_OLD_PROMPT
-            } else {
-                Remove-Item function:prompt -ErrorAction SilentlyContinue
-            }
-            
-            Remove-Item variable:\SISIFOS_OLD_PROMPT -ErrorAction SilentlyContinue
-            Remove-Item env:\SISIFOS_OLD_PATH -ErrorAction SilentlyContinue
-            Remove-Item env:\BLENDER -ErrorAction SilentlyContinue
-            Remove-Item env:\PYTHON -ErrorAction SilentlyContinue
-            Remove-Item function:deactivate -ErrorAction SilentlyContinue
-            Write-Host "[SISIFOS] Environment deactivated." -ForegroundColor Yellow
-        } else {
-            Write-Host "[SISIFOS] No active environment to deactivate." -ForegroundColor Yellow
-        }
-    }
-    
-    # Clear the progress line before the final message
-    Write-Host -NoNewline ("`r" + (" " * 60) + "`r")
-    Write-Host "SISIFOS Environment activated successfully." -ForegroundColor Green
-    exit 0
-} catch {
-    # Clear the progress line so the error shows cleanly
-    Write-Host -NoNewline ("`r" + (" " * 60) + "`r")
-    Write-Host "SISIFOS Setup failed: $_" -ForegroundColor Red
-    exit 1
 }
+
+# Set Paths
+$env:PATH = "$BlenderPythonDir;$BlenderDir;$env:PATH"
+$env:BLENDER = $BlenderExe
+$env:PYTHON = $BlenderPython
+
+# 2. Modify Prompt
+if (Test-Path variable:Global:__VSCodeState) {
+    Set-Variable -Name SISIFOS_OLD_PROMPT -Value $Global:__VSCodeState.OriginalPrompt -Scope Global -Force
+    $Global:__VSCodeState.OriginalPrompt = {
+        "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
+    }
+} else {
+    Set-Variable -Name SISIFOS_OLD_PROMPT -Value { "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } -Scope Global
+    function prompt {
+        "[SISIFOS] $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) "
+    }
+}
+
+# 3. Deactivate Function
+function global:deactivate {
+    if ($env:SISIFOS_OLD_PATH) {
+        $env:PATH = $env:SISIFOS_OLD_PATH
+        
+        if (Test-Path variable:Global:__VSCodeState) {
+            $Global:__VSCodeState.OriginalPrompt = $Global:SISIFOS_OLD_PROMPT
+        } else {
+            Remove-Item function:prompt -ErrorAction SilentlyContinue
+        }
+        
+        Remove-Item variable:\SISIFOS_OLD_PROMPT -ErrorAction SilentlyContinue
+        Remove-Item env:\SISIFOS_OLD_PATH -ErrorAction SilentlyContinue
+        Remove-Item env:\BLENDER -ErrorAction SilentlyContinue
+        Remove-Item env:\PYTHON -ErrorAction SilentlyContinue
+        Remove-Item function:deactivate -ErrorAction SilentlyContinue
+        Write-Host "[SISIFOS] Environment deactivated." -ForegroundColor Yellow
+    } else {
+        Write-Host "[SISIFOS] No active environment to deactivate." -ForegroundColor Yellow
+    }
+}
+
+Write-Host "SISIFOS Environment activated." -ForegroundColor Green

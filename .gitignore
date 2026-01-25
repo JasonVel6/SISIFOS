@@ -21,7 +21,7 @@ renders/
 
 # Environment
 env/Blender_*/
-env/*.egg-info/
+*.egg-info/
 
 # UV cache
 .uv_cache/
