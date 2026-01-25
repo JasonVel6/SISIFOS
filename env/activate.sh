@@ -7,7 +7,7 @@
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     echo "Error: This script must be sourced to activate the environment."
     echo "Usage: source ${0}"
-    exit 1
+    return 1
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,27 +28,36 @@ elif [[ "$OS_TYPE" == "Darwin" ]]; then
     BLENDER_PYTHON="$BLENDER_PYTHON_BIN_DIR/python3.11"
 else
     echo "Error: Unsupported OS: $OS_TYPE"
-    return 1 2>/dev/null || exit 1
+    return 1 2>/dev/null || return 1
+fi
+
+# If already activated, deactivate first to avoid duplicate prompts
+if type deactivate &>/dev/null; then
+    deactivate >/dev/null 2>&1
 fi
 
 # Validation
 if [ ! -f "$BLENDER_PYTHON" ]; then
     echo -e "\033[0;31m[SISIFOS] Error: Environment not found.\033[0m"
     echo "Please run 'source ./env/setup.sh' first."
-    return 1 2>/dev/null || exit 1
+    return 1 2>/dev/null || return 1
 fi
 
 # Auto-sync dependencies if lock file or pyproject.toml changed
 LOCK_FILE="$PROJECT_ROOT/uv.lock"
 PYPROJECT_FILE="$PROJECT_ROOT/pyproject.toml"
 
+echo -ne "\033[0;36m[SISIFOS] Syncing dependencies...\033[0m"
+
 if [[ -f "$LOCK_FILE" && -f "$PYPROJECT_FILE" ]]; then
-    echo -e "\033[0;36m[SISIFOS] Syncing dependencies...\033[0m"
     if "$BLENDER_PYTHON" -m uv sync --no-editable -q >/dev/null 2>&1; then
-        echo -e "\033[0;32m[SISIFOS] Dependencies synced.\033[0m"
+        echo -ne "\r\033[0;32m[SISIFOS] Environment activated.\t\t\t\t\t\t\033[0m\n"
     else
-        echo -e "\033[0;33m[SISIFOS] Warning: Failed to sync dependencies. Run 'source ./env/setup.sh' to fix.\033[0m"
+        echo -ne "\r\033[0;33m[SISIFOS] Warning: Failed to sync. Run 'source ./env/setup.sh' to fix.\t\t\033[0m\n"
+        return 1 2>/dev/null || return 1
     fi
+else
+    echo -ne "\r\033[0;32m[SISIFOS] Environment activated.\t\t\t\t\t\t\033[0m\n"
 fi
 
 # Save old state
@@ -80,5 +89,3 @@ deactivate() {
         echo -e "\033[0;33m[SISIFOS] No active environment to deactivate.\033[0m"
     fi
 }
-
-echo -e "\033[0;32m[SISIFOS] Environment activated successfully.\033[0m"

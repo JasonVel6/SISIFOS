@@ -17,4 +17,4 @@ dependencies = [
 dev = []
 
 [tool.setuptools]
-packages = ["modules"]
+py-modules = ["main", "video_gen", "build_model_scene", "addon_ground_truth_generation"]

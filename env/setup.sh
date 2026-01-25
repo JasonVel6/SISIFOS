@@ -36,14 +36,14 @@ elif [[ "$OS_TYPE" == "Darwin" ]]; then
     BLENDER_PYTHON_BIN_DIR="$BLENDER_DIR/Blender.app/Contents/Resources/4.5/python/bin"
 else
     echo "Unsupported OS: $OS_TYPE"
-    exit 1
+    return 1
 fi
 
 # Helper function to handle errors
 cleanup_and_exit() {
     printf "\r%-60s\r" " "
     echo "SISIFOS Setup failed: $1" >&2
-    exit 1
+    return 1
 }
 
 # Asset paths
