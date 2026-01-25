@@ -44,7 +44,7 @@ def main(config_path: str):
     cam, sun = renderer.setup_total()
 
     timestamp = get_timestamp_folder()
-    renders_base_dir = Path("./renders") / timestamp
+    renders_base_dir = PROJECT_ROOT / "renders" / timestamp
     gt_path = renders_base_dir / "camera_traj.txt"
     ensure_dir(gt_path.parent)
 
