@@ -7,6 +7,11 @@ $BlenderPythonDir = Join-Path $BlenderDir "4.5\python\bin"
 $BlenderPython = Join-Path $BlenderPythonDir "python.exe"
 $BlenderExe = Join-Path $BlenderDir "blender.exe"
 
+# If already activated, deactivate first to avoid duplicate prompts
+if (Test-Path function:deactivate) {
+    deactivate *>$null
+}
+
 # Validation
 if (-not (Test-Path $BlenderPython)) {
     Write-Host "[SISIFOS] Error: Environment not found." -ForegroundColor Red
@@ -18,16 +23,18 @@ if (-not (Test-Path $BlenderPython)) {
 $LockFile = Join-Path $ProjectRoot "uv.lock"
 $PyprojectFile = Join-Path $ProjectRoot "pyproject.toml"
 
+Write-Host -NoNewline "[SISIFOS] Syncing dependencies... "
+
 if ((Test-Path $LockFile) -and (Test-Path $PyprojectFile)) {
-    Write-Host "[SISIFOS] Syncing dependencies..." -ForegroundColor Cyan
     & $BlenderPython -m uv sync --no-editable -q *>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[SISIFOS] Warning: Failed to sync dependencies. Run '.\env\Setup.ps1' to fix." -ForegroundColor Yellow
-    }
-    else {
-        Write-Host "[SISIFOS] Dependencies synced." -ForegroundColor Green
+        Write-Host "`r[SISIFOS] Warning: Failed to sync. Run '.\env\Setup.ps1' to fix." -ForegroundColor Yellow
+        return
     }
 }
+
+# Overwrite the progress line with final message
+Write-Host "`r[SISIFOS] Environment activated.`t`t`t`t`t`t" -ForegroundColor Green
 
 # 1. Environment Variables
 $env:SISIFOS_OLD_PATH = $env:PATH
@@ -85,4 +92,4 @@ function global:deactivate {
     }
 }
 
-Write-Host "SISIFOS Environment activated." -ForegroundColor Green
+# Final message is printed above in the activation block
