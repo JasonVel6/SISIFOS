@@ -10,7 +10,20 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     return 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Detect the path of this script, handling sourcing and execution
+if [ -n "$BASH_SOURCE" ]; then
+    # Bash (Linux/Mac) uses BASH_SOURCE
+    SCRIPT_PATH="${BASH_SOURCE[0]}"
+elif [ -n "$ZSH_VERSION" ]; then
+    # Zsh (Mac default) uses %x prompt expansion
+    SCRIPT_PATH="${(%):-%x}"
+else
+    # Fallback for standard execution (not sourced)
+    SCRIPT_PATH="$0"
+fi
+
+# Get the absolute directory path
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BLENDER_DIR="$SCRIPT_DIR/Blender_4.5"
 OS_TYPE="$(uname -s)"
@@ -18,11 +31,13 @@ ARCH_TYPE="$(uname -m)"
 
 # Define paths based on OS
 if [[ "$OS_TYPE" == "Linux" ]]; then
+    echo "Detected OS: Linux"
     BLENDER_EXE="$BLENDER_DIR/blender"
     BLENDER_PYTHON_BIN_DIR="$BLENDER_DIR/4.5/python/bin"
     BLENDER_PYTHON="$BLENDER_PYTHON_BIN_DIR/python3.11"
 
 elif [[ "$OS_TYPE" == "Darwin" ]]; then
+    echo "Detected OS: macOS"
     BLENDER_EXE="$BLENDER_DIR/Blender.app/Contents/MacOS/Blender"
     BLENDER_PYTHON_BIN_DIR="$BLENDER_DIR/Blender.app/Contents/Resources/4.5/python/bin"
     BLENDER_PYTHON="$BLENDER_PYTHON_BIN_DIR/python3.11"
