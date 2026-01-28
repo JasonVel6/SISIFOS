@@ -1,0 +1,6 @@
+env/
+__pycache__/
+assets/
+build/
+renders/
+sisifos.egg-info/
