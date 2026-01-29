@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.zip
+
+# Blender
+*.blend
+*.blend1
+renders/
+
+# Environment
+env/Blender_*/
+*.egg-info/
+build/
+
+# UV cache
+.uv_cache/
+
+# Large media files
+*.exr
+
+# OS
+Thumbs.db

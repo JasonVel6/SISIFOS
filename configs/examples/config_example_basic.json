@@ -1,10 +1,10 @@
 {
-    "scene_blend_path": "/home/ivelentzas3/VELE_HUB/SISIFOS/scene.blend",
-    "hdri_path": "/home/ivelentzas3/VELE_HUB/SISIFOS/starmap_2020_16k.exr",
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
     "objects": {
         "Target": {
             "name": "Target",
-            "blend_path": "/home/ivelentzas3/VELE_HUB/SISIFOS/spacecraft_models_0_5.blend",
+            "blend_path": "assets/spacecraft_models_0_5.blend",
             "position": [
                 0.0,
                 0.0,
@@ -21,7 +21,7 @@
         },
         "Earth": {
             "name": "Earth",
-            "blend_path": "/home/ivelentzas3/VELE_HUB/SISIFOS/Earth.blend",
+            "blend_path": "assets/Earth.blend",
             "position": [
                 0.0,
                 0.0,

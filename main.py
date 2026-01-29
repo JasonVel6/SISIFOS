@@ -862,7 +862,7 @@ class BlenderRenderer:
         new_objects2 = append_blend_objects(self.config.objects["Target"].blend_path)
 
 
-        addon_path = os.path.abspath("/home/ivelentzas3/VELE_HUB/SISIFOS/addon_ground_truth_generation.py")  # <-- adjust if needed
+        addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
         spec = importlib.util.spec_from_file_location("vision_blender_addon", addon_path)
         mod = importlib.util.module_from_spec(spec)
@@ -1170,8 +1170,20 @@ class BlenderRenderer:
         bpy.ops.render.render(write_still=True)
         
 def main(config_path: str):
+
+    PROJECT_ROOT = Path(__file__).parent.resolve()
     
     config = SceneConfig.from_json(config_path)
+    if not os.path.isabs(config.scene_blend_path):
+        config.scene_blend_path = str(PROJECT_ROOT / config.scene_blend_path)
+        
+    if config.hdri_path and not os.path.isabs(config.hdri_path):
+        config.hdri_path = str(PROJECT_ROOT / config.hdri_path)
+
+    for obj_name, obj_cfg in config.objects.items():
+        if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
+            obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
+    
     
     renderer = BlenderRenderer(config, verbose=True)
     print(config.setup)
@@ -1179,7 +1191,7 @@ def main(config_path: str):
     cam, sun = renderer.setup_total()
 
     timestamp = get_timestamp_folder()
-    renders_base_dir = Path("./renders") / timestamp
+    renders_base_dir = PROJECT_ROOT / "renders" / timestamp
     gt_path = renders_base_dir / "camera_traj.txt"
     ensure_dir(gt_path.parent)
     if not gt_path.exists():

@@ -8,51 +8,81 @@ This project is an independent research tool and is **not affiliated with, endor
 
 ## Quick start
 
-### 1) Install Blender
+### 1) Setup & Activate Environment
 
-We recommend installing **Blender 4.5 LTS** (tested with **4.5.3 LTS**). If an NVIDIA GPU is available, enable **OptiX** in Blender preferences for faster Cycles rendering.
+The project uses a two-step process: **Setup** (one-time installation) and **Activation** (per session).
 
-Blender uses its **own Python**. Various functionalities of the simulator require python packages that need to be accessible by Blender's python.
+#### Windows
 
-Run:
+**First-time Setup:**
+Downloads Blender, the Starmap asset, and installs dependencies.
+```powershell
+.\env\Setup.ps1
+```
+
+**Activate Environment:**
+Run this whenever you start a new session. It will automatically sync dependencies if the lockfile changes.
+
+```powershell
+.\env\Activate.ps1
+```
+
+#### MacOS & Linux
+
+**First-time Setup:**
+Downloads Blender, the Starmap asset, and installs dependencies.
 
 ```bash
-blender -b --python-expr "import sys; print(sys.executable)"
+source ./env/setup.sh
 ```
 
-This prints the path to Blender’s Python executable. Use that Python to run pip:
+**Activate Environment:**
+Run this whenever you start a new session.
 
 ```bash
-<BLENDER_PYTHON> -m ensurepip --upgrade
-<BLENDER_PYTHON> -m pip install --upgrade pip
-<BLENDER_PYTHON> -m pip install -r requirements-blender.txt
+source ./env/activate.sh
 ```
 
-Notes:
+---
 
-- On Linux/macOS, `<BLENDER_PYTHON>` is usually inside the Blender install directory.
-- On Windows, it is under `Blender\<version>\python\bin\python.exe`.
+**What happens under the hood?**
 
-### 2) Download yout assets
+1. **Setup:** Downloads **Blender 4.5.6**, the **NASA Starmap (16k)**, bootstraps the Python environment, and installs dependencies via `uv`.
+2. **Activation:** Adds the bundled Blender and Python to your `PATH` and sets required environment variables.
 
-As of this moment, this repo does **not** ship ThirdParty Software, meaning ESA/NASA models. The user needs to bring their own spacecraft model as a blend file:
+**To deactivate:**
+Simply run:
 
+```bash
+deactivate
 ```
+
+### 2) Prepare your assets
+
+The **Setup** script automatically downloads the required starmap to `assets/starmap_2020_16k.exr`.
+
+However, this repo does **not** ship with spacecraft models (e.g., ESA/NASA models). You must provide your own spacecraft model as a `.blend` file:
+
+1. Place your model in the `assets/` folder (e.g., `assets/spacecraft_models.blend`).
+2. Ensure the file structure looks like this:
+```text
 assets/
-  spacecraft_models.blend
+├── starmap_2020_16k.exr  (Downloaded by Setup)
+└── spacecraft_models.blend (Provided by you)
+
 ```
 
-Edit the paths in the config file accordingly:
 
-- `scene_blend_path`
-- `hdri_path`
-- each object’s `blend_path`
 
-in `configs/examples/config_example_basic.json`.
+### 3) Configure your scene
 
-For the moment, the blender file and hdri assets are under this [folder](https://gtvault-my.sharepoint.com/:f:/g/personal/ivelentzas3_gatech_edu/IgDCVzfY6FrUR6kv23ktq4BrAWC0mL0DFF9N7xTztAOlTUo?e=Op9Eki)
+Edit the config file `configs/examples/config_example_basic.json` to match your filenames:
 
-### 3) Generate a reference trajectory file
+* `scene_blend_path`
+* `hdri_path` (should point to `assets/starmap_2020_16k.exr` or your own starmap)
+* Each object's `blend_path`
+
+### 4) Generate a reference trajectory file
 
 SISIFOS expects a reference trajectory text file containing the target pose, camera pose, and sun angles per frame.
 
@@ -64,24 +94,19 @@ p_G_I(x) p_G_I(y) p_G_I(z)   q_I_G(w) q_I_G(x) q_I_G(y) q_I_G(z)   p_C_I(x) p_C_
 
 Where:
 
-- p_G_I = position of target (G) in inertial frame (I) at radius R_LEO
+* p_G_I = position of target (G) in inertial frame (I) at radius R_LEO
+* q_I_G = orientation of target frame (G) relative to inertial (I), quaternion wxyz
+* p_C_I = position of camera (C) in inertial frame (I) at radius (R_LEO + R_RPO)
+* q_I_C = orientation of camera frame (C) relative to inertial (I), quaternion wxyz
+* sun_az, sun_el = sun azimuth/elevation (recommended: degrees, document your choice and keep it consistent)
+* Earth / clouds / atmosphere stay at inertial origin (0,0,0) with fixed orientation.
 
-- q_I_G = orientation of target frame (G) relative to inertial (I), quaternion wxyz
+### 5) Run the simulator
 
-- p_C_I = position of camera (C) in inertial frame (I) at radius (R_LEO + R_RPO)
+After activating the environment, run the simulator from the root of the repo:
 
-- q_I_C = orientation of camera frame (C) relative to inertial (I), quaternion wxyz
-
-- sun_az, sun_el = sun azimuth/elevation (recommended: degrees, document your choice and keep it consistent)
-
-- Earth / clouds / atmosphere stay at inertial origin (0,0,0) with fixed orientation.
-
-### 4) Run inside Blender
-
-From the root of the repo:
-
-```bash
-blender -b -P main.py --config configs/examples/config_example_basic.json
+```powershell
+blender -b -P main.py -- configs/examples/config_example_basic.json
 ```
 
 Outputs, unless modified in the code, go to:
@@ -90,7 +115,7 @@ Outputs, unless modified in the code, go to:
 renders/<timestamp>/
 ```
 
-### 4) Enable GT exports (optional)
+### 6) Enable GT exports (optional)
 
 If you have the [Vision Add-On](https://github.com/Cartucho/vision_blender)
 , enable it and run:
