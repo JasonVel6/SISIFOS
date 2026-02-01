@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sisifos"
+version = "0.1.0"
+description = "Specialized Illumination Simulator For Orbiting Spacecraft"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib>=3.10.8",
+    "numpy>=2.2.6",
+    "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.setuptools]
+py-modules = ["main", "video_gen", "build_model_scene", "addon_ground_truth_generation"]
