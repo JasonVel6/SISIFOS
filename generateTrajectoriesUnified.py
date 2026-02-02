@@ -12,18 +12,25 @@ FRAME CONVENTIONS:
 - A = COM (pose origin used by UE5). We export r_AO_I and q_IG.
 - G = SLAM body frame (same axes as A, different origin).
 - Naming convention: r_YX = Y - X (vector from X to Y).
+- I = inertial frame (ECI-like).
+- C and S represent the same frame (camera/sensor frame).
+- prefix state vectors with state_ to denote full 6-DOF state in inertial frame.
+- prefix quaternions with q_ to denote quaternions.
+- R_YX denotes rotation matrix from frame X to frame Y (i.e., R_YX * v_X = v_Y).
+- prefix forces with f_
 - r_AG_G = A - G (position of COM relative to SLAM frame origin, in G coords).
 - Internal variable stores G - A for convenience; negated on output.
 - Axes are body-fixed (G).
+- 
 
 OUTPUT FILES (per MC trial, per agent):
 - gtValues.txt: Ground truth values for SLAM
-- camera_traj.txt: Blender-compatible camera trajectory
+- camera_traj.txt: SISFOS-compatible camera trajectory
 - sensormeasurements.txt: Noisy sensor measurements
 - Config.yaml: Configuration file
 
 Usage:
-    python generateTrajectoriesUnified.py [--seed SEED]
+    python generateTrajectoriesUnified.py [--seed SEED
 """
 
 import os
@@ -37,36 +44,25 @@ import numpy as np
 from datetime import datetime
 from scipy.linalg import expm
 
-# ---------------- Paths ----------------
-SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
-SISIFOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-OUTPUT_BASE = os.path.join(SISIFOS_DIR, "outputfile")
-
-# Function setup path - try SISIFOS first, then UE5
-FUNCTION_SETUP_CANDIDATES = [
-    os.path.join(SISIFOS_DIR, "function_setup"),
-    os.path.abspath(os.path.join(SISIFOS_DIR, "..", "UE5-SpaceImageSimulator", "python", "function_setup")),
-]
-FUNCTION_SETUP_DIR = None
-for candidate in FUNCTION_SETUP_CANDIDATES:
-    if os.path.isdir(candidate):
-        FUNCTION_SETUP_DIR = candidate
-        break
-if FUNCTION_SETUP_DIR is None:
-    raise ImportError("Cannot find function_setup directory")
-if FUNCTION_SETUP_DIR not in sys.path:
-    sys.path.insert(0, FUNCTION_SETUP_DIR)
-
 from motion_cases import (
     init_inertial, init_hill, init_tumbling,
     validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
 )
+
+# TODO Evaluate what we need in the math function
 from math_function import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
-    sk, R2q, q2R, solve_ne_equation
+    sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
+    _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity
 )
 from ue5_function import calcInitCondChaser, read_gt_values, create_json
 from plot_figure import plot_trial_trajectories
+
+# ---------------- Paths ----------------
+# TODO modify the paths to make more sense for SISFOS integration 
+SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
+SISIFOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
+OUTPUT_BASE = os.path.join(SISIFOS_DIR, "outputfile")
 
 # ---------- Seed handling (reproducible MC) ----------
 def resolve_master_seed() -> int:
@@ -85,6 +81,7 @@ MASTER_SEED = resolve_master_seed()
 ss_master = np.random.SeedSequence(MASTER_SEED)
 
 # ----------- User-tunable defaults -----------
+# TODO We should likely make a config file for these later
 DEFAULT_r_AG_G = [0.0, 0.0, 0.0] # [0.1, 0.05, 0.15]
 
 # Sensor noise (ASTRO APS3 star tracker and Astrix NS IMU at 10 Hz)
@@ -146,174 +143,11 @@ J_yy = (1/12) * m * (l**2 + h**2)  # rotation about y
 J_zz = (1/12) * m * (l**2 + w**2)  # rotation about z
 J = np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
 
-
-# ---------- Helpers ----------
-def convert_numpy_to_python(obj):
-    """Convert numpy types to standard Python types."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    elif isinstance(obj, (np.bool_,)):
-        return bool(obj)
-    elif isinstance(obj, (np.int8, np.int16, np.int32, np.int64,
-                          np.uint8, np.uint16, np.uint32, np.uint64)):
-        return int(obj)
-    elif isinstance(obj, (np.float16, np.float32, np.float64)):
-        return float(obj)
-    elif isinstance(obj, dict):
-        return {k: convert_numpy_to_python(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [convert_numpy_to_python(i) for i in obj]
-    return obj
-
-
-def _R_IG_from_ypr(yaw, pitch, roll):
-    """Body-fixed Tait-Bryan ZYX (yaw, pitch, roll) -> R_IG (I<-G)."""
-    cy, sy = np.cos(yaw), np.sin(yaw)
-    cp, sp = np.cos(pitch), np.sin(pitch)
-    cr, sr = np.cos(roll), np.sin(roll)
-    Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]])
-    Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-    Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-    return Rz @ Ry @ Rx
-
-
-def _vecI_to_azel(v_I):
-    x, y, z = v_I
-    r = np.linalg.norm(v_I) + 1e-12
-    el = np.arcsin(np.clip(z / r, -1.0, 1.0))
-    az = np.arctan2(y, x) % (2.0 * np.pi)
-    return az, el
-
-
-# SO(3) helpers
-def _vee(S):
-    # BUG FIX (2026-01-08): For a skew-symmetric matrix S = (R - R.T),
-    # S[i,j] = -S[j,i], so S[i,j] - S[j,i] = 2*S[i,j].
-    # The previous formula returned 2x the correct vee extraction.
-    # Fixed by adding 0.5 factor.
-    return 0.5 * np.array([S[2, 1] - S[1, 2], S[0, 2] - S[2, 0], S[1, 0] - S[0, 1]])
-
-
-def so3_log_vec(R):
-    R = np.asarray(R)
-    tr = float(np.trace(R))
-    c = max(-1.0, min(1.0, 0.5 * (tr - 1.0)))
-    theta = math.acos(c)
-    if theta < 1e-7:
-        return 0.5 * _vee(R - R.T)
-    return (theta / (2.0 * math.sin(theta))) * _vee(R - R.T)
-
-
-# Look-at helpers
-def _seed_right(f):
-    f = f / (np.linalg.norm(f) + 1e-12)
-    a = np.array([1., 0., 0.]) if abs(f[0]) < 0.9 else np.array([0., 1., 0.])
-    x = np.cross(a, f)
-    return x / (np.linalg.norm(x) + 1e-12)
-
-
-def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
-                           cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
-    f = fwd_G / (np.linalg.norm(fwd_G) + 1e-12)
-
-    use_prev = (x_prev is not None)
-    x_proj = None
-    n_proj = 0.0
-
-    if use_prev:
-        x_proj = x_prev - f * (f @ x_prev)
-        n_proj = np.linalg.norm(x_proj)
-
-    x_up = np.cross(world_up_G, f)
-    n_up = np.linalg.norm(x_up)
-    near_sing = (abs(f @ world_up_G) > cos_thr) or (n_up < sin_thr)
-
-    if use_prev and n_proj > eps:
-        x = x_proj / n_proj
-    elif n_up > eps:
-        x = x_up / n_up
-    else:
-        x = _seed_right(f)
-
-    y = np.cross(f, x)
-    R_GS = np.column_stack((x, y, f))
-    return R_GS, x
-
-
-def _quat_hemi_continuous(q, q_prev):
-    if q_prev is None:
-        return q
-    return q if float(np.dot(q, q_prev)) >= 0.0 else -q
-
-
-def enforce_quat_series_continuity(q_series):
-    if q_series.shape[0] == 0:
-        return q_series
-    q_prev = q_series[0]
-    q_series[0] = q_prev / (np.linalg.norm(q_prev) + 1e-12)
-    for k in range(1, q_series.shape[0]):
-        qk = q_series[k]
-        qk = qk / (np.linalg.norm(qk) + 1e-12)
-        if float(np.dot(qk, q_prev)) < 0.0:
-            qk = -qk
-        q_series[k] = qk
-        q_prev = qk
-    return q_series
-
-
-def rodrigues(u, k, ang):
-    k = k / (np.linalg.norm(k) + 1e-12)
-    u_par = (u @ k) * k
-    u_perp = u - u_par
-    if np.linalg.norm(u_perp) < 1e-12:
-        k2 = np.array([1.0, 0.0, 0.0])
-        if abs(k @ k2) > 0.9:
-            k2 = np.array([0.0, 1.0, 0.0])
-        u_perp = u - (u @ k2) * k2
-    u_perp = u_perp / (np.linalg.norm(u_perp) + 1e-12)
-    axis = np.cross(u, k)
-    if np.linalg.norm(axis) < 1e-12:
-        axis = u_perp
-    axis = axis / (np.linalg.norm(axis) + 1e-12)
-    K = np.array([[0, -axis[2], axis[1]],
-                  [axis[2], 0, -axis[0]],
-                  [-axis[1], axis[0], 0]])
-    R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * (K @ K)
-    return R @ u
-
-
 # ============================================================================
-# MAIN SCRIPT
+# MAIN Function
 # ============================================================================
-
-def main():
-    print("=" * 60)
-    print("UNIFIED TRAJECTORY GENERATOR")
-    print("=" * 60)
-
-    # ---------- User inputs ----------
-    num_agents = int(input("Number of agents for inspection scenario: ").strip())
-    rotMode_Gframe = input("Mode Setting (1: Inertial, 2: Hill, 3: Tumbling): ").strip()
-    num_mc = int(input("Number of samples for Monte Carlo Simulation: ").strip())
-
-    # Setup RNGs
-    child_ss = ss_master.spawn(num_mc)
-    rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
-
-    # Path mode
-    if rotMode_Gframe == "1":
-        path_mode = "Inertial"
-    elif rotMode_Gframe == "2":
-        path_mode = "Hill"
-    elif rotMode_Gframe == "3":
-        path_mode = "Tumbling"
-    else:
-        raise ValueError("Mode must be 1, 2, or 3.")
-
-    print(f"\n[INFO] Master seed: {MASTER_SEED}")
-    print(f"[INFO] Mode: {path_mode}")
-    print(f"[INFO] Agents: {num_agents}, MC trials: {num_mc}")
-
+# TODO lets break this up into several methods for better modularity
+def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc):
     # ---------- Generate initial conditions ----------
     print("\n[STEP 1] Generating initial conditions...")
 
@@ -370,6 +204,7 @@ def main():
     pitch = np.zeros(num_mc)
     roll = np.zeros(num_mc)
 
+    # TODO parameterize distributions
     for i in range(num_mc):
         rng = rngs_mc[i]
         inc[i] = float(rng.uniform(0.0, np.pi))
@@ -397,6 +232,7 @@ def main():
     TU = np.sqrt(a**3 / mu_ref) * 2 * np.pi
 
     # ---------- Preallocations ----------
+    # TODO going to want to change up naming conventions to be more readable
     r_AG_G_used = np.array(DEFAULT_r_AG_G, dtype=float)
 
     Rx = np.zeros((num_mc, 3, 3))
@@ -410,7 +246,10 @@ def main():
     n = np.zeros(num_mc)
     omega_HI_I_0 = np.zeros((num_mc, 3))
 
-    s_A_I = np.zeros((num_mc, nbSteps, 6))
+    # Target spacecraft states
+    # G frame is the body fixed frame
+    # A is the body COM frame (aligned with G axes, offset)
+    state_A_I = np.zeros((num_mc, nbSteps, 6))
     q_IG = np.zeros((num_mc, nbSteps, 4))
     R_IG = np.zeros((num_mc, nbSteps, 3, 3))
     omega_GI_I = np.zeros((num_mc, nbSteps, 3))
@@ -419,9 +258,11 @@ def main():
     r_GO_I = np.zeros((num_mc, nbSteps, 3))
     v_GO_I = np.zeros((num_mc, nbSteps, 3))
 
-    s_c_I = np.zeros((num_mc, num_agents, nbSteps, 6))
-    s_c_I_0 = np.zeros((num_mc, num_agents, 6))
+    # Deffenitions for the Camera / Chaser (Sensor S) frame
+    state_C_I = np.zeros((num_mc, num_agents, nbSteps, 6))
+    state_C_I_0 = np.zeros((num_mc, num_agents, 6))
 
+    # Combined IC and propagated states
     R_GC = np.zeros((num_mc, num_agents, nbSteps, 3, 3))
     q_GC = np.zeros((num_mc, num_agents, nbSteps, 4))
     R_IC = np.zeros((num_mc, num_agents, nbSteps, 3, 3))
@@ -435,9 +276,9 @@ def main():
     v_CG_G = np.zeros((num_mc, num_agents, nbSteps, 3))
     dr_CG_G = np.zeros((num_mc, num_agents, nbSteps, 3))
 
-    f_s_S = np.zeros((num_mc, num_agents, nbSteps, 3))
-    f_s_S_m = np.zeros((num_mc, num_agents, nbSteps, 3))
-    tau_s_S = np.zeros((num_mc, num_agents, nbSteps, 3))
+    f_specific_S = np.zeros((num_mc, num_agents, nbSteps, 3))
+    f_specific_S_m = np.zeros((num_mc, num_agents, nbSteps, 3))
+    tau_specific_S = np.zeros((num_mc, num_agents, nbSteps, 3))
 
     r_OG_G = np.zeros((num_mc, nbSteps, 3))
     sun_dir_G = np.zeros((num_mc, nbSteps, 3))
@@ -447,6 +288,8 @@ def main():
     H_GI_G = np.zeros((num_mc, nbSteps, 3))
     H_GI_I = np.zeros((num_mc, nbSteps, 3))
 
+
+    # TODO these could be considered constants if we want them to be defined somewhere else
     # Disturbances
     eta = np.random.multivariate_normal(MEAN_DEFAULT, COV_R_ASTRO_APS3, (num_agents, nbSteps))
     nu = np.random.multivariate_normal(MEAN_DEFAULT, COV_OMEGA_ASTRIX, (num_agents, nbSteps))
@@ -465,6 +308,7 @@ def main():
     # ---------- Propagate orbits and compute geometry ----------
     print("\n[STEP 3] Propagating orbits and computing geometry...")
 
+    # Outer loop: MC trials
     for i in range(num_mc):
         print(f"  MC trial {i+1}/{num_mc}...", end=" ", flush=True)
 
@@ -480,10 +324,10 @@ def main():
         R_IH_0[i] = createHillFrame(r_AO_I_0[i], v_AO_I_0[i])
         n[i] = np.sqrt(mu_ref / np.linalg.norm(r_AO_I_0[i])**3)
         omega_HI_I_0[i] = n[i] * R_IH_0[i, :, 2]
-        s_A_I[i, 0] = np.hstack([r_AO_I_0[i], v_AO_I_0[i]])
+        state_A_I[i, 0] = np.hstack([r_AO_I_0[i], v_AO_I_0[i]])
 
         # Propagate target COM
-        s_A_I[i] = propagate_orbit(mu_ref, s_A_I[i, 0], timestamps)
+        state_A_I[i] = propagate_orbit(mu_ref, state_A_I[i, 0], timestamps)
 
         # Per-agent chaser propagation
         for agent_idx in range(num_agents):
@@ -494,10 +338,10 @@ def main():
             r_CO_I_0, v_CO_I_0 = calcInitCondChaser(
                 r0_agent[3], r0_agent[4], r0_agent[5],
                 r0_agent[0], r0_agent[1], r0_agent[2],
-                s_A_I[i, 0], R_IH_0[i], omega_HI_I_0[i],
+                state_A_I[i, 0], R_IH_0[i], omega_HI_I_0[i],
             )
-            s_c_I_0[i, agent_idx] = np.hstack([r_CO_I_0, v_CO_I_0])
-            s_c_I[i, agent_idx] = propagate_orbit(mu_ref, s_c_I_0[i, agent_idx], timestamps)
+            state_C_I_0[i, agent_idx] = np.hstack([r_CO_I_0, v_CO_I_0])
+            state_C_I[i, agent_idx] = propagate_orbit(mu_ref, state_C_I_0[i, agent_idx], timestamps)
 
         # Attitude law
         if rotMode_Gframe == "1":
@@ -507,7 +351,7 @@ def main():
                 omega_GI_G[i, j] = np.array([0, 0, 0])
         elif rotMode_Gframe == "2":
             for j in range(nbSteps):
-                R_IH = createHillFrame(s_A_I[i, j, 0:3], s_A_I[i, j, 3:6])
+                R_IH = createHillFrame(state_A_I[i, j, 0:3], state_A_I[i, j, 3:6])
                 R_IG[i, j] = R_IH @ R_XG_0[i]
                 omega_GI_I[i, j] = omega_HI_I_0[i]
                 omega_GI_G[i, j] = R_IG[i, j].T @ omega_GI_I[i, j]
@@ -557,7 +401,7 @@ def main():
             j0 = 0
             agent0 = 0
             # Camera position in inertial frame (Earth at origin)
-            r_cam_I = s_c_I[i, agent0, j0, 0:3]
+            r_cam_I = state_C_I[i, agent0, j0, 0:3]
             # Sun direction = away from Earth (same direction as camera position from Earth)
             if np.linalg.norm(r_cam_I) > 0:
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
@@ -574,7 +418,7 @@ def main():
             j0 = 0
             agent0 = 0
             # r_CG^I = r_CA^I - r_AG^I = r_CA^I - R_IG @ r_AG^G
-            r_CG_I0 = (s_c_I[i, agent0, j0, 0:3] - s_A_I[i, j0, 0:3]) - R_IG[i, j0] @ r_AG_G_used
+            r_CG_I0 = (state_C_I[i, agent0, j0, 0:3] - state_A_I[i, j0, 0:3]) - R_IG[i, j0] @ r_AG_G_used
             r_CG_G0 = R_IG[i, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
@@ -593,8 +437,8 @@ def main():
 
         for j in range(nbSteps):
             q_IG[i, j] = R2q(R_IG[i, j])
-            r_AO_I = s_A_I[i, j, 0:3]
-            v_AO_I = s_A_I[i, j, 3:6]
+            r_AO_I = state_A_I[i, j, 0:3]
+            v_AO_I = state_A_I[i, j, 3:6]
 
             r_GO_I[i, j] = r_AO_I + R_IG[i, j] @ r_AG_G_used
             v_GO_I[i, j] = v_AO_I + R_IG[i, j] @ np.cross(omega_GI_G[i, j], r_AG_G_used)
@@ -615,8 +459,8 @@ def main():
             ))
 
             for agent_idx in range(num_agents):
-                d_rI = s_c_I[i, agent_idx, j, 0:3] - r_AO_I
-                d_vI = s_c_I[i, agent_idx, j, 3:6] - v_AO_I
+                d_rI = state_C_I[i, agent_idx, j, 0:3] - r_AO_I
+                d_vI = state_C_I[i, agent_idx, j, 3:6] - v_AO_I
 
                 # r_CG = C - G = (C - A) - (G - A) = r_CA - r_AG
                 # r_CG^G = R_IG.T @ r_CA^I - r_AG^G
@@ -649,22 +493,24 @@ def main():
             enforce_quat_series_continuity(q_GC[i, agent_idx, :])
             enforce_quat_series_continuity(q_IC[i, agent_idx, :])
 
-        # Angular velocity computation - CONSISTENT with dynamics
-        #
-        # Previously: omega_CI_C was computed from finite differences of R_IC, but omega_GI_G
-        # came from the ODE. This caused ~0.00086 rad/s discretization error.
-        #
-        # Now: We compute omega_CI_C using the angular velocity addition formula:
-        #   ω_IC^C = ω_IG^C + ω_GC^C
-        # where:
-        #   ω_IG^C = R_CG @ ω_IG^G = -R_CG @ omega_GI_G  (from ODE, transformed to C frame)
-        #   ω_GC^C = from finite differences of R_GC    (consistent with pose evolution)
-        #
-        # This ensures omega_SI_S is consistent with BOTH the dynamics (omega_GI_G) AND
-        # the pose evolution (finite differences of R_GS).
-        #
-        # NAMING NOTE: omega_CI_C variable stores ω_IC^C (I wrt C, in C frame).
-        # It is negated when outputting to gtValues.txt to get ω_SI^S = ω_CI^C = -ω_IC^C.
+        """
+        Angular velocity computation - CONSISTENT with dynamics
+        
+        Previously: omega_CI_C was computed from finite differences of R_IC, but omega_GI_G
+        came from the ODE. This caused ~0.00086 rad/s discretization error.
+        
+        Now: We compute omega_CI_C using the angular velocity addition formula:
+          ω_IC^C = ω_IG^C + ω_GC^C
+        where:
+          ω_IG^C = R_CG @ ω_IG^G = -R_CG @ omega_GI_G  (from ODE, transformed to C frame)
+          ω_GC^C = from finite differences of R_GC    (consistent with pose evolution)
+        
+        This ensures omega_SI_S is consistent with BOTH the dynamics (omega_GI_G) AND
+        the pose evolution (finite differences of R_GS).
+        
+        NAMING NOTE: omega_CI_C variable stores ω_IC^C (I wrt C, in C frame).
+        It is negated when outputting to gtValues.txt to get ω_SI^S = ω_CI^C = -ω_IC^C.
+        """
         for agent_idx in range(num_agents):
             # First compute omega_GC_C from finite differences of R_GC
             # log(R_GC^T @ R_GC_next)/dt gives ω_GC^C (G wrt C, in C frame)
@@ -703,22 +549,22 @@ def main():
         # Specific force and torque
         for agent_idx in range(num_agents):
             for j in range(nbSteps):
-                r_c_I = s_c_I[i, agent_idx, j, 0:3]
+                r_c_I = state_C_I[i, agent_idx, j, 0:3]
                 r_magnitude = np.linalg.norm(r_c_I)
                 gravity_I = -mu_ref * r_c_I / (r_magnitude**3)
                 if j == 0:
-                    non_grav_accel_I = (s_c_I[i, agent_idx, 1, 3:6] - s_c_I[i, agent_idx, 0, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (state_C_I[i, agent_idx, 1, 3:6] - state_C_I[i, agent_idx, 0, 3:6]) / tstep_eff - gravity_I
                 elif j == nbSteps - 1:
-                    non_grav_accel_I = (s_c_I[i, agent_idx, j, 3:6] - s_c_I[i, agent_idx, j - 1, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (state_C_I[i, agent_idx, j, 3:6] - state_C_I[i, agent_idx, j - 1, 3:6]) / tstep_eff - gravity_I
                 else:
-                    non_grav_accel_I = (s_c_I[i, agent_idx, j + 1, 3:6] - s_c_I[i, agent_idx, j - 1, 3:6]) / (2 * tstep_eff) - gravity_I
-                f_s_S[i, agent_idx, j] = R_IC[i, agent_idx, j].T @ non_grav_accel_I
+                    non_grav_accel_I = (state_C_I[i, agent_idx, j + 1, 3:6] - state_C_I[i, agent_idx, j - 1, 3:6]) / (2 * tstep_eff) - gravity_I
+                f_specific_S[i, agent_idx, j] = R_IC[i, agent_idx, j].T @ non_grav_accel_I
 
                 if j == 0:
                     accel_bias_state[i, agent_idx] = np.random.normal(0.0, sigma_ba, size=3)
                 else:
                     accel_bias_state[i, agent_idx] = phi_a * accel_bias_state[i, agent_idx] + inc_std_a * np.random.normal(0.0, 1.0, size=3)
-                f_s_S_m[i, agent_idx, j] = f_s_S[i, agent_idx, j] + np.random.multivariate_normal(np.zeros(3), COV_ACCEL_ASTRIX) + accel_bias_state[i, agent_idx]
+                f_specific_S_m[i, agent_idx, j] = f_specific_S[i, agent_idx, j] + np.random.multivariate_normal(np.zeros(3), COV_ACCEL_ASTRIX) + accel_bias_state[i, agent_idx]
 
                 if j == 0:
                     omega_dot = (omega_CI_C[i, agent_idx, 1] - omega_CI_C[i, agent_idx, 0]) / tstep_eff
@@ -727,11 +573,39 @@ def main():
                 else:
                     omega_dot = (omega_CI_C[i, agent_idx, j + 1] - omega_CI_C[i, agent_idx, j - 1]) / (2 * tstep_eff)
                 J_omega = J @ omega_CI_C[i, agent_idx, j]
-                tau_s_S[i, agent_idx, j] = J @ omega_dot + np.cross(omega_CI_C[i, agent_idx, j], J_omega)
+                tau_specific_S[i, agent_idx, j] = J @ omega_dot + np.cross(omega_CI_C[i, agent_idx, j], J_omega)
 
         print("done")
 
     # ---------- Write output files ----------
+
+    def write_camera_trajectory():
+        """
+        Write camera_traj.txt for Blender import.
+        TODO Lucas Will need to totally re format this
+        TODO we may need to fix up the referencing frames here too
+        a data structure to hold everything may be a good idea
+        """
+        blender_filepath = os.path.join(ue5_out, "camera_traj.txt")
+        with open(blender_filepath, "w") as f:
+            f.write("nbTruePts = \n")
+            f.write(f"{nbSteps}\n")
+            f.write("tspan = \n")
+            np.savetxt(f, timestamps, fmt="%f")
+            f.write("q_GC = \n")
+            np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
+            f.write("r_CG = \n")
+            np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
+            f.write("r_OG_G = \n")
+            np.savetxt(f, r_OG_G[i], fmt="%f %f %f")
+            f.write("sun_az = \n")
+            np.savetxt(f, az_G[i], fmt="%f")
+            f.write("sun_el = \n")
+            np.savetxt(f, el_G[i], fmt="%f")
+            f.write("q_IG = \n")
+            np.savetxt(f, q_IG[i], fmt="%f %f %f %f")
+        print(f"  [BLENDER] {blender_filepath}")
+
     print("\n[STEP 4] Writing output files...")
 
     now = datetime.today()
@@ -752,33 +626,14 @@ def main():
             q_GC_use = q_GC[i, agent_idx]
             q_IC_use = q_IC[i, agent_idx]
             omega_CI_C_use = omega_CI_C[i, agent_idx]
-            s_c_I_use = s_c_I[i, agent_idx]
+            s_c_I_use = state_C_I[i, agent_idx]
 
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_use, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
             print(f"  [INFO] MC{i} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
 
-            # --- camera_traj.txt (Blender-compatible) ---
-            blender_filepath = os.path.join(ue5_out, "camera_traj.txt")
-            with open(blender_filepath, "w") as f:
-                f.write("nbTruePts = \n")
-                f.write(f"{nbSteps}\n")
-                f.write("tspan = \n")
-                np.savetxt(f, timestamps, fmt="%f")
-                f.write("q_GC = \n")
-                np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
-                f.write("r_CG = \n")
-                np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
-                f.write("r_OG_G = \n")
-                np.savetxt(f, r_OG_G[i], fmt="%f %f %f")
-                f.write("sun_az = \n")
-                np.savetxt(f, az_G[i], fmt="%f")
-                f.write("sun_el = \n")
-                np.savetxt(f, el_G[i], fmt="%f")
-                f.write("q_IG = \n")
-                np.savetxt(f, q_IG[i], fmt="%f %f %f %f")
-            print(f"  [BLENDER] {blender_filepath}")
+            write_camera_trajectory()
 
             # --- gtValues.txt ---
             gtvalues_filepath = os.path.join(ue5_out, "gtValues.txt")
@@ -851,17 +706,17 @@ def main():
 
                 # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
                 # r_SA = S - A (position of S relative to A, i.e., vector from A to S)
-                r_SA_I_data = s_c_I_use[:, 0:3] - s_A_I[i, :, 0:3]  # S - A
-                v_SA_I_data = s_c_I_use[:, 3:6] - s_A_I[i, :, 3:6]  # v_S - v_A
+                r_SA_I_data = s_c_I_use[:, 0:3] - state_A_I[i, :, 0:3]  # S - A
+                v_SA_I_data = s_c_I_use[:, 3:6] - state_A_I[i, :, 3:6]  # v_S - v_A
                 f.write("r_SA_I = \n")
                 np.savetxt(f, r_SA_I_data, fmt="%f %f %f")
                 f.write("v_SA_I = \n")
                 np.savetxt(f, v_SA_I_data, fmt="%f %f %f")
 
                 f.write("r_AO_I = \n")
-                np.savetxt(f, s_A_I[i, :, 0:3], fmt="%f %f %f")
+                np.savetxt(f, state_A_I[i, :, 0:3], fmt="%f %f %f")
                 f.write("v_AO_I = \n")
-                np.savetxt(f, s_A_I[i, :, 3:6], fmt="%f %f %f")
+                np.savetxt(f, state_A_I[i, :, 3:6], fmt="%f %f %f")
 
                 f.write("r_GO_I = \n")
                 np.savetxt(f, r_GO_I[i], fmt="%f %f %f")
@@ -891,11 +746,11 @@ def main():
                 f.write("omega_SI_S_m = \n")
                 np.savetxt(f, -omega_CI_C_m[i, agent_idx], fmt="%f %f %f")
                 f.write("r_AO_I = \n")
-                np.savetxt(f, s_A_I[i, :, 0:3], fmt="%f %f %f")
+                np.savetxt(f, state_A_I[i, :, 0:3], fmt="%f %f %f")
                 f.write("f_s_S_m = \n")
-                np.savetxt(f, f_s_S_m[i, agent_idx], fmt="%f %f %f")
+                np.savetxt(f, f_specific_S_m[i, agent_idx], fmt="%f %f %f")
                 f.write("tau_s_S = \n")
-                np.savetxt(f, tau_s_S[i, agent_idx], fmt="%f %f %f")
+                np.savetxt(f, tau_specific_S[i, agent_idx], fmt="%f %f %f")
             print(f"  [SENSOR]  {sensor_filepath}")
 
             # --- Config.yaml (OpenCV-style YAML for SatSLAM) ---
@@ -1112,8 +967,8 @@ def main():
         try:
             plot_trial_trajectories(
                 i=i,
-                s_A_I=s_A_I,
-                s_c_I=s_c_I,
+                s_A_I=state_A_I,
+                s_c_I=state_C_I,
                 r_CG_G=r_CG_G,
                 R_IG_all=R_IG,
                 out_dir=plot_dir,
@@ -1129,6 +984,41 @@ def main():
     print(f"       Mode: {path_mode}")
     print(f"       {num_mc} MC trials, {num_agents} agent(s) each")
 
+
+# ============================================================================
+# CLI Entry Point
+# ============================================================================
+def main():
+    print("=" * 60)
+    print("UNIFIED TRAJECTORY GENERATOR")
+    print("=" * 60)
+
+    # ---------- User inputs ----------
+    # TODO this will need to be changed to only run if in a standalone mode
+    num_agents = int(input("Number of agents for inspection scenario: ").strip())
+    rotMode_Gframe = input("Mode Setting (1: Inertial, 2: Hill, 3: Tumbling): ").strip()
+    num_mc = int(input("Number of samples for Monte Carlo Simulation: ").strip())
+
+    # Setup RNGs
+    child_ss = ss_master.spawn(num_mc)
+    rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
+
+    # Path mode
+    # TODO it would be good to unify path mode and rotmode as they deffine the same thing we want a single source of truth and rotmode is more readable
+    if rotMode_Gframe == "1":
+        path_mode = "Inertial"
+    elif rotMode_Gframe == "2":
+        path_mode = "Hill"
+    elif rotMode_Gframe == "3":
+        path_mode = "Tumbling"
+    else:
+        raise ValueError("Mode must be 1, 2, or 3.")
+
+    print(f"\n[INFO] Master seed: {MASTER_SEED}")
+    print(f"[INFO] Mode: {path_mode}")
+    print(f"[INFO] Agents: {num_agents}, MC trials: {num_mc}")
+
+    generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc)
 
 if __name__ == "__main__":
     main()

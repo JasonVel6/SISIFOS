@@ -24,9 +24,6 @@ from modules.trajectory import (
     sun_sweep_90, make_fake_frame_from_frame0
 )
 
-SUN_AZ_MAN = [0]
-SUN_EL_MAN = [-90, -45, 0, 45, 90]
-
 def main(config_path: str):
     PROJECT_ROOT = Path(__file__).parent.resolve()
     
@@ -48,7 +45,7 @@ def main(config_path: str):
     gt_path = renders_base_dir / "camera_traj.txt"
     ensure_dir(gt_path.parent)
 
-    if not gt_path.exists():
+    if not gt_path.exists(): # why would it exist? we generate this file as a timestamp essentially getting rid of this possibility
         write_camera_trajectory_v2(
             str(gt_path),
             N=config.setup.num_frames,
@@ -68,6 +65,7 @@ def main(config_path: str):
     res_x, res_y = config.camera.resolution
     
     # Setup Sweeps
+    # This is going to be important for me
     exp_sweep_map = config.setup.sweep_exposure if config.setup.sweep_exposure else {"00": config.setup.t_ref_s}
     sun_sweep_map = config.setup.sweep_sun_az_el if config.setup.sweep_sun_az_el else sun_sweep_90()
     

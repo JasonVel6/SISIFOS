@@ -5,16 +5,17 @@ If you want to use these function, you can import this file as follows:
 [in Python code]
 import sys
 import os
-sys.path.append(os.path.abspath('PATH_TO_THIS_FILE'))
+sys.path.append(os.path.abspath('PATH_TO_THIS_FILE')) (TODO not super clean)
 from math_function import *
-
+TODO this could prob use some unit testing to make sure that we dont accidentally break anything
+TODO could also likely benefit from some organization
 """
 
 ### Import necessary libraries
-
 import numpy as np
 from scipy.linalg import logm
 from scipy.linalg import expm
+import math
 
 
 def sk(u):
@@ -312,6 +313,89 @@ def vee(X):
 
     return x_vee
 
+def so3_log_vec(R):
+    R = np.asarray(R)
+    tr = float(np.trace(R))
+    c = max(-1.0, min(1.0, 0.5 * (tr - 1.0)))
+    theta = math.acos(c)
+    if theta < 1e-7:
+        return 0.5 * vee(R - R.T)
+    return (theta / (2.0 * math.sin(theta))) * vee(R - R.T)
+
+def rodrigues(u, k, ang):
+    k = k / (np.linalg.norm(k) + 1e-12)
+    u_par = (u @ k) * k
+    u_perp = u - u_par
+    if np.linalg.norm(u_perp) < 1e-12:
+        k2 = np.array([1.0, 0.0, 0.0])
+        if abs(k @ k2) > 0.9:
+            k2 = np.array([0.0, 1.0, 0.0])
+        u_perp = u - (u @ k2) * k2
+    u_perp = u_perp / (np.linalg.norm(u_perp) + 1e-12)
+    axis = np.cross(u, k)
+    if np.linalg.norm(axis) < 1e-12:
+        axis = u_perp
+    axis = axis / (np.linalg.norm(axis) + 1e-12)
+    K = np.array([[0, -axis[2], axis[1]],
+                  [axis[2], 0, -axis[0]],
+                  [-axis[1], axis[0], 0]])
+    R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * (K @ K)
+    return R @ u
+
+def _seed_right(f):
+    f = f / (np.linalg.norm(f) + 1e-12)
+    a = np.array([1., 0., 0.]) if abs(f[0]) < 0.9 else np.array([0., 1., 0.])
+    x = np.cross(a, f)
+    return x / (np.linalg.norm(x) + 1e-12)
+
+
+def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
+                           cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
+    f = fwd_G / (np.linalg.norm(fwd_G) + 1e-12)
+
+    use_prev = (x_prev is not None)
+    x_proj = None
+    n_proj = 0.0
+
+    if use_prev:
+        x_proj = x_prev - f * (f @ x_prev)
+        n_proj = np.linalg.norm(x_proj)
+
+    x_up = np.cross(world_up_G, f)
+    n_up = np.linalg.norm(x_up)
+    near_sing = (abs(f @ world_up_G) > cos_thr) or (n_up < sin_thr)
+
+    if use_prev and n_proj > eps and x_proj:
+        x = x_proj / n_proj
+    elif n_up > eps:
+        x = x_up / n_up
+    else:
+        x = _seed_right(f)
+
+    y = np.cross(f, x)
+    R_GS = np.column_stack((x, y, f))
+    return R_GS, x
+
+
+def _quat_hemi_continuous(q, q_prev):
+    if q_prev is None:
+        return q
+    return q if float(np.dot(q, q_prev)) >= 0.0 else -q
+
+
+def enforce_quat_series_continuity(q_series):
+    if q_series.shape[0] == 0:
+        return q_series
+    q_prev = q_series[0]
+    q_series[0] = q_prev / (np.linalg.norm(q_prev) + 1e-12)
+    for k in range(1, q_series.shape[0]):
+        qk = q_series[k]
+        qk = qk / (np.linalg.norm(qk) + 1e-12)
+        if float(np.dot(qk, q_prev)) < 0.0:
+            qk = -qk
+        q_series[k] = qk
+        q_prev = qk
+    return q_series
 
 def calcCandS(z):
     """
@@ -535,6 +619,18 @@ def cart2sph(x, y, z):
     r = np.sqrt(x**2 + y**2 + z**2)
     return az, el, r
 
+def _vecI_to_azel(v_I):
+    """
+    converts a vector in inertial frame to azimuth and elevation angles.
+    TODO consolidate this with the other method slightly different implementations
+    
+    :param v_I: Description
+    """
+    x, y, z = v_I
+    r = np.linalg.norm(v_I) + 1e-12
+    el = np.arcsin(np.clip(z / r, -1.0, 1.0))
+    az = np.arctan2(y, x) % (2.0 * np.pi)
+    return az, el
 
 def cart2oe(r_vec, v_vec, muCB):
     """
