@@ -62,7 +62,7 @@ from plot_figure import plot_trial_trajectories
 # TODO modify the paths to make more sense for SISFOS integration 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 SISIFOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-OUTPUT_BASE = os.path.join(SISIFOS_DIR, "outputfile")
+DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_DIR, "outputfile")
 
 # ---------- Seed handling (reproducible MC) ----------
 def resolve_master_seed() -> int:
@@ -144,10 +144,417 @@ J_zz = (1/12) * m * (l**2 + w**2)  # rotation about z
 J = np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
 
 # ============================================================================
+# Output File helpers
+# TODO these should be moved to another file for modularity and keeping this file small
+# ============================================================================
+def write_camera_trajectory(output_dir: str,
+                            nbSteps: int,
+                            timestamps: np.ndarray,
+                            q_GC_use: np.ndarray,
+                            r_CG_G_use: np.ndarray, 
+                            r_OG_G_use: np.ndarray,
+                            az_G_use: np.ndarray,
+                            el_G_use: np.ndarray,
+                            q_IG_use: np.ndarray):
+    """
+    Write camera_traj.txt for Blender import.
+    TODO Lucas Will need to totally re format this
+    TODO we may need to fix up the referencing frames here too
+    a data structure to hold everything may be a good idea
+    """
+    blender_filepath = os.path.join(output_dir, "camera_traj.txt")
+    with open(blender_filepath, "w") as f:
+        f.write("nbTruePts = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("tspan = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+        f.write("q_GC = \n")
+        np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
+        f.write("r_CG = \n")
+        np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
+        f.write("r_OG_G = \n")
+        np.savetxt(f, r_OG_G_use, fmt="%f %f %f")
+        f.write("sun_az = \n")
+        np.savetxt(f, az_G_use, fmt="%f")
+        f.write("sun_el = \n")
+        np.savetxt(f, el_G_use, fmt="%f")
+        f.write("q_IG = \n")
+        np.savetxt(f, q_IG_use, fmt="%f %f %f %f")
+    print(f"  [BLENDER] {blender_filepath}")
+
+def write_gtvalues(output_dir: str,
+                    nbSteps: int,
+                    timestamps: np.ndarray,
+                    J: np.ndarray,
+                    r_AG_G_used: np.ndarray,
+                    q_GC_use: np.ndarray,
+                    q_IG_use: np.ndarray,
+                    q_IC_use: np.ndarray,
+                    omega_GI_G_use: np.ndarray,
+                    omega_CI_C_use: np.ndarray,
+                    r_CG_G_use: np.ndarray,
+                    v_CG_G_use: np.ndarray,
+                    r_OG_G_use: np.ndarray,
+                    az_G_use: np.ndarray,
+                    el_G_use: np.ndarray,
+                    state_A_I_use: np.ndarray,
+                    r_GO_I_use: np.ndarray,
+                    v_GO_I_use: np.ndarray, 
+                    s_c_I_use: np.ndarray):
+    # --- gtValues.txt ---
+    gtvalues_filepath = os.path.join(output_dir, "gtValues.txt")
+    with open(gtvalues_filepath, "w") as f:
+        f.write("nSamples = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("timestamps = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+
+        # Inertia tensor at COM (frame A), trace-normalized, 5-parameter format
+        # Format: Ixx Iyy Ixy Ixz Iyz (Izz = 1 - Ixx - Iyy from trace constraint)
+        # This is the target's inertia tensor used in Euler dynamics propagation.
+        # The inertia is expressed in body-fixed frame A (COM frame).
+        trace_J = np.trace(J)
+        J_norm = J / trace_J
+        inertia_5 = np.array([J_norm[0, 0], J_norm[1, 1],
+                                J_norm[0, 1], J_norm[0, 2], J_norm[1, 2]])
+        f.write("inertia_A = \n")
+        f.write(f"{inertia_5[0]:.9f} {inertia_5[1]:.9f} {inertia_5[2]:.9f} {inertia_5[3]:.9f} {inertia_5[4]:.9f}\n")
+
+        # r_AG_G: COM position relative to G-frame origin, in G coords
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_AG_G = A - G (position of A relative to G, vector from G to A)
+        # Internal variable r_AG_G_used stores G - A, so negate for output
+        f.write("r_AG_G = \n")
+        r_AG_G_output = -r_AG_G_used  # Convert from internal G-A to convention A-G
+        f.write(f"{r_AG_G_output[0]:.9f} {r_AG_G_output[1]:.9f} {r_AG_G_output[2]:.9f}\n")
+
+        f.write("q_GS = \n")
+        np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
+        f.write("q_IG = \n")
+        np.savetxt(f, q_IG_use, fmt="%f %f %f %f")
+        f.write("q_IS = \n")
+        np.savetxt(f, q_IC_use, fmt="%f %f %f %f")
+
+        # SIGN CONVENTION (omega_GI_G):
+        # solve_ne_equation uses standard kinematics: R_{k+1} = R_k @ exp(sk(ω·dt))
+        # where ω is the body angular velocity ω_GI^G from Newton-Euler equations.
+        # This corresponds to dR_IG/dt = R_IG @ sk(ω_GI^G), which is the standard
+        # textbook convention. No sign flip needed - output directly.
+        f.write("omega_GI_G = \n")
+        np.savetxt(f, omega_GI_G_use, fmt="%f %f %f")
+        # SIGN CONVENTION (omega_SI_S):
+        # Factor expects ω_SI^S = angular velocity of S wrt I, expressed in S.
+        #
+        # omega_CI_C is computed using the angular velocity addition formula:
+        #   ω_IC^C = ω_IG^C + ω_GC^C
+        # where:
+        #   ω_IG^C = -R_CG @ ω_GI^G (sign flip: I-wrt-G = -(G-wrt-I))
+        #   ω_GC^C = -omega_GC_C (variable stores ω_CG^C from finite differences)
+        #
+        # The variable omega_CI_C stores ω_IC^C (I wrt C, in C).
+        # Output -omega_CI_C = ω_CI^C = ω_SI^S (since C = S).
+        f.write("omega_SI_S = \n")
+        np.savetxt(f, -omega_CI_C_use, fmt="%f %f %f")
+
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_SG = S - G, and since C = S (chaser = spacecraft): r_SG = r_CG = C - G
+        # r_CG_G is computed correctly as C - G, so output directly (no negation)
+        f.write("r_SG_G = \n")
+        np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
+        f.write("v_SG_G = \n")
+        np.savetxt(f, v_CG_G_use, fmt="%f %f %f")
+
+        f.write("r_OG_G = \n")
+        np.savetxt(f, r_OG_G_use, fmt="%f %f %f")
+        f.write("sun_az_el = \n")
+        for j in range(nbSteps):
+            f.write(f"{az_G_use[j]:.6f} {el_G_use[j]:.6f}\n")
+
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_SA = S - A (position of S relative to A, i.e., vector from A to S)
+        r_SA_I_data = s_c_I_use[:, 0:3] - state_A_I_use[:, 0:3]  # S - A
+        v_SA_I_data = s_c_I_use[:, 3:6] - state_A_I_use[:, 3:6]  # v_S - v_A
+        f.write("r_SA_I = \n")
+        np.savetxt(f, r_SA_I_data, fmt="%f %f %f")
+        f.write("v_SA_I = \n")
+        np.savetxt(f, v_SA_I_data, fmt="%f %f %f")
+
+        f.write("r_AO_I = \n")
+        np.savetxt(f, state_A_I_use[:, 0:3], fmt="%f %f %f")
+        f.write("v_AO_I = \n")
+        np.savetxt(f, state_A_I_use[:, 3:6], fmt="%f %f %f")
+
+        f.write("r_GO_I = \n")
+        np.savetxt(f, r_GO_I_use, fmt="%f %f %f")
+        f.write("v_GO_I = \n")
+        np.savetxt(f, v_GO_I_use, fmt="%f %f %f")
+    print(f"  [GTVAL]   {gtvalues_filepath}")
+    return gtvalues_filepath
+
+# TODO make camera obj a datastructure later
+def write_json(output_dir: str, filename, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
+    # --- JSON file for UE5 simulator (read from gtValues.txt) ---
+    json_dir = os.path.join(output_dir, "json")
+    os.makedirs(json_dir, exist_ok=True)
+    json_filename = os.path.join(json_dir, f"{filename}.json")
+    data_dict = read_gt_values(gtvalues_filepath)
+    create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
+    print(f"  [JSON]    {json_filename}")
+
+def write_sensormeasurements(output_dir: str,
+                                nbSteps: int,
+                                timestamps: np.ndarray,
+                                q_IC_m_use: np.ndarray,
+                                omega_CI_C_m_use: np.ndarray,
+                                state_A_I_use: np.ndarray,
+                                f_specific_S_m_use: np.ndarray,
+                                tau_specific_S_use: np.ndarray,):
+    # --- sensormeasurements.txt ---
+    sensor_filepath = os.path.join(output_dir, "sensormeasurements.txt")
+    with open(sensor_filepath, "w") as f:
+        f.write("nSamples = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("timestamps = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+        f.write("q_IS_m = \n")
+        np.savetxt(f, q_IC_m_use, fmt="%f %f %f %f")
+        # Same sign convention as gtValues.txt: negate omega_CI_C to get ω_SI^S
+        # (see detailed comment in gtValues.txt section above)
+        f.write("omega_SI_S_m = \n")
+        np.savetxt(f, -omega_CI_C_m_use, fmt="%f %f %f")
+        f.write("r_AO_I = \n")
+        np.savetxt(f, state_A_I_use[:, 0:3], fmt="%f %f %f")
+        f.write("f_s_S_m = \n")
+        np.savetxt(f, f_specific_S_m_use, fmt="%f %f %f")
+        f.write("tau_s_S = \n")
+        np.savetxt(f, tau_specific_S_use, fmt="%f %f %f")
+    print(f"  [SENSOR]  {sensor_filepath}")
+
+
+def write_config(output_dir: str,
+                    nbSteps: int,
+                    camera_obj: dict,
+                    tstep_eff: float,
+                    child_ss: np.random.SeedSequence,
+                    path_mode: str,
+                    rotMode_Gframe: str,
+                    agent_idx: int,
+                    mu_ref: float,
+                    h_orbit: float,
+                    tend: float,
+                    inc: float,
+                    ecc: float):
+    # --- Config.yaml (OpenCV-style YAML for SatSLAM) ---
+    config_filepath = os.path.join(output_dir, "Config.yaml")
+    with open(config_filepath, "w") as f:
+        # Camera intrinsics from camera_obj
+        focal_length = camera_obj.get("focal_length", FOCAL_LENGTH_PX)
+        resolution = camera_obj.get("resolution", CAMERA_RESOLUTION)
+        cx = resolution / 2.0
+        cy = resolution / 2.0
+        fps = 1.0 / tstep_eff
+
+        f.write("%YAML:1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Filenames to load\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("ImageList.Filename: imgList.txt\n")
+        f.write("GroundTruth.Filename: gtValues.txt\n")
+        f.write("SensorMeasurements.Filename: sensormeasurements.txt\n")
+        f.write(f"ShapeModel.Filename: {SHAPE_MODEL_FILENAME}\n")
+        f.write("ShapeModel.ScaleFactor: 1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Experimentation Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Settings.runExperiments: 0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# General Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Settings.IsAsync: 0\n")
+        f.write("Settings.ActiveVisualizer: 0\n")
+        f.write("Settings.ActiveRecord: 0\n")
+        f.write("Settings.ActiveBackEnd: 1\n")
+        f.write("Settings.ActiveLoopClosure: 1\n")
+        f.write("Settings.ActiveMesher: 0\n")
+        f.write("Settings.ActiveLines: 0\n")
+        f.write("Settings.EmptyQueueBeforeTerminate: 0\n")
+        f.write("Settings.HasGT: 1\n")
+        f.write("Settings.UseGT: 0\n")
+        f.write("Settings.StartIdx: 0\n")
+        f.write(f"Settings.EndIdx: {nbSteps}\n")
+        f.write("Settings.InitialOffset: 0\n")
+        f.write("Settings.nFramesInit: 6\n")
+        f.write("Settings.DownsampleFactor: 1\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Camera Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Camera.R_CS_r11: 1.0\n")
+        f.write("Camera.R_CS_r12: 0.0\n")
+        f.write("Camera.R_CS_r13: 0.0\n")
+        f.write("Camera.R_CS_r21: 0.0\n")
+        f.write("Camera.R_CS_r22: 1.0\n")
+        f.write("Camera.R_CS_r23: 0.0\n")
+        f.write("Camera.R_CS_r31: 0.0\n")
+        f.write("Camera.R_CS_r32: 0.0\n")
+        f.write("Camera.R_CS_r33: 1.0\n")
+        f.write(f"Camera.fx: {focal_length}\n")
+        f.write(f"Camera.fy: {focal_length}\n")
+        f.write(f"Camera.cx: {cx}\n")
+        f.write(f"Camera.cy: {cy}\n")
+        f.write("Camera.k1: 0.0\n")
+        f.write("Camera.k2: 0.0\n")
+        f.write("Camera.p1: 0.0\n")
+        f.write("Camera.p2: 0.0\n")
+        f.write("Camera.k3: 0.0\n")
+        f.write(f"Camera.fps: {fps:.1f}\n")
+        f.write("Camera.RGB: 0\n")
+        f.write(f"Camera.resolution: [{resolution}, {resolution}]\n")
+        f.write("Image.FITSValueScale: 22.849\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Front-End Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("FrontEnd.kfInterval: 7\n")
+        f.write("FrontEnd.matcherWindowAndCandidates: [1, 1]\n")
+        f.write("FrontEnd.minInlierPercentage: 0.75\n")
+        f.write("FrontEnd.minInliersToLastKF: 30\n")
+        f.write("FrontEnd.minInliers: 8\n")
+        f.write("FrontEnd.knnK: 1\n")
+        f.write("FrontEnd.loweRatio: 0.75\n")
+        f.write("FrontEnd.ransacReprojThreshold: 6.0\n")
+        f.write("FrontEnd.ransacConfidence: 0.999\n")
+        f.write("FrontEnd.minBaselinePx: 1e6\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# ORB Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("ORBextractor.nFeatures: 1450\n")
+        f.write("ORBextractor.scaleFactor: 1.25\n")
+        f.write("ORBextractor.nLevels: 7\n")
+        f.write("ORBextractor.edgeThreshold: 10\n")
+        f.write("ORBextractor.patchSize: 31\n")
+        f.write("ORBextractor.fastThreshold: 14\n")
+        f.write("ORBextractor.minFastThreshold: 4\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Line Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Line.minlength: 1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Back-End Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("BackEnd.useRelDyn: 1\n")
+        f.write("Backend.minTriangulationAngleDeg: 0.5\n")
+        f.write("BackEnd.iSAMRelinearizationThresh: 0.1\n")
+        f.write("BackEnd.iSAMRelinearizationSkip: 1\n")
+        f.write("BackEnd.iSAMcacheLinearizedFactors: 1\n")
+        f.write("BackEnd.iSAMfindUnusedFactorSlots: 1\n")
+        f.write("BackEnd.iSAMfactorization: QR\n")
+        f.write("BackEnd.wildfire_threshold: 0.001\n")
+        f.write("BackEnd.numOptimize: 1\n")
+        f.write("BackEnd.optimizationWindowSec: 60\n")
+        f.write("BackEnd.iSAMevaluateNonlinearError: 0\n")
+        f.write("BackEnd.iSAMenableDetailedResults: 0\n")
+        f.write("BackEnd.SfSMalpha: 1.0\n")
+        f.write("Prior.Q_sigmas: [0.01, 0.01, 0.01]\n")
+        f.write("Prior.r_sigmas: [0.1, 0.1, 1.0]\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# RelDyn Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("RelDynFactor.nStages: 5\n")
+        f.write("RelDynFactor.ninc: 16\n")
+        f.write("RelDynFactor.LU: 1.0\n")
+        f.write("RelDynFactor.TU: 1.0\n")
+        f.write(f"RelDynFactor.muEarth: {mu_ref}\n")
+        f.write("RelDynFactor.usePreviousMeasurement: 1\n")
+        f.write("RelDynFactor.sigmasSpectralDensity: [ 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 0.3, 0.3, 0.3]\n")
+        f.write("RelDynFactor.omega_GI_G_noise: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.I_A_noise: [1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1]\n")
+        f.write("RelDynFactor.r_AG_G_noise: [1.0, 1.0, 0.01]\n")
+        f.write("RelDynFactor.r_SA_I_noise: [1.0, 1.0, 1.0]\n")
+        f.write("RelDynFactor.v_SA_I_noise: [100.0, 100.0, 100.0]\n")
+        f.write("RelDynFactor.rTc_noise: [1e-06, 1e-06, 1e-06]\n")
+        f.write("RelDynFactor.angularMomentumNoise: [0.0001, 0.0001, 0.0001]\n")
+        f.write("RelDynFactor.sigmas_r_SG_G_meas: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.mu0_noise: 20\n")
+        f.write("RelDynFactor.kinoRoto_noise: [0.002, 0.002, 0.002, 0.0005, 0.0005, 0.0005]\n")
+        f.write("RelDynFactor.Q0_sigmas: [1e-05, 1e-05, 1e-05]\n")
+        f.write("RelDynFactor.r0_sigmas: [5e-08, 5e-08, 5e-08]\n")
+        f.write("RelDynFactor.R_meas_noise: [0.0002774, 0.0002774, 0.0002774]\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Loop-Closure Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("LoopClosure.ignoredFramesWindow: 10\n")
+        f.write("LoopClosure.defaultMinScore: 0.1\n")
+        f.write("LoopClosure.loweRatio: 0.75\n")
+        f.write("LoopClosure.minInliers: 6\n")
+        f.write("LoopClosure.minSharedWords: 3\n")
+        f.write("LoopClosure.commonWordsRatio: 0.8\n")
+        f.write("LoopClosure.ransacReprojThreshold: 1.0\n")
+        f.write("LoopClosure.ransacConfidence: 0.99\n")
+        f.write("LoopClosure.knnK: 1\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Viewer Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Viewer.KeyFrameSize: 0.05\n")
+        f.write("Viewer.KeyFrameLineWidth: 1\n")
+        f.write("Viewer.GraphLineWidth: 0.9\n")
+        f.write("Viewer.PointSize: 2\n")
+        f.write("Viewer.CameraSize: 0.08\n")
+        f.write("Viewer.CameraLineWidth: 3\n")
+        f.write("Viewer.ViewpointX: -100.0\n")
+        f.write("Viewer.ViewpointY: 100.0\n")
+        f.write("Viewer.ViewpointZ: 100.0\n")
+        f.write("Viewer.ViewpointF: 500\n")
+        f.write("Viewer.TriadScale: 1\n")
+        f.write("Viewer.Width: 1920\n")
+        f.write("Viewer.Height: 1080\n")
+        f.write("Viewer.clipNear: 0.1\n")
+        f.write("Viewer.clipFar: 1000\n")
+        f.write("Viewer.fov: 45\n")
+        f.write("Viewer.DrawObject: 1\n")
+        f.write("Viewer.LightPower: 20.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Depth Simulator Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Simulator.clipNear: 0.1\n")
+        f.write("Simulator.clipFar: 4000\n")
+        f.write("Simulator.DrawObject: 1\n")
+        f.write("Simulator.LightPower: 20.0\n\n")
+
+        # Add trajectory generation metadata as comments
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Trajectory Generation Metadata (for reference only)\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write(f"# trial_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# path_mode: {path_mode}\n")
+        f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
+        f.write(f"# agent_id: {agent_idx}\n")
+        f.write(f"# mu_ref: {mu_ref}\n")
+        f.write(f"# h_orbit: {h_orbit}\n")
+        f.write(f"# tend: {tend}\n")
+        f.write(f"# tstep: {tstep_eff}\n")
+        f.write(f"# inc: {inc}\n")
+        f.write(f"# ecc: {ecc}\n")
+
+    print(f"  [CONFIG]  {config_filepath}")
+
+# ============================================================================
 # MAIN Function
 # ============================================================================
-# TODO lets break this up into several methods for better modularity
-def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc):
+def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_ss, rngs_mc, base_output_file = None):
+    if base_output_file is None:
+        base_output_file = DEFAULT_OUTPUT_BASE
+
     # ---------- Generate initial conditions ----------
     print("\n[STEP 1] Generating initial conditions...")
 
@@ -294,6 +701,7 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc
     eta = np.random.multivariate_normal(MEAN_DEFAULT, COV_R_ASTRO_APS3, (num_agents, nbSteps))
     nu = np.random.multivariate_normal(MEAN_DEFAULT, COV_OMEGA_ASTRIX, (num_agents, nbSteps))
 
+    #TODO these as well
     # IMU bias
     g0 = 9.80665
     sigma_bg = np.deg2rad(GYRO_BIAS_SIGMA_DEGPHR) / 3600.0
@@ -577,390 +985,109 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc
 
         print("done")
 
-    # ---------- Write output files ----------
-
-    def write_camera_trajectory():
-        """
-        Write camera_traj.txt for Blender import.
-        TODO Lucas Will need to totally re format this
-        TODO we may need to fix up the referencing frames here too
-        a data structure to hold everything may be a good idea
-        """
-        blender_filepath = os.path.join(ue5_out, "camera_traj.txt")
-        with open(blender_filepath, "w") as f:
-            f.write("nbTruePts = \n")
-            f.write(f"{nbSteps}\n")
-            f.write("tspan = \n")
-            np.savetxt(f, timestamps, fmt="%f")
-            f.write("q_GC = \n")
-            np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
-            f.write("r_CG = \n")
-            np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
-            f.write("r_OG_G = \n")
-            np.savetxt(f, r_OG_G[i], fmt="%f %f %f")
-            f.write("sun_az = \n")
-            np.savetxt(f, az_G[i], fmt="%f")
-            f.write("sun_el = \n")
-            np.savetxt(f, el_G[i], fmt="%f")
-            f.write("q_IG = \n")
-            np.savetxt(f, q_IG[i], fmt="%f %f %f %f")
-        print(f"  [BLENDER] {blender_filepath}")
-
+    # Note that this is part of the main method
     print("\n[STEP 4] Writing output files...")
-
     now = datetime.today()
     date_prefix = now.strftime("%m%d")  # e.g., "1207"
     time_suffix = now.strftime("%Y_%m_%H%M")  # e.g., "2025_12_1430"
-    os.makedirs(OUTPUT_BASE, exist_ok=True)
+    os.makedirs(base_output_file, exist_ok=True)
 
     camera_obj = {"focal_length": FOCAL_LENGTH_PX, "resolution": CAMERA_RESOLUTION, "lens_flare": LENS_FLARE}
 
     for i in range(num_mc):
         for agent_idx in range(num_agents):
             dir_name = f"{date_prefix}_{path_mode}_mc{i}_cro_agent{agent_idx}_{time_suffix}"
-            ue5_out = os.path.join(OUTPUT_BASE, dir_name)
-            os.makedirs(ue5_out, exist_ok=True)
+            mc_output_file = os.path.join(base_output_file, dir_name)
+            os.makedirs(mc_output_file, exist_ok=True)
 
+            # Select the monte carlo trial and the agent to use for this file writing
             r_CG_G_use = r_CG_G[i, agent_idx]
             v_CG_G_use = v_CG_G[i, agent_idx]
             q_GC_use = q_GC[i, agent_idx]
             q_IC_use = q_IC[i, agent_idx]
             omega_CI_C_use = omega_CI_C[i, agent_idx]
             s_c_I_use = state_C_I[i, agent_idx]
+            q_IC_m_use = q_IC_m[i, agent_idx]
+            omega_CI_C_m_use = omega_CI_C_m[i, agent_idx]
+            f_specific_S_m_use = f_specific_S_m[i, agent_idx]
+            tau_specific_S_use = tau_specific_S[i, agent_idx]
+            state_A_I_use = state_A_I[i] # TODO determine why this does not have agent index
+
+            omega_GI_G_use = omega_GI_G[i]
+            r_OG_G_use = r_OG_G[i]
+            az_G_use = az_G[i]
+            el_G_use = el_G[i]
+            q_IG_use = q_IG[i]
+            r_GO_I_use = r_GO_I[i]
+            v_GO_I_use = v_GO_I[i]
+            state_A_I_use = state_A_I[i]
 
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_use, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
             print(f"  [INFO] MC{i} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
 
-            write_camera_trajectory()
+            write_camera_trajectory(
+                output_dir=mc_output_file,
+                nbSteps=nbSteps,
+                timestamps=timestamps,
+                q_GC_use=q_GC_use,
+                r_CG_G_use=r_CG_G_use,
+                r_OG_G_use=r_OG_G_use,
+                az_G_use=az_G_use,
+                el_G_use=el_G_use,
+                q_IG_use=q_IG_use
+            )
+            gtvalues_filepath = write_gtvalues(
+                output_dir=mc_output_file,
+                nbSteps=nbSteps,
+                timestamps=timestamps,
+                J=J,
+                r_AG_G_used=r_AG_G_used,
+                q_GC_use=q_GC_use,
+                q_IG_use=q_IG_use,
+                q_IC_use=q_IC_use,
+                omega_GI_G_use=omega_GI_G_use,
+                omega_CI_C_use=omega_CI_C_use,
+                r_CG_G_use=r_CG_G_use,
+                v_CG_G_use=v_CG_G_use,
+                r_OG_G_use=r_OG_G_use,
+                az_G_use=az_G_use,
+                el_G_use=el_G_use,
+                state_A_I_use=state_A_I_use,
+                r_GO_I_use=r_GO_I_use,
+                v_GO_I_use=v_GO_I_use,
+                s_c_I_use=s_c_I_use
+            )
+            write_json(output_dir=base_output_file, filename=dir_name, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=tend)
+            write_sensormeasurements(output_dir=mc_output_file,
+                                        nbSteps=nbSteps,
+                                        timestamps=timestamps,
+                                        q_IC_m_use=q_IC_m_use,
+                                        omega_CI_C_m_use=omega_CI_C_m_use,
+                                        state_A_I_use=state_A_I_use,
+                                        f_specific_S_m_use=f_specific_S_m_use,
+                                        tau_specific_S_use=tau_specific_S_use
+                                    )
+            write_config(output_dir=mc_output_file,
+                            nbSteps=nbSteps,
+                            camera_obj=camera_obj,
+                            tstep_eff=tstep_eff,
+                            child_ss=child_ss[i],
+                            path_mode=path_mode,
+                            rotMode_Gframe=rotMode_Gframe,
+                            agent_idx=agent_idx,
+                            mu_ref=mu_ref,
+                            h_orbit=h_orbit,
+                            tend=tend,
+                            inc=inc[i],
+                            ecc=ecc[i],)
 
-            # --- gtValues.txt ---
-            gtvalues_filepath = os.path.join(ue5_out, "gtValues.txt")
-            with open(gtvalues_filepath, "w") as f:
-                f.write("nSamples = \n")
-                f.write(f"{nbSteps}\n")
-                f.write("timestamps = \n")
-                np.savetxt(f, timestamps, fmt="%f")
-
-                # Inertia tensor at COM (frame A), trace-normalized, 5-parameter format
-                # Format: Ixx Iyy Ixy Ixz Iyz (Izz = 1 - Ixx - Iyy from trace constraint)
-                # This is the target's inertia tensor used in Euler dynamics propagation.
-                # The inertia is expressed in body-fixed frame A (COM frame).
-                trace_J = np.trace(J)
-                J_norm = J / trace_J
-                inertia_5 = np.array([J_norm[0, 0], J_norm[1, 1],
-                                      J_norm[0, 1], J_norm[0, 2], J_norm[1, 2]])
-                f.write("inertia_A = \n")
-                f.write(f"{inertia_5[0]:.9f} {inertia_5[1]:.9f} {inertia_5[2]:.9f} {inertia_5[3]:.9f} {inertia_5[4]:.9f}\n")
-
-                # r_AG_G: COM position relative to G-frame origin, in G coords
-                # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
-                # r_AG_G = A - G (position of A relative to G, vector from G to A)
-                # Internal variable r_AG_G_used stores G - A, so negate for output
-                f.write("r_AG_G = \n")
-                r_AG_G_output = -r_AG_G_used  # Convert from internal G-A to convention A-G
-                f.write(f"{r_AG_G_output[0]:.9f} {r_AG_G_output[1]:.9f} {r_AG_G_output[2]:.9f}\n")
-
-                f.write("q_GS = \n")
-                np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
-                f.write("q_IG = \n")
-                np.savetxt(f, q_IG[i], fmt="%f %f %f %f")
-                f.write("q_IS = \n")
-                np.savetxt(f, q_IC_use, fmt="%f %f %f %f")
-
-                # SIGN CONVENTION (omega_GI_G):
-                # solve_ne_equation uses standard kinematics: R_{k+1} = R_k @ exp(sk(ω·dt))
-                # where ω is the body angular velocity ω_GI^G from Newton-Euler equations.
-                # This corresponds to dR_IG/dt = R_IG @ sk(ω_GI^G), which is the standard
-                # textbook convention. No sign flip needed - output directly.
-                f.write("omega_GI_G = \n")
-                np.savetxt(f, omega_GI_G[i], fmt="%f %f %f")
-                # SIGN CONVENTION (omega_SI_S):
-                # Factor expects ω_SI^S = angular velocity of S wrt I, expressed in S.
-                #
-                # omega_CI_C is computed using the angular velocity addition formula:
-                #   ω_IC^C = ω_IG^C + ω_GC^C
-                # where:
-                #   ω_IG^C = -R_CG @ ω_GI^G (sign flip: I-wrt-G = -(G-wrt-I))
-                #   ω_GC^C = -omega_GC_C (variable stores ω_CG^C from finite differences)
-                #
-                # The variable omega_CI_C stores ω_IC^C (I wrt C, in C).
-                # Output -omega_CI_C = ω_CI^C = ω_SI^S (since C = S).
-                f.write("omega_SI_S = \n")
-                np.savetxt(f, -omega_CI_C_use, fmt="%f %f %f")
-
-                # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
-                # r_SG = S - G, and since C = S (chaser = spacecraft): r_SG = r_CG = C - G
-                # r_CG_G is computed correctly as C - G, so output directly (no negation)
-                f.write("r_SG_G = \n")
-                np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
-                f.write("v_SG_G = \n")
-                np.savetxt(f, v_CG_G_use, fmt="%f %f %f")
-
-                f.write("r_OG_G = \n")
-                np.savetxt(f, r_OG_G[i], fmt="%f %f %f")
-                f.write("sun_az_el = \n")
-                for j in range(nbSteps):
-                    f.write(f"{az_G[i, j]:.6f} {el_G[i, j]:.6f}\n")
-
-                # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
-                # r_SA = S - A (position of S relative to A, i.e., vector from A to S)
-                r_SA_I_data = s_c_I_use[:, 0:3] - state_A_I[i, :, 0:3]  # S - A
-                v_SA_I_data = s_c_I_use[:, 3:6] - state_A_I[i, :, 3:6]  # v_S - v_A
-                f.write("r_SA_I = \n")
-                np.savetxt(f, r_SA_I_data, fmt="%f %f %f")
-                f.write("v_SA_I = \n")
-                np.savetxt(f, v_SA_I_data, fmt="%f %f %f")
-
-                f.write("r_AO_I = \n")
-                np.savetxt(f, state_A_I[i, :, 0:3], fmt="%f %f %f")
-                f.write("v_AO_I = \n")
-                np.savetxt(f, state_A_I[i, :, 3:6], fmt="%f %f %f")
-
-                f.write("r_GO_I = \n")
-                np.savetxt(f, r_GO_I[i], fmt="%f %f %f")
-                f.write("v_GO_I = \n")
-                np.savetxt(f, v_GO_I[i], fmt="%f %f %f")
-            print(f"  [GTVAL]   {gtvalues_filepath}")
-
-            # --- JSON file for UE5 simulator (read from gtValues.txt) ---
-            json_dir = os.path.join(OUTPUT_BASE, "json")
-            os.makedirs(json_dir, exist_ok=True)
-            json_filename = os.path.join(json_dir, f"{dir_name}.json")
-            data_dict = read_gt_values(gtvalues_filepath)
-            create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
-            print(f"  [JSON]    {json_filename}")
-
-            # --- sensormeasurements.txt ---
-            sensor_filepath = os.path.join(ue5_out, "sensormeasurements.txt")
-            with open(sensor_filepath, "w") as f:
-                f.write("nSamples = \n")
-                f.write(f"{nbSteps}\n")
-                f.write("timestamps = \n")
-                np.savetxt(f, timestamps, fmt="%f")
-                f.write("q_IS_m = \n")
-                np.savetxt(f, q_IC_m[i, agent_idx], fmt="%f %f %f %f")
-                # Same sign convention as gtValues.txt: negate omega_CI_C to get ω_SI^S
-                # (see detailed comment in gtValues.txt section above)
-                f.write("omega_SI_S_m = \n")
-                np.savetxt(f, -omega_CI_C_m[i, agent_idx], fmt="%f %f %f")
-                f.write("r_AO_I = \n")
-                np.savetxt(f, state_A_I[i, :, 0:3], fmt="%f %f %f")
-                f.write("f_s_S_m = \n")
-                np.savetxt(f, f_specific_S_m[i, agent_idx], fmt="%f %f %f")
-                f.write("tau_s_S = \n")
-                np.savetxt(f, tau_specific_S[i, agent_idx], fmt="%f %f %f")
-            print(f"  [SENSOR]  {sensor_filepath}")
-
-            # --- Config.yaml (OpenCV-style YAML for SatSLAM) ---
-            config_filepath = os.path.join(ue5_out, "Config.yaml")
-            with open(config_filepath, "w") as f:
-                # Camera intrinsics from camera_obj
-                focal_length = camera_obj.get("focal_length", FOCAL_LENGTH_PX)
-                resolution = camera_obj.get("resolution", CAMERA_RESOLUTION)
-                cx = resolution / 2.0
-                cy = resolution / 2.0
-                fps = 1.0 / tstep_eff
-
-                f.write("%YAML:1.0\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Filenames to load\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("ImageList.Filename: imgList.txt\n")
-                f.write("GroundTruth.Filename: gtValues.txt\n")
-                f.write("SensorMeasurements.Filename: sensormeasurements.txt\n")
-                f.write(f"ShapeModel.Filename: {SHAPE_MODEL_FILENAME}\n")
-                f.write("ShapeModel.ScaleFactor: 1.0\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Experimentation Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Settings.runExperiments: 0\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# General Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Settings.IsAsync: 0\n")
-                f.write("Settings.ActiveVisualizer: 0\n")
-                f.write("Settings.ActiveRecord: 0\n")
-                f.write("Settings.ActiveBackEnd: 1\n")
-                f.write("Settings.ActiveLoopClosure: 1\n")
-                f.write("Settings.ActiveMesher: 0\n")
-                f.write("Settings.ActiveLines: 0\n")
-                f.write("Settings.EmptyQueueBeforeTerminate: 0\n")
-                f.write("Settings.HasGT: 1\n")
-                f.write("Settings.UseGT: 0\n")
-                f.write("Settings.StartIdx: 0\n")
-                f.write(f"Settings.EndIdx: {nbSteps}\n")
-                f.write("Settings.InitialOffset: 0\n")
-                f.write("Settings.nFramesInit: 6\n")
-                f.write("Settings.DownsampleFactor: 1\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Camera Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Camera.R_CS_r11: 1.0\n")
-                f.write("Camera.R_CS_r12: 0.0\n")
-                f.write("Camera.R_CS_r13: 0.0\n")
-                f.write("Camera.R_CS_r21: 0.0\n")
-                f.write("Camera.R_CS_r22: 1.0\n")
-                f.write("Camera.R_CS_r23: 0.0\n")
-                f.write("Camera.R_CS_r31: 0.0\n")
-                f.write("Camera.R_CS_r32: 0.0\n")
-                f.write("Camera.R_CS_r33: 1.0\n")
-                f.write(f"Camera.fx: {focal_length}\n")
-                f.write(f"Camera.fy: {focal_length}\n")
-                f.write(f"Camera.cx: {cx}\n")
-                f.write(f"Camera.cy: {cy}\n")
-                f.write("Camera.k1: 0.0\n")
-                f.write("Camera.k2: 0.0\n")
-                f.write("Camera.p1: 0.0\n")
-                f.write("Camera.p2: 0.0\n")
-                f.write("Camera.k3: 0.0\n")
-                f.write(f"Camera.fps: {fps:.1f}\n")
-                f.write("Camera.RGB: 0\n")
-                f.write(f"Camera.resolution: [{resolution}, {resolution}]\n")
-                f.write("Image.FITSValueScale: 22.849\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Front-End Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("FrontEnd.kfInterval: 7\n")
-                f.write("FrontEnd.matcherWindowAndCandidates: [1, 1]\n")
-                f.write("FrontEnd.minInlierPercentage: 0.75\n")
-                f.write("FrontEnd.minInliersToLastKF: 30\n")
-                f.write("FrontEnd.minInliers: 8\n")
-                f.write("FrontEnd.knnK: 1\n")
-                f.write("FrontEnd.loweRatio: 0.75\n")
-                f.write("FrontEnd.ransacReprojThreshold: 6.0\n")
-                f.write("FrontEnd.ransacConfidence: 0.999\n")
-                f.write("FrontEnd.minBaselinePx: 1e6\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# ORB Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("ORBextractor.nFeatures: 1450\n")
-                f.write("ORBextractor.scaleFactor: 1.25\n")
-                f.write("ORBextractor.nLevels: 7\n")
-                f.write("ORBextractor.edgeThreshold: 10\n")
-                f.write("ORBextractor.patchSize: 31\n")
-                f.write("ORBextractor.fastThreshold: 14\n")
-                f.write("ORBextractor.minFastThreshold: 4\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Line Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Line.minlength: 1.0\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Back-End Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("BackEnd.useRelDyn: 1\n")
-                f.write("Backend.minTriangulationAngleDeg: 0.5\n")
-                f.write("BackEnd.iSAMRelinearizationThresh: 0.1\n")
-                f.write("BackEnd.iSAMRelinearizationSkip: 1\n")
-                f.write("BackEnd.iSAMcacheLinearizedFactors: 1\n")
-                f.write("BackEnd.iSAMfindUnusedFactorSlots: 1\n")
-                f.write("BackEnd.iSAMfactorization: QR\n")
-                f.write("BackEnd.wildfire_threshold: 0.001\n")
-                f.write("BackEnd.numOptimize: 1\n")
-                f.write("BackEnd.optimizationWindowSec: 60\n")
-                f.write("BackEnd.iSAMevaluateNonlinearError: 0\n")
-                f.write("BackEnd.iSAMenableDetailedResults: 0\n")
-                f.write("BackEnd.SfSMalpha: 1.0\n")
-                f.write("Prior.Q_sigmas: [0.01, 0.01, 0.01]\n")
-                f.write("Prior.r_sigmas: [0.1, 0.1, 1.0]\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# RelDyn Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("RelDynFactor.nStages: 5\n")
-                f.write("RelDynFactor.ninc: 16\n")
-                f.write("RelDynFactor.LU: 1.0\n")
-                f.write("RelDynFactor.TU: 1.0\n")
-                f.write(f"RelDynFactor.muEarth: {mu_ref}\n")
-                f.write("RelDynFactor.usePreviousMeasurement: 1\n")
-                f.write("RelDynFactor.sigmasSpectralDensity: [ 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 0.3, 0.3, 0.3]\n")
-                f.write("RelDynFactor.omega_GI_G_noise: [0.01, 0.01, 0.01]\n")
-                f.write("RelDynFactor.I_A_noise: [1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1]\n")
-                f.write("RelDynFactor.r_AG_G_noise: [1.0, 1.0, 0.01]\n")
-                f.write("RelDynFactor.r_SA_I_noise: [1.0, 1.0, 1.0]\n")
-                f.write("RelDynFactor.v_SA_I_noise: [100.0, 100.0, 100.0]\n")
-                f.write("RelDynFactor.rTc_noise: [1e-06, 1e-06, 1e-06]\n")
-                f.write("RelDynFactor.angularMomentumNoise: [0.0001, 0.0001, 0.0001]\n")
-                f.write("RelDynFactor.sigmas_r_SG_G_meas: [0.01, 0.01, 0.01]\n")
-                f.write("RelDynFactor.mu0_noise: 20\n")
-                f.write("RelDynFactor.kinoRoto_noise: [0.002, 0.002, 0.002, 0.0005, 0.0005, 0.0005]\n")
-                f.write("RelDynFactor.Q0_sigmas: [1e-05, 1e-05, 1e-05]\n")
-                f.write("RelDynFactor.r0_sigmas: [5e-08, 5e-08, 5e-08]\n")
-                f.write("RelDynFactor.R_meas_noise: [0.0002774, 0.0002774, 0.0002774]\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Loop-Closure Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("LoopClosure.ignoredFramesWindow: 10\n")
-                f.write("LoopClosure.defaultMinScore: 0.1\n")
-                f.write("LoopClosure.loweRatio: 0.75\n")
-                f.write("LoopClosure.minInliers: 6\n")
-                f.write("LoopClosure.minSharedWords: 3\n")
-                f.write("LoopClosure.commonWordsRatio: 0.8\n")
-                f.write("LoopClosure.ransacReprojThreshold: 1.0\n")
-                f.write("LoopClosure.ransacConfidence: 0.99\n")
-                f.write("LoopClosure.knnK: 1\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Viewer Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Viewer.KeyFrameSize: 0.05\n")
-                f.write("Viewer.KeyFrameLineWidth: 1\n")
-                f.write("Viewer.GraphLineWidth: 0.9\n")
-                f.write("Viewer.PointSize: 2\n")
-                f.write("Viewer.CameraSize: 0.08\n")
-                f.write("Viewer.CameraLineWidth: 3\n")
-                f.write("Viewer.ViewpointX: -100.0\n")
-                f.write("Viewer.ViewpointY: 100.0\n")
-                f.write("Viewer.ViewpointZ: 100.0\n")
-                f.write("Viewer.ViewpointF: 500\n")
-                f.write("Viewer.TriadScale: 1\n")
-                f.write("Viewer.Width: 1920\n")
-                f.write("Viewer.Height: 1080\n")
-                f.write("Viewer.clipNear: 0.1\n")
-                f.write("Viewer.clipFar: 1000\n")
-                f.write("Viewer.fov: 45\n")
-                f.write("Viewer.DrawObject: 1\n")
-                f.write("Viewer.LightPower: 20.0\n\n")
-
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Depth Simulator Parameters\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("Simulator.clipNear: 0.1\n")
-                f.write("Simulator.clipFar: 4000\n")
-                f.write("Simulator.DrawObject: 1\n")
-                f.write("Simulator.LightPower: 20.0\n\n")
-
-                # Add trajectory generation metadata as comments
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write("# Trajectory Generation Metadata (for reference only)\n")
-                f.write("#--------------------------------------------------------------------------------------------\n")
-                f.write(f"# trial_seed: {int(child_ss[i].entropy)}\n")
-                f.write(f"# path_mode: {path_mode}\n")
-                f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
-                f.write(f"# agent_id: {agent_idx}\n")
-                f.write(f"# mu_ref: {mu_ref}\n")
-                f.write(f"# h_orbit: {h_orbit}\n")
-                f.write(f"# tend: {tend}\n")
-                f.write(f"# tstep: {tstep_eff}\n")
-                f.write(f"# inc: {inc[i]}\n")
-                f.write(f"# ecc: {ecc[i]}\n")
-
-            print(f"  [CONFIG]  {config_filepath}")
 
     # ---------- Generate plots ----------
     print("\n[STEP 5] Generating trajectory plots...")
 
-    plot_dir = os.path.join(OUTPUT_BASE, "trial_plots")
+    plot_dir = os.path.join(base_output_file, "trial_plots")
     os.makedirs(plot_dir, exist_ok=True)
 
     for i in range(num_mc):
@@ -979,7 +1106,7 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc
         except Exception as e:
             print(f"  [WARN] Could not generate plot for MC {i}: {e}")
 
-    print(f"\n[DONE] Output written to: {OUTPUT_BASE}")
+    print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {MASTER_SEED}")
     print(f"       Mode: {path_mode}")
     print(f"       {num_mc} MC trials, {num_agents} agent(s) each")
@@ -994,7 +1121,6 @@ def main():
     print("=" * 60)
 
     # ---------- User inputs ----------
-    # TODO this will need to be changed to only run if in a standalone mode
     num_agents = int(input("Number of agents for inspection scenario: ").strip())
     rotMode_Gframe = input("Mode Setting (1: Inertial, 2: Hill, 3: Tumbling): ").strip()
     num_mc = int(input("Number of samples for Monte Carlo Simulation: ").strip())
@@ -1018,7 +1144,7 @@ def main():
     print(f"[INFO] Mode: {path_mode}")
     print(f"[INFO] Agents: {num_agents}, MC trials: {num_mc}")
 
-    generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, rngs_mc)
+    generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_ss, rngs_mc)
 
 if __name__ == "__main__":
     main()
