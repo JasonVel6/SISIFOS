@@ -10,6 +10,8 @@ import shutil
 from scipy.linalg import logm
 from math_utils import *
 
+# TODO this can all likely get moved into io_utils or the mat utils
+
 def axes_to_quaternion(x_axis, y_axis, z_axis):
     # Form the rotation matrix from the axes
     R = np.column_stack((x_axis, y_axis, z_axis))

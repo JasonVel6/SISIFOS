@@ -50,13 +50,14 @@ from motion_cases import (
 )
 
 # TODO Evaluate what we need in the math function
-from math_utils import (
+from modules.trajectory.trajectory_math import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
     _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity
 )
 from ue5_function import calcInitCondChaser, read_gt_values, create_json
 from plot_figure import plot_trial_trajectories
+from trajectory_io import write_camera_trajectory
 
 # ---------------- Paths ----------------
 # TODO modify the paths to make more sense for SISFOS integration 
@@ -147,41 +148,6 @@ J = np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
 # Output File helpers
 # TODO these should be moved to another file for modularity and keeping this file small
 # ============================================================================
-def write_camera_trajectory(output_dir: str,
-                            nbSteps: int,
-                            timestamps: np.ndarray,
-                            q_GC_use: np.ndarray,
-                            r_CG_G_use: np.ndarray, 
-                            r_OG_G_use: np.ndarray,
-                            az_G_use: np.ndarray,
-                            el_G_use: np.ndarray,
-                            q_IG_use: np.ndarray):
-    """
-    Write camera_traj.txt for Blender import.
-    TODO Lucas Will need to totally re format this
-    TODO we may need to fix up the referencing frames here too
-    a data structure to hold everything may be a good idea
-    """
-    blender_filepath = os.path.join(output_dir, "camera_traj.txt")
-    with open(blender_filepath, "w") as f:
-        f.write("nbTruePts = \n")
-        f.write(f"{nbSteps}\n")
-        f.write("tspan = \n")
-        np.savetxt(f, timestamps, fmt="%f")
-        f.write("q_GC = \n")
-        np.savetxt(f, q_GC_use, fmt="%f %f %f %f")
-        f.write("r_CG = \n")
-        np.savetxt(f, r_CG_G_use, fmt="%f %f %f")
-        f.write("r_OG_G = \n")
-        np.savetxt(f, r_OG_G_use, fmt="%f %f %f")
-        f.write("sun_az = \n")
-        np.savetxt(f, az_G_use, fmt="%f")
-        f.write("sun_el = \n")
-        np.savetxt(f, el_G_use, fmt="%f")
-        f.write("q_IG = \n")
-        np.savetxt(f, q_IG_use, fmt="%f %f %f %f")
-    print(f"  [BLENDER] {blender_filepath}")
-
 def write_gtvalues(output_dir: str,
                     nbSteps: int,
                     timestamps: np.ndarray,
@@ -596,10 +562,10 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
 
     # Combine into r_0 array
     r_0 = np.zeros((num_mc, num_agents, 6))
-    for i in range(num_mc):
+    for mc_trial in range(num_mc):
         for a in range(num_agents):
-            r_0[i, a] = [x_0[i, a], y_0[i, a], z_0[i, a],
-                         xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]]
+            r_0[mc_trial, a] = [x_0[mc_trial, a], y_0[mc_trial, a], z_0[mc_trial, a],
+                         xdot_0[mc_trial, a], ydot_0[mc_trial, a], zdot_0[mc_trial, a]]
 
     # ---------- Generate MC parameters ----------
     print("\n[STEP 2] Sampling orbital and attitude parameters...")
@@ -613,15 +579,15 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
     roll = np.zeros(num_mc)
 
     # TODO parameterize distributions
-    for i in range(num_mc):
-        rng = rngs_mc[i]
-        inc[i] = float(rng.uniform(0.0, np.pi))
-        ecc[i] = float(rng.uniform(0.005, 0.05))
-        el_I[i] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
-        az_I[i] = float(rng.uniform(0.0, 2.0 * np.pi))
-        yaw[i] = float(rng.uniform(0.0, 2.0 * np.pi))
-        pitch[i] = float(rng.uniform(0.0, np.pi))
-        roll[i] = float(rng.uniform(0.0, 2.0 * np.pi))
+    for mc_trial in range(num_mc):
+        rng = rngs_mc[mc_trial]
+        inc[mc_trial] = float(rng.uniform(0.0, np.pi))
+        ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
+        el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
+        az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
+        yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
+        pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
+        roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, tend, tstep, dtype=float)
@@ -718,66 +684,66 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
     print("\n[STEP 3] Propagating orbits and computing geometry...")
 
     # Outer loop: MC trials
-    for i in range(num_mc):
-        print(f"  MC trial {i+1}/{num_mc}...", end=" ", flush=True)
+    for mc_trial in range(num_mc):
+        print(f"  MC trial {mc_trial+1}/{num_mc}...", end=" ", flush=True)
 
         # Target initial attitude
-        Rz_arr[i] = au2R(yaw[i], np.array([0, 0, 1]))
-        Ry[i] = au2R(pitch[i], np.array([0, 1, 0]))
-        Rx[i] = au2R(roll[i], np.array([1, 0, 0]))
-        R_XG_0[i] = Rx[i] @ Ry[i] @ Rz_arr[i]
+        Rz_arr[mc_trial] = au2R(yaw[mc_trial], np.array([0, 0, 1]))
+        Ry[mc_trial] = au2R(pitch[mc_trial], np.array([0, 1, 0]))
+        Rx[mc_trial] = au2R(roll[mc_trial], np.array([1, 0, 0]))
+        R_XG_0[mc_trial] = Rx[mc_trial] @ Ry[mc_trial] @ Rz_arr[mc_trial]
 
         # Target COM initial state
-        oe_t[i] = np.array([a, ecc[i], inc[i], 0, 0, 0])
-        r_AO_I_0[i], v_AO_I_0[i] = oe2cart(oe_t[i], mu_ref)
-        R_IH_0[i] = createHillFrame(r_AO_I_0[i], v_AO_I_0[i])
-        n[i] = np.sqrt(mu_ref / np.linalg.norm(r_AO_I_0[i])**3)
-        omega_HI_I_0[i] = n[i] * R_IH_0[i, :, 2]
-        state_A_I[i, 0] = np.hstack([r_AO_I_0[i], v_AO_I_0[i]])
+        oe_t[mc_trial] = np.array([a, ecc[mc_trial], inc[mc_trial], 0, 0, 0])
+        r_AO_I_0[mc_trial], v_AO_I_0[mc_trial] = oe2cart(oe_t[mc_trial], mu_ref)
+        R_IH_0[mc_trial] = createHillFrame(r_AO_I_0[mc_trial], v_AO_I_0[mc_trial])
+        n[mc_trial] = np.sqrt(mu_ref / np.linalg.norm(r_AO_I_0[mc_trial])**3)
+        omega_HI_I_0[mc_trial] = n[mc_trial] * R_IH_0[mc_trial, :, 2]
+        state_A_I[mc_trial, 0] = np.hstack([r_AO_I_0[mc_trial], v_AO_I_0[mc_trial]])
 
         # Propagate target COM
-        state_A_I[i] = propagate_orbit(mu_ref, state_A_I[i, 0], timestamps)
+        state_A_I[mc_trial] = propagate_orbit(mu_ref, state_A_I[mc_trial, 0], timestamps)
 
         # Per-agent chaser propagation
         for agent_idx in range(num_agents):
-            r0_agent = r_0[i, agent_idx].copy()
+            r0_agent = r_0[mc_trial, agent_idx].copy()
             if rotMode_Gframe == "2":
-                r0_agent[0] = -r0_agent[4] / (2 * n[i])
+                r0_agent[0] = -r0_agent[4] / (2 * n[mc_trial])
 
             r_CO_I_0, v_CO_I_0 = calcInitCondChaser(
                 r0_agent[3], r0_agent[4], r0_agent[5],
                 r0_agent[0], r0_agent[1], r0_agent[2],
-                state_A_I[i, 0], R_IH_0[i], omega_HI_I_0[i],
+                state_A_I[mc_trial, 0], R_IH_0[mc_trial], omega_HI_I_0[mc_trial],
             )
-            state_C_I_0[i, agent_idx] = np.hstack([r_CO_I_0, v_CO_I_0])
-            state_C_I[i, agent_idx] = propagate_orbit(mu_ref, state_C_I_0[i, agent_idx], timestamps)
+            state_C_I_0[mc_trial, agent_idx] = np.hstack([r_CO_I_0, v_CO_I_0])
+            state_C_I[mc_trial, agent_idx] = propagate_orbit(mu_ref, state_C_I_0[mc_trial, agent_idx], timestamps)
 
         # Attitude law
         if rotMode_Gframe == "1":
             for j in range(nbSteps):
-                R_IG[i, j] = R_XG_0[i]
-                omega_GI_I[i, j] = np.array([0, 0, 0])
-                omega_GI_G[i, j] = np.array([0, 0, 0])
+                R_IG[mc_trial, j] = R_XG_0[mc_trial]
+                omega_GI_I[mc_trial, j] = np.array([0, 0, 0])
+                omega_GI_G[mc_trial, j] = np.array([0, 0, 0])
         elif rotMode_Gframe == "2":
             for j in range(nbSteps):
-                R_IH = createHillFrame(state_A_I[i, j, 0:3], state_A_I[i, j, 3:6])
-                R_IG[i, j] = R_IH @ R_XG_0[i]
-                omega_GI_I[i, j] = omega_HI_I_0[i]
-                omega_GI_G[i, j] = R_IG[i, j].T @ omega_GI_I[i, j]
+                R_IH = createHillFrame(state_A_I[mc_trial, j, 0:3], state_A_I[mc_trial, j, 3:6])
+                R_IG[mc_trial, j] = R_IH @ R_XG_0[mc_trial]
+                omega_GI_I[mc_trial, j] = omega_HI_I_0[mc_trial]
+                omega_GI_G[mc_trial, j] = R_IG[mc_trial, j].T @ omega_GI_I[mc_trial, j]
         elif rotMode_Gframe == "3":
-            R0 = R_XG_0[i]
+            R0 = R_XG_0[mc_trial]
             # omega_GI_G_0 is (num_mc, 3) array - extract this trial's initial angular velocity
             # Use retry loop to ensure sufficient omega excitation for inertia observability
             MAX_OMEGA_RETRIES = 10
             omega_excitation_validated = False
 
             for omega_retry in range(MAX_OMEGA_RETRIES):
-                omega_GI_G[i], R_IG[i] = solve_ne_equation(nbSteps, tstep_eff, omega_GI_G_0[i], R0, J)
+                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, J)
 
                 # Validate omega timeseries has sufficient excitation
                 dt_array = np.full(nbSteps - 1, tstep_eff)
                 is_valid, validation_stats = validate_omega_timeseries_excitation(
-                    omega_GI_G[i], dt_array=dt_array,
+                    omega_GI_G[mc_trial], dt_array=dt_array,
                     omega_dot_min=1e-5, off_axis_min=0.3
                 )
 
@@ -787,20 +753,20 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                 else:
                     # Resample omega_0 with inertia-aware sampling
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
-                        omega_mag = np.linalg.norm(omega_GI_G_0[i])
+                        omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[i], J,
+                            rngs_mc[mc_trial], J,
                             min_asymmetry_component=0.4,
                             off_axis_min=0.3
                         )
-                        omega_GI_G_0[i] = omega_mag * d_new
+                        omega_GI_G_0[mc_trial] = omega_mag * d_new
 
             if not omega_excitation_validated:
-                print(f"\n  WARNING: MC trial {i} omega excitation validation failed after {MAX_OMEGA_RETRIES} retries")
+                print(f"\n  WARNING: MC trial {mc_trial} omega excitation validation failed after {MAX_OMEGA_RETRIES} retries")
                 print(f"           max_omega_dot={validation_stats.get('max_omega_dot', 'N/A')}")
 
             for j in range(nbSteps):
-                omega_GI_I[i, j] = R_IG[i, j] @ omega_GI_G[i, j]
+                omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
 
         # Sun alignment
         if EARTH_BACKGROUND_ENABLE:
@@ -810,7 +776,7 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
             j0 = 0
             agent0 = 0
             # Camera position in inertial frame (Earth at origin)
-            r_cam_I = state_C_I[i, agent0, j0, 0:3]
+            r_cam_I = state_C_I[mc_trial, agent0, j0, 0:3]
             # Sun direction = away from Earth (same direction as camera position from Earth)
             if np.linalg.norm(r_cam_I) > 0:
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
@@ -821,14 +787,14 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                     if abs(u_sun_I @ up) > 0.95:
                         up = np.array([0.0, 1.0, 0.0])
                     u_sun_I = rodrigues(u_sun_I, up, jitter_rad)
-                az_I[i], el_I[i] = _vecI_to_azel(u_sun_I)
+                az_I[mc_trial], el_I[mc_trial] = _vecI_to_azel(u_sun_I)
         elif SUN_ALIGN_ENABLE:
             # Original: align sun with camera line-of-sight (front-lit target)
             j0 = 0
             agent0 = 0
             # r_CG^I = r_CA^I - r_AG^I = r_CA^I - R_IG @ r_AG^G
-            r_CG_I0 = (state_C_I[i, agent0, j0, 0:3] - state_A_I[i, j0, 0:3]) - R_IG[i, j0] @ r_AG_G_used
-            r_CG_G0 = R_IG[i, j0].T @ r_CG_I0
+            r_CG_I0 = (state_C_I[mc_trial, agent0, j0, 0:3] - state_A_I[mc_trial, j0, 0:3]) - R_IG[mc_trial, j0] @ r_AG_G_used
+            r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
                 cone_deg = SUN_ALIGN_CONE_DEG + (np.random.rand() - 0.5) * 2.0 * SUN_ALIGN_JITTER_D
@@ -837,47 +803,47 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                 if abs(u_LOS_G @ up) > 0.95:
                     up = np.array([0.0, 1.0, 0.0])
                 u_sun_G = rodrigues(u_LOS_G, up, cone_rad)
-                u_sun_I = R_IG[i, j0] @ u_sun_G
-                az_I[i], el_I[i] = _vecI_to_azel(u_sun_I)
+                u_sun_I = R_IG[mc_trial, j0] @ u_sun_G
+                az_I[mc_trial], el_I[mc_trial] = _vecI_to_azel(u_sun_I)
 
         # Continuous look-at per agent
         x_right_prev = [None] * num_agents
         q_GC_prev = [None] * num_agents
 
         for j in range(nbSteps):
-            q_IG[i, j] = R2q(R_IG[i, j])
-            r_AO_I = state_A_I[i, j, 0:3]
-            v_AO_I = state_A_I[i, j, 3:6]
+            q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
+            r_AO_I = state_A_I[mc_trial, j, 0:3]
+            v_AO_I = state_A_I[mc_trial, j, 3:6]
 
-            r_GO_I[i, j] = r_AO_I + R_IG[i, j] @ r_AG_G_used
-            v_GO_I[i, j] = v_AO_I + R_IG[i, j] @ np.cross(omega_GI_G[i, j], r_AG_G_used)
+            r_GO_I[mc_trial, j] = r_AO_I + R_IG[mc_trial, j] @ r_AG_G_used
+            v_GO_I[mc_trial, j] = v_AO_I + R_IG[mc_trial, j] @ np.cross(omega_GI_G[mc_trial, j], r_AG_G_used)
 
-            H_GI_G[i, j] = J @ omega_GI_G[i, j]
-            H_GI_I[i, j] = R_IG[i, j] @ H_GI_G[i, j]
+            H_GI_G[mc_trial, j] = J @ omega_GI_G[mc_trial, j]
+            H_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ H_GI_G[mc_trial, j]
 
-            r_OG_G[i, j] = -R_IG[i, j].T @ r_GO_I[i, j]
-            sun_dir_G[i, j] = R_IG[i, j].T @ np.array([
-                np.cos(el_I[i]) * np.cos(az_I[i]),
-                np.cos(el_I[i]) * np.sin(az_I[i]),
-                np.sin(el_I[i]),
+            r_OG_G[mc_trial, j] = -R_IG[mc_trial, j].T @ r_GO_I[mc_trial, j]
+            sun_dir_G[mc_trial, j] = R_IG[mc_trial, j].T @ np.array([
+                np.cos(el_I[mc_trial]) * np.cos(az_I[mc_trial]),
+                np.cos(el_I[mc_trial]) * np.sin(az_I[mc_trial]),
+                np.sin(el_I[mc_trial]),
             ])
-            az_G[i, j] = math.degrees(math.atan2(sun_dir_G[i, j, 1], sun_dir_G[i, j, 0]))
-            el_G[i, j] = math.degrees(math.atan2(
-                sun_dir_G[i, j, 2],
-                np.sqrt(sun_dir_G[i, j, 0]**2 + sun_dir_G[i, j, 1]**2)
+            az_G[mc_trial, j] = math.degrees(math.atan2(sun_dir_G[mc_trial, j, 1], sun_dir_G[mc_trial, j, 0]))
+            el_G[mc_trial, j] = math.degrees(math.atan2(
+                sun_dir_G[mc_trial, j, 2],
+                np.sqrt(sun_dir_G[mc_trial, j, 0]**2 + sun_dir_G[mc_trial, j, 1]**2)
             ))
 
             for agent_idx in range(num_agents):
-                d_rI = state_C_I[i, agent_idx, j, 0:3] - r_AO_I
-                d_vI = state_C_I[i, agent_idx, j, 3:6] - v_AO_I
+                d_rI = state_C_I[mc_trial, agent_idx, j, 0:3] - r_AO_I
+                d_vI = state_C_I[mc_trial, agent_idx, j, 3:6] - v_AO_I
 
                 # r_CG = C - G = (C - A) - (G - A) = r_CA - r_AG
                 # r_CG^G = R_IG.T @ r_CA^I - r_AG^G
-                r_CG_G[i, agent_idx, j] = R_IG[i, j].T @ d_rI - r_AG_G_used
-                v_CG_G[i, agent_idx, j] = R_IG[i, j].T @ d_vI - np.cross(omega_GI_G[i, j], r_AG_G_used)
-                dr_CG_G[i, agent_idx, j] = v_CG_G[i, agent_idx, j] - np.cross(omega_GI_G[i, j], r_CG_G[i, agent_idx, j])
+                r_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_rI - r_AG_G_used
+                v_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_vI - np.cross(omega_GI_G[mc_trial, j], r_AG_G_used)
+                dr_CG_G[mc_trial, agent_idx, j] = v_CG_G[mc_trial, agent_idx, j] - np.cross(omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j])
 
-                fwd_G = -r_CG_G[i, agent_idx, j]
+                fwd_G = -r_CG_G[mc_trial, agent_idx, j]
                 Rgs, x_right_prev[agent_idx] = _lookat_continuous_RGS(
                     fwd_G=fwd_G,
                     world_up_G=np.array([0.0, 0.0, 1.0]),
@@ -885,22 +851,22 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                     cos_thr=0.9995,
                     sin_thr=0.03
                 )
-                R_GC[i, agent_idx, j] = Rgs
+                R_GC[mc_trial, agent_idx, j] = Rgs
 
-                q_raw = R2q(R_GC[i, agent_idx, j])
-                q_GC[i, agent_idx, j] = _quat_hemi_continuous(q_raw, q_GC_prev[agent_idx])
-                q_GC_prev[agent_idx] = q_GC[i, agent_idx, j]
+                q_raw = R2q(R_GC[mc_trial, agent_idx, j])
+                q_GC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_GC_prev[agent_idx])
+                q_GC_prev[agent_idx] = q_GC[mc_trial, agent_idx, j]
 
-                R_IC[i, agent_idx, j] = R_IG[i, j] @ R_GC[i, agent_idx, j]
-                q_IC[i, agent_idx, j] = R2q(R_IC[i, agent_idx, j])
+                R_IC[mc_trial, agent_idx, j] = R_IG[mc_trial, j] @ R_GC[mc_trial, agent_idx, j]
+                q_IC[mc_trial, agent_idx, j] = R2q(R_IC[mc_trial, agent_idx, j])
 
-                R_IC_m[i, agent_idx, j] = R_IC[i, agent_idx, j] @ expm(sk(eta[agent_idx, j]))
-                q_IC_m[i, agent_idx, j] = R2q(R_IC_m[i, agent_idx, j])
+                R_IC_m[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j] @ expm(sk(eta[agent_idx, j]))
+                q_IC_m[mc_trial, agent_idx, j] = R2q(R_IC_m[mc_trial, agent_idx, j])
 
         # Enforce quaternion continuity
         for agent_idx in range(num_agents):
-            enforce_quat_series_continuity(q_GC[i, agent_idx, :])
-            enforce_quat_series_continuity(q_IC[i, agent_idx, :])
+            enforce_quat_series_continuity(q_GC[mc_trial, agent_idx, :])
+            enforce_quat_series_continuity(q_IC[mc_trial, agent_idx, :])
 
         """
         Angular velocity computation - CONSISTENT with dynamics
@@ -924,11 +890,11 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
             # First compute omega_GC_C from finite differences of R_GC
             # log(R_GC^T @ R_GC_next)/dt gives ω_GC^C (G wrt C, in C frame)
             omega_GC_C = np.zeros((nbSteps, 3))
-            omega_GC_C[0] = so3_log_vec(R_GC[i, agent_idx, 0].T @ R_GC[i, agent_idx, 1]) / tstep_eff
+            omega_GC_C[0] = so3_log_vec(R_GC[mc_trial, agent_idx, 0].T @ R_GC[mc_trial, agent_idx, 1]) / tstep_eff
             for k in range(1, nbSteps - 1):
-                Rm = R_GC[i, agent_idx, k - 1].T @ R_GC[i, agent_idx, k + 1]
+                Rm = R_GC[mc_trial, agent_idx, k - 1].T @ R_GC[mc_trial, agent_idx, k + 1]
                 omega_GC_C[k] = so3_log_vec(Rm) / (2.0 * tstep_eff)
-            omega_GC_C[nbSteps - 1] = so3_log_vec(R_GC[i, agent_idx, nbSteps - 2].T @ R_GC[i, agent_idx, nbSteps - 1]) / tstep_eff
+            omega_GC_C[nbSteps - 1] = so3_log_vec(R_GC[mc_trial, agent_idx, nbSteps - 2].T @ R_GC[mc_trial, agent_idx, nbSteps - 1]) / tstep_eff
 
             # Now compute omega_IC^C using angular velocity addition:
             #   ω_IC = ω_IG + ω_GC  (I wrt C = I wrt G + G wrt C)
@@ -944,45 +910,45 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
             # The variable omega_GC_C is misnamed - it actually stores ω_CG^C = -ω_GC^C.
             # Angular velocity addition: ω_IC^C = ω_IG^C + ω_GC^C = ω_IG^C - ω_CG^C
             for k in range(nbSteps):
-                R_CG = R_GC[i, agent_idx, k].T
-                omega_IG_C = -R_CG @ omega_GI_G[i, k]  # ω_IG^C = -R_CG @ ω_GI^G
-                omega_CI_C[i, agent_idx, k] = omega_IG_C - omega_GC_C[k]  # ω_IC^C = ω_IG^C - ω_CG^C (note: omega_GC_C stores ω_CG^C)
+                R_CG = R_GC[mc_trial, agent_idx, k].T
+                omega_IG_C = -R_CG @ omega_GI_G[mc_trial, k]  # ω_IG^C = -R_CG @ ω_GI^G
+                omega_CI_C[mc_trial, agent_idx, k] = omega_IG_C - omega_GC_C[k]  # ω_IC^C = ω_IG^C - ω_CG^C (note: omega_GC_C stores ω_CG^C)
 
             for j in range(nbSteps):
                 if j == 0:
-                    gyro_bias_state[i, agent_idx] = np.random.normal(0.0, sigma_bg, size=3)
+                    gyro_bias_state[mc_trial, agent_idx] = np.random.normal(0.0, sigma_bg, size=3)
                 else:
-                    gyro_bias_state[i, agent_idx] = phi_g * gyro_bias_state[i, agent_idx] + inc_std_g * np.random.normal(0.0, 1.0, size=3)
-                omega_CI_C_m[i, agent_idx, j] = omega_CI_C[i, agent_idx, j] + nu[agent_idx, j] + gyro_bias_state[i, agent_idx]
+                    gyro_bias_state[mc_trial, agent_idx] = phi_g * gyro_bias_state[mc_trial, agent_idx] + inc_std_g * np.random.normal(0.0, 1.0, size=3)
+                omega_CI_C_m[mc_trial, agent_idx, j] = omega_CI_C[mc_trial, agent_idx, j] + nu[agent_idx, j] + gyro_bias_state[mc_trial, agent_idx]
 
         # Specific force and torque
         for agent_idx in range(num_agents):
             for j in range(nbSteps):
-                r_c_I = state_C_I[i, agent_idx, j, 0:3]
+                r_c_I = state_C_I[mc_trial, agent_idx, j, 0:3]
                 r_magnitude = np.linalg.norm(r_c_I)
                 gravity_I = -mu_ref * r_c_I / (r_magnitude**3)
                 if j == 0:
-                    non_grav_accel_I = (state_C_I[i, agent_idx, 1, 3:6] - state_C_I[i, agent_idx, 0, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, 1, 3:6] - state_C_I[mc_trial, agent_idx, 0, 3:6]) / tstep_eff - gravity_I
                 elif j == nbSteps - 1:
-                    non_grav_accel_I = (state_C_I[i, agent_idx, j, 3:6] - state_C_I[i, agent_idx, j - 1, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, j, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]) / tstep_eff - gravity_I
                 else:
-                    non_grav_accel_I = (state_C_I[i, agent_idx, j + 1, 3:6] - state_C_I[i, agent_idx, j - 1, 3:6]) / (2 * tstep_eff) - gravity_I
-                f_specific_S[i, agent_idx, j] = R_IC[i, agent_idx, j].T @ non_grav_accel_I
+                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, j + 1, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]) / (2 * tstep_eff) - gravity_I
+                f_specific_S[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j].T @ non_grav_accel_I
 
                 if j == 0:
-                    accel_bias_state[i, agent_idx] = np.random.normal(0.0, sigma_ba, size=3)
+                    accel_bias_state[mc_trial, agent_idx] = np.random.normal(0.0, sigma_ba, size=3)
                 else:
-                    accel_bias_state[i, agent_idx] = phi_a * accel_bias_state[i, agent_idx] + inc_std_a * np.random.normal(0.0, 1.0, size=3)
-                f_specific_S_m[i, agent_idx, j] = f_specific_S[i, agent_idx, j] + np.random.multivariate_normal(np.zeros(3), COV_ACCEL_ASTRIX) + accel_bias_state[i, agent_idx]
+                    accel_bias_state[mc_trial, agent_idx] = phi_a * accel_bias_state[mc_trial, agent_idx] + inc_std_a * np.random.normal(0.0, 1.0, size=3)
+                f_specific_S_m[mc_trial, agent_idx, j] = f_specific_S[mc_trial, agent_idx, j] + np.random.multivariate_normal(np.zeros(3), COV_ACCEL_ASTRIX) + accel_bias_state[mc_trial, agent_idx]
 
                 if j == 0:
-                    omega_dot = (omega_CI_C[i, agent_idx, 1] - omega_CI_C[i, agent_idx, 0]) / tstep_eff
+                    omega_dot = (omega_CI_C[mc_trial, agent_idx, 1] - omega_CI_C[mc_trial, agent_idx, 0]) / tstep_eff
                 elif j == nbSteps - 1:
-                    omega_dot = (omega_CI_C[i, agent_idx, j] - omega_CI_C[i, agent_idx, j - 1]) / tstep_eff
+                    omega_dot = (omega_CI_C[mc_trial, agent_idx, j] - omega_CI_C[mc_trial, agent_idx, j - 1]) / tstep_eff
                 else:
-                    omega_dot = (omega_CI_C[i, agent_idx, j + 1] - omega_CI_C[i, agent_idx, j - 1]) / (2 * tstep_eff)
-                J_omega = J @ omega_CI_C[i, agent_idx, j]
-                tau_specific_S[i, agent_idx, j] = J @ omega_dot + np.cross(omega_CI_C[i, agent_idx, j], J_omega)
+                    omega_dot = (omega_CI_C[mc_trial, agent_idx, j + 1] - omega_CI_C[mc_trial, agent_idx, j - 1]) / (2 * tstep_eff)
+                J_omega = J @ omega_CI_C[mc_trial, agent_idx, j]
+                tau_specific_S[mc_trial, agent_idx, j] = J @ omega_dot + np.cross(omega_CI_C[mc_trial, agent_idx, j], J_omega)
 
         print("done")
 
@@ -995,49 +961,50 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
 
     camera_obj = {"focal_length": FOCAL_LENGTH_PX, "resolution": CAMERA_RESOLUTION, "lens_flare": LENS_FLARE}
 
-    for i in range(num_mc):
+    for mc_trial in range(num_mc):
         for agent_idx in range(num_agents):
-            dir_name = f"{date_prefix}_{path_mode}_mc{i}_cro_agent{agent_idx}_{time_suffix}"
+            dir_name = f"{date_prefix}_{path_mode}_mc{mc_trial}_cro_agent{agent_idx}_{time_suffix}"
             mc_output_file = os.path.join(base_output_file, dir_name)
             os.makedirs(mc_output_file, exist_ok=True)
 
             # Select the monte carlo trial and the agent to use for this file writing
-            r_CG_G_use = r_CG_G[i, agent_idx]
-            v_CG_G_use = v_CG_G[i, agent_idx]
-            q_GC_use = q_GC[i, agent_idx]
-            q_IC_use = q_IC[i, agent_idx]
-            omega_CI_C_use = omega_CI_C[i, agent_idx]
-            s_c_I_use = state_C_I[i, agent_idx]
-            q_IC_m_use = q_IC_m[i, agent_idx]
-            omega_CI_C_m_use = omega_CI_C_m[i, agent_idx]
-            f_specific_S_m_use = f_specific_S_m[i, agent_idx]
-            tau_specific_S_use = tau_specific_S[i, agent_idx]
-            state_A_I_use = state_A_I[i] # TODO determine why this does not have agent index
+            r_CG_G_use = r_CG_G[mc_trial, agent_idx]
+            v_CG_G_use = v_CG_G[mc_trial, agent_idx]
+            q_GC_use = q_GC[mc_trial, agent_idx]
+            q_IC_use = q_IC[mc_trial, agent_idx]
+            omega_CI_C_use = omega_CI_C[mc_trial, agent_idx]
+            s_c_I_use = state_C_I[mc_trial, agent_idx]
+            q_IC_m_use = q_IC_m[mc_trial, agent_idx]
+            omega_CI_C_m_use = omega_CI_C_m[mc_trial, agent_idx]
+            f_specific_S_m_use = f_specific_S_m[mc_trial, agent_idx]
+            tau_specific_S_use = tau_specific_S[mc_trial, agent_idx]
+            state_A_I_use = state_A_I[mc_trial] # TODO determine why this does not have agent index
 
-            omega_GI_G_use = omega_GI_G[i]
-            r_OG_G_use = r_OG_G[i]
-            az_G_use = az_G[i]
-            el_G_use = el_G[i]
-            q_IG_use = q_IG[i]
-            r_GO_I_use = r_GO_I[i]
-            v_GO_I_use = v_GO_I[i]
-            state_A_I_use = state_A_I[i]
+            omega_GI_G_use = omega_GI_G[mc_trial]
+            r_OG_G_use = r_OG_G[mc_trial]
+            az_G_use = az_G[mc_trial]
+            el_G_use = el_G[mc_trial]
+            q_IG_use = q_IG[mc_trial]
+            r_GO_I_use = r_GO_I[mc_trial]
+            v_GO_I_use = v_GO_I[mc_trial]
+            state_A_I_use = state_A_I[mc_trial]
+            az_I_use = az_I[mc_trial]
+            el_I_use = el_I[mc_trial]
 
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_use, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
-            print(f"  [INFO] MC{i} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
+            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
 
             write_camera_trajectory(
                 output_dir=mc_output_file,
                 nbSteps=nbSteps,
-                timestamps=timestamps,
-                q_GC_use=q_GC_use,
-                r_CG_G_use=r_CG_G_use,
-                r_OG_G_use=r_OG_G_use,
-                az_G_use=az_G_use,
-                el_G_use=el_G_use,
-                q_IG_use=q_IG_use
+                r_GO_I=r_GO_I_use,
+                q_IG=q_IG_use,
+                r_CO_I=s_c_I_use,
+                q_IC=q_IC_use,
+                sun_az=az_I_use,
+                sun_el=el_I_use,
             )
             gtvalues_filepath = write_gtvalues(
                 output_dir=mc_output_file,
@@ -1074,15 +1041,15 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                             nbSteps=nbSteps,
                             camera_obj=camera_obj,
                             tstep_eff=tstep_eff,
-                            child_ss=child_ss[i],
+                            child_ss=child_ss[mc_trial],
                             path_mode=path_mode,
                             rotMode_Gframe=rotMode_Gframe,
                             agent_idx=agent_idx,
                             mu_ref=mu_ref,
                             h_orbit=h_orbit,
                             tend=tend,
-                            inc=inc[i],
-                            ecc=ecc[i],)
+                            inc=inc[mc_trial],
+                            ecc=ecc[mc_trial],)
 
 
     # ---------- Generate plots ----------
@@ -1091,10 +1058,10 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
     plot_dir = os.path.join(base_output_file, "trial_plots")
     os.makedirs(plot_dir, exist_ok=True)
 
-    for i in range(num_mc):
+    for mc_trial in range(num_mc):
         try:
             plot_trial_trajectories(
-                i=i,
+                i=mc_trial,
                 s_A_I=state_A_I,
                 s_c_I=state_C_I,
                 r_CG_G=r_CG_G,
@@ -1105,7 +1072,7 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                 save=True,
             )
         except Exception as e:
-            print(f"  [WARN] Could not generate plot for MC {i}: {e}")
+            print(f"  [WARN] Could not generate plot for MC {mc_trial}: {e}")
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {MASTER_SEED}")
@@ -1144,6 +1111,7 @@ def main():
     print(f"\n[INFO] Master seed: {MASTER_SEED}")
     print(f"[INFO] Mode: {path_mode}")
     print(f"[INFO] Agents: {num_agents}, MC trials: {num_mc}")
+
 
     generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_ss, rngs_mc)
 
