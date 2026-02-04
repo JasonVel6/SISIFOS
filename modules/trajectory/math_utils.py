@@ -365,7 +365,7 @@ def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
     n_up = np.linalg.norm(x_up)
     near_sing = (abs(f @ world_up_G) > cos_thr) or (n_up < sin_thr)
 
-    if use_prev and n_proj > eps and x_proj:
+    if use_prev and n_proj > eps:
         x = x_proj / n_proj
     elif n_up > eps:
         x = x_up / n_up

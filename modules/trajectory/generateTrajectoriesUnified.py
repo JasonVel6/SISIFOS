@@ -62,10 +62,8 @@ from plot_figure import plot_trial_trajectories
 # TODO modify the paths to make more sense for SISFOS integration 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 SISIFOS_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
-DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "outputfile")
+DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "output")
 
-print("Using SISIFOS_ROOT:", SISIFOS_ROOT)
-exit()
 # ---------- Seed handling (reproducible MC) ----------
 def resolve_master_seed() -> int:
     parser = argparse.ArgumentParser(add_help=False)
@@ -294,7 +292,7 @@ def write_gtvalues(output_dir: str,
     return gtvalues_filepath
 
 # TODO make camera obj a datastructure later
-def write_json(output_dir: str, camera_obj: dict, tstep_eff: float, tend: float):
+def write_json(output_dir: str, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
     # --- JSON file for UE5 simulator (read from gtValues.txt) ---
     json_dir = os.path.join(output_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
