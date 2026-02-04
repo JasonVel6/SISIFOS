@@ -19,7 +19,7 @@ sys.path.append(os.getcwd())
 from modules.config import SceneConfig
 from modules.renderer import BlenderRenderer
 from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, vprint
-from modules.trajectory import (
+from modules.trajectory.trajectory import (
     write_camera_trajectory_v2, load_camera_trajectory_v2, 
     sun_sweep_90, make_fake_frame_from_frame0
 )
@@ -65,7 +65,7 @@ def main(config_path: str):
     res_x, res_y = config.camera.resolution
     
     # Setup Sweeps
-    # This is going to be important for me
+    # TODO we will need to make this able to do in a config file
     exp_sweep_map = config.setup.sweep_exposure if config.setup.sweep_exposure else {"00": config.setup.t_ref_s}
     sun_sweep_map = config.setup.sweep_sun_az_el if config.setup.sweep_sun_az_el else sun_sweep_90()
     

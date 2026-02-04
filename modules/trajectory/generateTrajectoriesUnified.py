@@ -50,7 +50,7 @@ from motion_cases import (
 )
 
 # TODO Evaluate what we need in the math function
-from math_function import (
+from math_utils import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
     _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity
@@ -61,9 +61,11 @@ from plot_figure import plot_trial_trajectories
 # ---------------- Paths ----------------
 # TODO modify the paths to make more sense for SISFOS integration 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
-SISIFOS_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
-DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_DIR, "outputfile")
+SISIFOS_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
+DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "outputfile")
 
+print("Using SISIFOS_ROOT:", SISIFOS_ROOT)
+exit()
 # ---------- Seed handling (reproducible MC) ----------
 def resolve_master_seed() -> int:
     parser = argparse.ArgumentParser(add_help=False)
@@ -292,10 +294,11 @@ def write_gtvalues(output_dir: str,
     return gtvalues_filepath
 
 # TODO make camera obj a datastructure later
-def write_json(output_dir: str, filename, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
+def write_json(output_dir: str, camera_obj: dict, tstep_eff: float, tend: float):
     # --- JSON file for UE5 simulator (read from gtValues.txt) ---
     json_dir = os.path.join(output_dir, "json")
     os.makedirs(json_dir, exist_ok=True)
+    filename = "gtValues"
     json_filename = os.path.join(json_dir, f"{filename}.json")
     data_dict = read_gt_values(gtvalues_filepath)
     create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
@@ -1059,7 +1062,7 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                 v_GO_I_use=v_GO_I_use,
                 s_c_I_use=s_c_I_use
             )
-            write_json(output_dir=base_output_file, filename=dir_name, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=tend)
+            write_json(output_dir=mc_output_file, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=tend)
             write_sensormeasurements(output_dir=mc_output_file,
                                         nbSteps=nbSteps,
                                         timestamps=timestamps,

@@ -8,7 +8,7 @@ import json
 import subprocess
 import shutil
 from scipy.linalg import logm
-from math_function import *
+from math_utils import *
 
 def axes_to_quaternion(x_axis, y_axis, z_axis):
     # Form the rotation matrix from the axes
