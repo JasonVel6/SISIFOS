@@ -8,7 +8,7 @@ import json
 import subprocess
 import shutil
 from scipy.linalg import logm
-from math_utils import *
+from trajectory_math import *
 
 # TODO this can all likely get moved into io_utils or the mat utils
 

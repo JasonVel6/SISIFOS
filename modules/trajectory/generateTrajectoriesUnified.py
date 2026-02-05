@@ -50,7 +50,7 @@ from motion_cases import (
 )
 
 # TODO Evaluate what we need in the math function
-from modules.trajectory.trajectory_math import (
+from trajectory_math import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
     _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity
@@ -166,7 +166,7 @@ def write_gtvalues(output_dir: str,
                     state_A_I_use: np.ndarray,
                     r_GO_I_use: np.ndarray,
                     v_GO_I_use: np.ndarray, 
-                    s_c_I_use: np.ndarray):
+                    state_C_I_use: np.ndarray):
     # --- gtValues.txt ---
     gtvalues_filepath = os.path.join(output_dir, "gtValues.txt")
     with open(gtvalues_filepath, "w") as f:
@@ -238,8 +238,8 @@ def write_gtvalues(output_dir: str,
 
         # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
         # r_SA = S - A (position of S relative to A, i.e., vector from A to S)
-        r_SA_I_data = s_c_I_use[:, 0:3] - state_A_I_use[:, 0:3]  # S - A
-        v_SA_I_data = s_c_I_use[:, 3:6] - state_A_I_use[:, 3:6]  # v_S - v_A
+        r_SA_I_data = state_C_I_use[:, 0:3] - state_A_I_use[:, 0:3]  # S - A
+        v_SA_I_data = state_C_I_use[:, 3:6] - state_A_I_use[:, 3:6]  # v_S - v_A
         f.write("r_SA_I = \n")
         np.savetxt(f, r_SA_I_data, fmt="%f %f %f")
         f.write("v_SA_I = \n")
@@ -260,10 +260,8 @@ def write_gtvalues(output_dir: str,
 # TODO make camera obj a datastructure later
 def write_json(output_dir: str, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
     # --- JSON file for UE5 simulator (read from gtValues.txt) ---
-    json_dir = os.path.join(output_dir, "json")
-    os.makedirs(json_dir, exist_ok=True)
     filename = "gtValues"
-    json_filename = os.path.join(json_dir, f"{filename}.json")
+    json_filename = os.path.join(output_dir, f"{filename}.json")
     data_dict = read_gt_values(gtvalues_filepath)
     create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
     print(f"  [JSON]    {json_filename}")
@@ -519,9 +517,6 @@ def write_config(output_dir: str,
 # MAIN Function
 # ============================================================================
 def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_ss, rngs_mc, base_output_file = None):
-    if base_output_file is None:
-        base_output_file = DEFAULT_OUTPUT_BASE
-
     # ---------- Generate initial conditions ----------
     print("\n[STEP 1] Generating initial conditions...")
 
@@ -954,90 +949,108 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
 
     # Note that this is part of the main method
     print("\n[STEP 4] Writing output files...")
-    now = datetime.today()
-    date_prefix = now.strftime("%m%d")  # e.g., "1207"
-    time_suffix = now.strftime("%Y_%m_%H%M")  # e.g., "2025_12_1430"
+    if base_output_file is None:
+        now = datetime.today()
+        date_str = now.strftime("%m_%d_%y")  # e.g., "1207"
+        time_str = now.strftime("%Y_%m_%H%M")  # e.g., "2025_12_1430"
+        base_output_file = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{path_mode}")
+    
     os.makedirs(base_output_file, exist_ok=True)
 
-    camera_obj = {"focal_length": FOCAL_LENGTH_PX, "resolution": CAMERA_RESOLUTION, "lens_flare": LENS_FLARE}
+    camera_obj = {"focal_length": FOCAL_LENGTH_PX, "resolution": CAMERA_RESOLUTION, "lens_flare": LENS_FLARE} # We prob dont need to do this and can just pass a config
 
     for mc_trial in range(num_mc):
+        mc_folder = os.path.join(base_output_file, f"mc_trial_{mc_trial}")
+        os.makedirs(mc_folder, exist_ok=True)
+
+        # Select the monte carlo trial
+        r_CG_G_mc = r_CG_G[mc_trial]
+        v_CG_G_mc = v_CG_G[mc_trial]
+        q_GC_mc = q_GC[mc_trial]
+        q_IC_mc = q_IC[mc_trial]
+        omega_CI_C_mc = omega_CI_C[mc_trial]
+        state_C_I_mc = state_C_I[mc_trial]
+        q_IC_m_mc = q_IC_m[mc_trial]
+        omega_CI_C_m_mc = omega_CI_C_m[mc_trial]
+        f_specific_S_m_mc = f_specific_S_m[mc_trial]
+        tau_specific_S_mc = tau_specific_S[mc_trial]
+        R_IG_mc = R_IG[mc_trial]
+
+        state_A_I_mc = state_A_I[mc_trial]
+        omega_GI_G_mc = omega_GI_G[mc_trial]
+        r_OG_G_mc = r_OG_G[mc_trial]
+        az_G_mc = az_G[mc_trial]
+        el_G_mc = el_G[mc_trial]
+        q_IG_mc = q_IG[mc_trial]
+        r_GO_I_mc = r_GO_I[mc_trial]
+        v_GO_I_mc = v_GO_I[mc_trial]
+        az_I_mc = az_I[mc_trial]
+        el_I_mc = el_I[mc_trial]
+
         for agent_idx in range(num_agents):
-            dir_name = f"{date_prefix}_{path_mode}_mc{mc_trial}_cro_agent{agent_idx}_{time_suffix}"
-            mc_output_file = os.path.join(base_output_file, dir_name)
-            os.makedirs(mc_output_file, exist_ok=True)
+            # Select the agent
+            r_CG_G_mc_ag = r_CG_G_mc[agent_idx]
+            v_CG_G_mc_ag = v_CG_G_mc[agent_idx]
+            q_GC_mc_ag = q_GC_mc[agent_idx]
+            q_IC_mc_ag = q_IC_mc[agent_idx]
+            omega_CI_C_mc_ag = omega_CI_C_mc[agent_idx]
+            state_C_I_mc_ag = state_C_I_mc[agent_idx]
+            q_IC_m_mc_ag = q_IC_m_mc[agent_idx]
+            omega_CI_C_m_mc_ag = omega_CI_C_m_mc[agent_idx]
+            f_specific_S_m_mc_ag = f_specific_S_m_mc[agent_idx]
+            tau_specific_S_mc_ag = tau_specific_S_mc[agent_idx]
 
-            # Select the monte carlo trial and the agent to use for this file writing
-            r_CG_G_use = r_CG_G[mc_trial, agent_idx]
-            v_CG_G_use = v_CG_G[mc_trial, agent_idx]
-            q_GC_use = q_GC[mc_trial, agent_idx]
-            q_IC_use = q_IC[mc_trial, agent_idx]
-            omega_CI_C_use = omega_CI_C[mc_trial, agent_idx]
-            s_c_I_use = state_C_I[mc_trial, agent_idx]
-            q_IC_m_use = q_IC_m[mc_trial, agent_idx]
-            omega_CI_C_m_use = omega_CI_C_m[mc_trial, agent_idx]
-            f_specific_S_m_use = f_specific_S_m[mc_trial, agent_idx]
-            tau_specific_S_use = tau_specific_S[mc_trial, agent_idx]
-            state_A_I_use = state_A_I[mc_trial] # TODO determine why this does not have agent index
-
-            omega_GI_G_use = omega_GI_G[mc_trial]
-            r_OG_G_use = r_OG_G[mc_trial]
-            az_G_use = az_G[mc_trial]
-            el_G_use = el_G[mc_trial]
-            q_IG_use = q_IG[mc_trial]
-            r_GO_I_use = r_GO_I[mc_trial]
-            v_GO_I_use = v_GO_I[mc_trial]
-            state_A_I_use = state_A_I[mc_trial]
-            az_I_use = az_I[mc_trial]
-            el_I_use = el_I[mc_trial]
+            agent_folder = os.path.join(mc_folder, f"agent_{agent_idx}")
+            os.makedirs(agent_folder, exist_ok=True)
 
             # Compute and print range statistics
-            ranges = np.linalg.norm(r_CG_G_use, axis=1)
+            ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
             print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
 
             write_camera_trajectory(
-                output_dir=mc_output_file,
+                output_dir=agent_folder,
                 nbSteps=nbSteps,
-                r_GO_I=r_GO_I_use,
-                q_IG=q_IG_use,
-                r_CO_I=s_c_I_use,
-                q_IC=q_IC_use,
-                sun_az=az_I_use,
-                sun_el=el_I_use,
+                r_GO_I=r_GO_I_mc,
+                q_IG=q_IG_mc,
+                r_CO_I=state_C_I_mc_ag[:, 0:3],
+                q_IC=q_IC_mc_ag,
+                sun_az=az_I_mc,
+                sun_el=el_I_mc,
             )
             gtvalues_filepath = write_gtvalues(
-                output_dir=mc_output_file,
+                output_dir=agent_folder,
                 nbSteps=nbSteps,
                 timestamps=timestamps,
                 J=J,
                 r_AG_G_used=r_AG_G_used,
-                q_GC_use=q_GC_use,
-                q_IG_use=q_IG_use,
-                q_IC_use=q_IC_use,
-                omega_GI_G_use=omega_GI_G_use,
-                omega_CI_C_use=omega_CI_C_use,
-                r_CG_G_use=r_CG_G_use,
-                v_CG_G_use=v_CG_G_use,
-                r_OG_G_use=r_OG_G_use,
-                az_G_use=az_G_use,
-                el_G_use=el_G_use,
-                state_A_I_use=state_A_I_use,
-                r_GO_I_use=r_GO_I_use,
-                v_GO_I_use=v_GO_I_use,
-                s_c_I_use=s_c_I_use
+                q_GC_use=q_GC_mc_ag,
+                q_IG_use=q_IG_mc,
+                q_IC_use=q_IC_mc_ag,
+                omega_GI_G_use=omega_GI_G_mc,
+                omega_CI_C_use=omega_CI_C_mc_ag,
+                r_CG_G_use=r_CG_G_mc_ag,
+                v_CG_G_use=v_CG_G_mc_ag,
+                r_OG_G_use=r_OG_G_mc,
+                az_G_use=az_G_mc,
+                el_G_use=el_G_mc,
+                state_A_I_use=state_A_I_mc,
+                r_GO_I_use=r_GO_I_mc,
+                v_GO_I_use=v_GO_I_mc,
+                state_C_I_use=state_C_I_mc_ag
             )
-            write_json(output_dir=mc_output_file, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=tend)
-            write_sensormeasurements(output_dir=mc_output_file,
+            write_json(output_dir=agent_folder, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=tend)
+
+            write_sensormeasurements(output_dir=agent_folder,
                                         nbSteps=nbSteps,
                                         timestamps=timestamps,
-                                        q_IC_m_use=q_IC_m_use,
-                                        omega_CI_C_m_use=omega_CI_C_m_use,
-                                        state_A_I_use=state_A_I_use,
-                                        f_specific_S_m_use=f_specific_S_m_use,
-                                        tau_specific_S_use=tau_specific_S_use
+                                        q_IC_m_use=q_IC_m_mc_ag,
+                                        omega_CI_C_m_use=omega_CI_C_m_mc_ag,
+                                        state_A_I_use=state_A_I_mc,
+                                        f_specific_S_m_use=f_specific_S_m_mc_ag,
+                                        tau_specific_S_use=tau_specific_S_mc_ag
                                     )
-            write_config(output_dir=mc_output_file,
+            write_config(output_dir=agent_folder,
                             nbSteps=nbSteps,
                             camera_obj=camera_obj,
                             tstep_eff=tstep_eff,
@@ -1051,28 +1064,21 @@ def generate_trajectories(path_mode, rotMode_Gframe, num_agents, num_mc, child_s
                             inc=inc[mc_trial],
                             ecc=ecc[mc_trial],)
 
-
-    # ---------- Generate plots ----------
-    print("\n[STEP 5] Generating trajectory plots...")
-
-    plot_dir = os.path.join(base_output_file, "trial_plots")
-    os.makedirs(plot_dir, exist_ok=True)
-
-    for mc_trial in range(num_mc):
-        try:
-            plot_trial_trajectories(
-                i=mc_trial,
-                s_A_I=state_A_I,
-                s_c_I=state_C_I,
-                r_CG_G=r_CG_G,
-                R_IG_all=R_IG,
-                out_dir=plot_dir,
-                rotMode_Gframe=rotMode_Gframe,
-                show=False,
-                save=True,
-            )
-        except Exception as e:
-            print(f"  [WARN] Could not generate plot for MC {mc_trial}: {e}")
+        # Generate plots
+        # try:
+        plot_trial_trajectories(
+            state_A_I=state_A_I_mc,
+            state_C_I=state_C_I_mc,
+            r_CG_G=r_CG_G_mc,
+            R_IG_all=R_IG_mc,
+            out_dir=mc_folder,
+            rotMode_Gframe=rotMode_Gframe,
+            show=False,
+            save=True,
+            mc_idx=mc_trial
+        )
+        # except Exception as e:
+            # print(f"  [WARN] Could not generate plot for MC {mc_trial}: {e}")
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {MASTER_SEED}")

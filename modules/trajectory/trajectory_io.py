@@ -21,8 +21,8 @@ def write_camera_trajectory(output_dir: str,
                             q_IG: np.ndarray, # quaternion from G to I
                             r_CO_I: np.ndarray, # vector from O to C in inertial frame
                             q_IC: np.ndarray, # quaternion from C to I
-                            sun_az: np.ndarray,
-                            sun_el: np.ndarray,
+                            sun_az: float,
+                            sun_el: float,
                             ) -> str:
     """
     Write camera_traj.txt for Blender import.
@@ -49,8 +49,6 @@ def write_camera_trajectory(output_dir: str,
         q_I_G = q_IG[i]
         p_C_I = r_CO_I[i]
         q_I_C = q_IC[i]
-        sun_az = sun_az[i]
-        sun_el = sun_el[i]
 
         line = (
             f"{p_G_I[0]:.6f} {p_G_I[1]:.6f} {p_G_I[2]:.6f} " # p_G_I

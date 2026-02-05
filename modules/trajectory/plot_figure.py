@@ -83,16 +83,16 @@ def _draw_g_axes(ax, GXs, GYs, GZs, axis_length=None):
 # --------------------------- main entry ---------------------------
 
 def plot_trial_trajectories(
-    i,             # MC index (int)
-    s_A_I,         # (num_mc, nbSteps, 6) Target/Frame A state in I (pos[0:3], vel[3:6])
-    s_c_I,         # (num_mc, num_agents, nbSteps, 6) Agent states in I
-    r_CG_G,        # (num_mc, num_agents, nbSteps, 3) Relative positions in G (what SLAM uses)
-    R_IG_all=None, # (num_mc, nbSteps, 3,3) for projecting variants into I
+    state_A_I,         # (nbSteps, 6) Target/Frame A state in I (pos[0:3], vel[3:6])
+    state_C_I,         # (num_agents, nbSteps, 6) Agent states in I
+    r_CG_G,        # (num_agents, nbSteps, 3) Relative positions in G (what SLAM uses)
+    R_IG_all=None, # (nbSteps, 3,3) for projecting variants into I
     out_dir=None,
     rotMode_Gframe=None,
     show=True,
     save=True,
     variant_rCGG=None,   # dict like {"_nmc": (num_agents,T,3), "_cro": (num_agents,T,3)} to overlay in G-frame
+    mc_idx=None
 ):
     """
     One figure per MC `i` with THREE synchronized 3D views:
@@ -104,19 +104,20 @@ def plot_trial_trajectories(
         out_dir = os.getcwd()
     os.makedirs(out_dir, exist_ok=True)
 
-    num_agents = s_c_I.shape[1]
+    num_agents = state_C_I.shape[0]
+    print(f"[PLOTS] Plotting trajectories for {num_agents} agents...")
     colors = cm.tab10(np.linspace(0, 1, max(3, num_agents)))
 
     # Extract this trial’s trajectories
-    rA = s_A_I[i, :, 0:3]  # (nbSteps,3)
-    R_IG_i = None if R_IG_all is None else R_IG_all[i]  # (T,3,3) or None
+    rA = state_A_I[:, 0:3]  # (nbSteps,3)
+    R_IG_i = R_IG_all  # (T,3,3) or None
 
     # Build relative (A-centered inertial) and absolute lists
     relI_list = []
     abs_listX, abs_listY, abs_listZ = [rA[:,0]], [rA[:,1]], [rA[:,2]]
 
     for agent_idx in range(num_agents):
-        rS = s_c_I[i, agent_idx, :, 0:3]
+        rS = state_C_I[agent_idx, :, 0:3]
         relI_list.append(rS - rA)
         abs_listX.append(rS[:,0]); abs_listY.append(rS[:,1]); abs_listZ.append(rS[:,2])
 
@@ -129,7 +130,7 @@ def plot_trial_trajectories(
     ax_G    = fig.add_subplot(gs[0, 2], projection="3d")
 
     # -------- (1) A-centered Inertial --------
-    ax_relI.set_title(f"{_nice_title_for_mode(i, rotMode_Gframe)} — A-Centered Relative Paths")
+    ax_relI.set_title(f"{_nice_title_for_mode(mc_idx, rotMode_Gframe)} — A-Centered Relative Paths")
     ax_relI.set_xlabel("x_A [m]"); ax_relI.set_ylabel("y_A [m]"); ax_relI.set_zlabel("z_A [m]")
     ax_relI.grid(True, alpha=0.3)
 
@@ -156,7 +157,7 @@ def plot_trial_trajectories(
                 r_var = r_var[0]
             if r_var.ndim != 3 or r_var.shape[2] != 3:
                 continue
-            label_base = f"traj{i}_{'nmc' if suf.endswith('nmc') else 'cro' if suf.endswith('cro') else suf.strip('_')}"
+            label_base = f"traj{mc_idx}_{'nmc' if suf.endswith('nmc') else 'cro' if suf.endswith('cro') else suf.strip('_')}"
             for agent_idx in range(min(r_var.shape[0], len(relI_list))):
                 T = r_var.shape[1]
                 relI_var = np.empty_like(r_var[agent_idx])
@@ -170,7 +171,7 @@ def plot_trial_trajectories(
 
 
     # -------- (2) Earth Inertial (absolute) --------
-    ax_inr.set_title(f"{_nice_title_for_mode(i, rotMode_Gframe)} — Inertial Trajectories (I)")
+    ax_inr.set_title(f"{_nice_title_for_mode(mc_idx, rotMode_Gframe)} — Inertial Trajectories (I)")
     ax_inr.set_xlabel("x_I [m]"); ax_inr.set_ylabel("y_I [m]"); ax_inr.set_zlabel("z_I [m]")
     ax_inr.grid(True, alpha=0.3)
 
@@ -181,7 +182,7 @@ def plot_trial_trajectories(
 
     # Agents
     for agent_idx in range(num_agents):
-        rS = s_c_I[i, agent_idx, :, 0:3]
+        rS = state_C_I[agent_idx, :, 0:3]
         c  = colors[agent_idx]
         ax_inr.plot(rS[:,0], rS[:,1], rS[:,2], lw=1.6, color=c, label=f"Agent {agent_idx} (in I)")
         ax_inr.scatter(rS[0,0],  rS[0,1],  rS[0,2],  s=18, color=c, marker="o")
@@ -205,7 +206,7 @@ def plot_trial_trajectories(
             if r_var.ndim != 3 or r_var.shape[2] != 3:
                 continue
             label_base = f"Agent 0 ({'NMC' if suf.endswith('nmc') else 'CRO' if suf.endswith('cro') else suf.strip('_').upper()})"
-            for agent_idx in range(min(r_var.shape[0], s_c_I.shape[1])):
+            for agent_idx in range(min(r_var.shape[0], state_C_I.shape[0])):
                 T = r_var.shape[1]
                 r_CO_I_var = np.empty_like(r_var[agent_idx])
                 for j in range(T):
@@ -223,7 +224,7 @@ def plot_trial_trajectories(
 
     GXs, GYs, GZs = [], [], []
     for agent_idx in range(num_agents):
-        rG = r_CG_G[i, agent_idx, :, :]  # (T,3)
+        rG = r_CG_G[agent_idx, :, :]  # (T,3)
         c  = colors[agent_idx]
         ax_G.plot(rG[:,0], rG[:,1], rG[:,2], lw=1.6, color=c, label=f"Agent {agent_idx}")
         ax_G.scatter(rG[0,0],  rG[0,1],  rG[0,2],  s=18, color=c, marker="o")
@@ -242,7 +243,7 @@ def plot_trial_trajectories(
             if r_var.ndim != 3 or r_var.shape[2] != 3:
                 continue  # skip unexpected shapes silently
 
-            label_base = f"traj{i}_{'nmc' if suf.endswith('nmc') else 'cro' if suf.endswith('cro') else suf.strip('_')}"
+            label_base = f"traj{mc_idx}_{'nmc' if suf.endswith('nmc') else 'cro' if suf.endswith('cro') else suf.strip('_')}"
             for agent_idx in range(min(r_var.shape[0], num_agents)):
                 L = label_base if agent_idx == 0 else None  # only first agent gets legend label
                 ax_G.plot(
@@ -262,10 +263,10 @@ def plot_trial_trajectories(
     ax_G.legend(loc="upper right", fontsize="small")
     
 
-    fig.suptitle(f"MC {i:03d} — Coordinated Views", y=0.98)
+    fig.suptitle(f"MC {mc_idx:03d} — Coordinated Views", y=0.98)
 
     if save:
-        out_png = os.path.join(out_dir, f"MC_{i:03d}_traj.png")
+        out_png = os.path.join(out_dir, f"MC_{mc_idx:03d}_traj.png")
         fig.savefig(out_png, dpi=170)
         print(f"[PLOTS] Saved: {out_png}")
 
