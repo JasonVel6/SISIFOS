@@ -19,9 +19,12 @@ sys.path.append(os.getcwd())
 from modules.config import SceneConfig
 from modules.renderer import BlenderRenderer
 from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, vprint
-from modules.trajectory.trajectory import (
-    write_camera_trajectory_v2, load_camera_trajectory_v2, 
+from modules.trajectory.sampling_trajectory import (
+    write_camera_trajectory_v2, 
     sun_sweep_90, make_fake_frame_from_frame0
+)
+from modules.trajectory.trajectory_io import (
+    read_camera_trajectory_to_frames
 )
 
 def main(config_path: str):
@@ -53,7 +56,7 @@ def main(config_path: str):
             R_RPO=config.setup.R_RPO,
         )
     
-    frames = load_camera_trajectory_v2(str(gt_path))
+    frames = read_camera_trajectory_to_frames(str(gt_path))
     print(f"\n[Session] Timestamp: {timestamp}")
     print(f"[Session] Renders output: {renders_base_dir}/")
     

@@ -6,6 +6,11 @@ import numpy as np
 import os
 import json
 from mathutils import Vector, Quaternion
+import subprocess
+
+# TODO need to find where to put this
+# Target model
+SHAPE_MODEL_FILENAME = "../models/integral.obj"
 
 camera_trajectory_header = [
         "# camera_traj_v2.txt (inertial frame reference - orbital configuration)",
@@ -106,3 +111,557 @@ def read_camera_trajectory_to_frames(path: str) -> List[Dict]:
             })
     
     return traj
+
+def write_gtvalues(output_dir: str,
+                    nbSteps: int,
+                    timestamps: np.ndarray,
+                    J: np.ndarray,
+                    r_AG_G: np.ndarray,
+                    q_GC: np.ndarray,
+                    q_IG: np.ndarray,
+                    q_IC: np.ndarray,
+                    omega_GI_G: np.ndarray,
+                    omega_CI_C: np.ndarray,
+                    r_CG_G: np.ndarray,
+                    v_CG_G: np.ndarray,
+                    r_OG_G: np.ndarray,
+                    az_G: np.ndarray,
+                    el_G: np.ndarray,
+                    state_A_I: np.ndarray,
+                    r_GO_I: np.ndarray,
+                    v_GO_I: np.ndarray, 
+                    state_C_I: np.ndarray):
+    # --- gtValues.txt ---
+    gtvalues_filepath = os.path.join(output_dir, "gtValues.txt")
+    with open(gtvalues_filepath, "w") as f:
+        f.write("nSamples = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("timestamps = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+
+        # Inertia tensor at COM (frame A), trace-normalized, 5-parameter format
+        # Format: Ixx Iyy Ixy Ixz Iyz (Izz = 1 - Ixx - Iyy from trace constraint)
+        # This is the target's inertia tensor used in Euler dynamics propagation.
+        # The inertia is expressed in body-fixed frame A (COM frame).
+        trace_J = np.trace(J)
+        J_norm = J / trace_J
+        inertia_5 = np.array([J_norm[0, 0], J_norm[1, 1],
+                                J_norm[0, 1], J_norm[0, 2], J_norm[1, 2]])
+        f.write("inertia_A = \n")
+        f.write(f"{inertia_5[0]:.9f} {inertia_5[1]:.9f} {inertia_5[2]:.9f} {inertia_5[3]:.9f} {inertia_5[4]:.9f}\n")
+
+        # r_AG_G: COM position relative to G-frame origin, in G coords
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_AG_G = A - G (position of A relative to G, vector from G to A)
+        # Internal variable r_AG_G_used stores G - A, so negate for output
+        f.write("r_AG_G = \n")
+        r_AG_G_output = -r_AG_G  # Convert from internal G-A to convention A-G
+        f.write(f"{r_AG_G_output[0]:.9f} {r_AG_G_output[1]:.9f} {r_AG_G_output[2]:.9f}\n")
+
+        f.write("q_GS = \n")
+        np.savetxt(f, q_GC, fmt="%f %f %f %f")
+        f.write("q_IG = \n")
+        np.savetxt(f, q_IG, fmt="%f %f %f %f")
+        f.write("q_IS = \n")
+        np.savetxt(f, q_IC, fmt="%f %f %f %f")
+
+        # SIGN CONVENTION (omega_GI_G):
+        # solve_ne_equation uses standard kinematics: R_{k+1} = R_k @ exp(sk(ω·dt))
+        # where ω is the body angular velocity ω_GI^G from Newton-Euler equations.
+        # This corresponds to dR_IG/dt = R_IG @ sk(ω_GI^G), which is the standard
+        # textbook convention. No sign flip needed - output directly.
+        f.write("omega_GI_G = \n")
+        np.savetxt(f, omega_GI_G, fmt="%f %f %f")
+        # SIGN CONVENTION (omega_SI_S):
+        # Factor expects ω_SI^S = angular velocity of S wrt I, expressed in S.
+        #
+        # omega_CI_C is computed using the angular velocity addition formula:
+        #   ω_IC^C = ω_IG^C + ω_GC^C
+        # where:
+        #   ω_IG^C = -R_CG @ ω_GI^G (sign flip: I-wrt-G = -(G-wrt-I))
+        #   ω_GC^C = -omega_GC_C (variable stores ω_CG^C from finite differences)
+        #
+        # The variable omega_CI_C stores ω_IC^C (I wrt C, in C).
+        # Output -omega_CI_C = ω_CI^C = ω_SI^S (since C = S).
+        f.write("omega_SI_S = \n")
+        np.savetxt(f, -omega_CI_C, fmt="%f %f %f")
+
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_SG = S - G, and since C = S (chaser = spacecraft): r_SG = r_CG = C - G
+        # r_CG_G is computed correctly as C - G, so output directly (no negation)
+        f.write("r_SG_G = \n")
+        np.savetxt(f, r_CG_G, fmt="%f %f %f")
+        f.write("v_SG_G = \n")
+        np.savetxt(f, v_CG_G, fmt="%f %f %f")
+
+        f.write("r_OG_G = \n")
+        np.savetxt(f, r_OG_G, fmt="%f %f %f")
+        f.write("sun_az_el = \n")
+        for j in range(nbSteps):
+            f.write(f"{az_G[j]:.6f} {el_G[j]:.6f}\n")
+
+        # SIGN CONVENTION: Per LaTeX, r_YX = Y - X (vector from X to Y)
+        # r_SA = S - A (position of S relative to A, i.e., vector from A to S)
+        r_SA_I_data = state_C_I[:, 0:3] - state_A_I[:, 0:3]  # S - A
+        v_SA_I_data = state_C_I[:, 3:6] - state_A_I[:, 3:6]  # v_S - v_A
+        f.write("r_SA_I = \n")
+        np.savetxt(f, r_SA_I_data, fmt="%f %f %f")
+        f.write("v_SA_I = \n")
+        np.savetxt(f, v_SA_I_data, fmt="%f %f %f")
+
+        f.write("r_AO_I = \n")
+        np.savetxt(f, state_A_I[:, 0:3], fmt="%f %f %f")
+        f.write("v_AO_I = \n")
+        np.savetxt(f, state_A_I[:, 3:6], fmt="%f %f %f")
+
+        f.write("r_GO_I = \n")
+        np.savetxt(f, r_GO_I, fmt="%f %f %f")
+        f.write("v_GO_I = \n")
+        np.savetxt(f, v_GO_I, fmt="%f %f %f")
+    print(f"  [GTVAL]   {gtvalues_filepath}")
+    return gtvalues_filepath
+
+# TODO make camera obj a datastructure later
+def write_json(output_dir: str, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
+    # --- JSON file for UE5 simulator (read from gtValues.txt) ---
+    filename = "gtValues"
+    json_filename = os.path.join(output_dir, f"{filename}.json")
+    data_dict = read_gt_values(gtvalues_filepath)
+    create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
+    print(f"  [JSON]    {json_filename}")
+
+def write_config(output_dir: str,
+                    nbSteps: int,
+                    camera_obj: dict,
+                    tstep_eff: float,
+                    child_ss: np.random.SeedSequence,
+                    path_mode: str,
+                    rotMode_Gframe: str,
+                    agent_idx: int,
+                    mu_ref: float,
+                    h_orbit: float,
+                    tend: float,
+                    inc: float,
+                    ecc: float):
+    # --- Config.yaml (OpenCV-style YAML for SatSLAM) ---
+    config_filepath = os.path.join(output_dir, "Config.yaml")
+    with open(config_filepath, "w") as f:
+        # Camera intrinsics from camera_obj
+        focal_length = camera_obj["focal_length"]
+        resolution = camera_obj["resolution"]
+        cx = resolution / 2.0
+        cy = resolution / 2.0
+        fps = 1.0 / tstep_eff
+
+        f.write("%YAML:1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Filenames to load\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("ImageList.Filename: imgList.txt\n")
+        f.write("GroundTruth.Filename: gtValues.txt\n")
+        f.write("SensorMeasurements.Filename: sensormeasurements.txt\n")
+        f.write(f"ShapeModel.Filename: {SHAPE_MODEL_FILENAME}\n")
+        f.write("ShapeModel.ScaleFactor: 1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Experimentation Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Settings.runExperiments: 0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# General Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Settings.IsAsync: 0\n")
+        f.write("Settings.ActiveVisualizer: 0\n")
+        f.write("Settings.ActiveRecord: 0\n")
+        f.write("Settings.ActiveBackEnd: 1\n")
+        f.write("Settings.ActiveLoopClosure: 1\n")
+        f.write("Settings.ActiveMesher: 0\n")
+        f.write("Settings.ActiveLines: 0\n")
+        f.write("Settings.EmptyQueueBeforeTerminate: 0\n")
+        f.write("Settings.HasGT: 1\n")
+        f.write("Settings.UseGT: 0\n")
+        f.write("Settings.StartIdx: 0\n")
+        f.write(f"Settings.EndIdx: {nbSteps}\n")
+        f.write("Settings.InitialOffset: 0\n")
+        f.write("Settings.nFramesInit: 6\n")
+        f.write("Settings.DownsampleFactor: 1\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Camera Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Camera.R_CS_r11: 1.0\n")
+        f.write("Camera.R_CS_r12: 0.0\n")
+        f.write("Camera.R_CS_r13: 0.0\n")
+        f.write("Camera.R_CS_r21: 0.0\n")
+        f.write("Camera.R_CS_r22: 1.0\n")
+        f.write("Camera.R_CS_r23: 0.0\n")
+        f.write("Camera.R_CS_r31: 0.0\n")
+        f.write("Camera.R_CS_r32: 0.0\n")
+        f.write("Camera.R_CS_r33: 1.0\n")
+        f.write(f"Camera.fx: {focal_length}\n")
+        f.write(f"Camera.fy: {focal_length}\n")
+        f.write(f"Camera.cx: {cx}\n")
+        f.write(f"Camera.cy: {cy}\n")
+        f.write("Camera.k1: 0.0\n")
+        f.write("Camera.k2: 0.0\n")
+        f.write("Camera.p1: 0.0\n")
+        f.write("Camera.p2: 0.0\n")
+        f.write("Camera.k3: 0.0\n")
+        f.write(f"Camera.fps: {fps:.1f}\n")
+        f.write("Camera.RGB: 0\n")
+        f.write(f"Camera.resolution: [{resolution}, {resolution}]\n")
+        f.write("Image.FITSValueScale: 22.849\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Front-End Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("FrontEnd.kfInterval: 7\n")
+        f.write("FrontEnd.matcherWindowAndCandidates: [1, 1]\n")
+        f.write("FrontEnd.minInlierPercentage: 0.75\n")
+        f.write("FrontEnd.minInliersToLastKF: 30\n")
+        f.write("FrontEnd.minInliers: 8\n")
+        f.write("FrontEnd.knnK: 1\n")
+        f.write("FrontEnd.loweRatio: 0.75\n")
+        f.write("FrontEnd.ransacReprojThreshold: 6.0\n")
+        f.write("FrontEnd.ransacConfidence: 0.999\n")
+        f.write("FrontEnd.minBaselinePx: 1e6\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# ORB Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("ORBextractor.nFeatures: 1450\n")
+        f.write("ORBextractor.scaleFactor: 1.25\n")
+        f.write("ORBextractor.nLevels: 7\n")
+        f.write("ORBextractor.edgeThreshold: 10\n")
+        f.write("ORBextractor.patchSize: 31\n")
+        f.write("ORBextractor.fastThreshold: 14\n")
+        f.write("ORBextractor.minFastThreshold: 4\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Line Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Line.minlength: 1.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Back-End Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("BackEnd.useRelDyn: 1\n")
+        f.write("Backend.minTriangulationAngleDeg: 0.5\n")
+        f.write("BackEnd.iSAMRelinearizationThresh: 0.1\n")
+        f.write("BackEnd.iSAMRelinearizationSkip: 1\n")
+        f.write("BackEnd.iSAMcacheLinearizedFactors: 1\n")
+        f.write("BackEnd.iSAMfindUnusedFactorSlots: 1\n")
+        f.write("BackEnd.iSAMfactorization: QR\n")
+        f.write("BackEnd.wildfire_threshold: 0.001\n")
+        f.write("BackEnd.numOptimize: 1\n")
+        f.write("BackEnd.optimizationWindowSec: 60\n")
+        f.write("BackEnd.iSAMevaluateNonlinearError: 0\n")
+        f.write("BackEnd.iSAMenableDetailedResults: 0\n")
+        f.write("BackEnd.SfSMalpha: 1.0\n")
+        f.write("Prior.Q_sigmas: [0.01, 0.01, 0.01]\n")
+        f.write("Prior.r_sigmas: [0.1, 0.1, 1.0]\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# RelDyn Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("RelDynFactor.nStages: 5\n")
+        f.write("RelDynFactor.ninc: 16\n")
+        f.write("RelDynFactor.LU: 1.0\n")
+        f.write("RelDynFactor.TU: 1.0\n")
+        f.write(f"RelDynFactor.muEarth: {mu_ref}\n")
+        f.write("RelDynFactor.usePreviousMeasurement: 1\n")
+        f.write("RelDynFactor.sigmasSpectralDensity: [ 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 0.3, 0.3, 0.3]\n")
+        f.write("RelDynFactor.omega_GI_G_noise: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.I_A_noise: [1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1]\n")
+        f.write("RelDynFactor.r_AG_G_noise: [1.0, 1.0, 0.01]\n")
+        f.write("RelDynFactor.r_SA_I_noise: [1.0, 1.0, 1.0]\n")
+        f.write("RelDynFactor.v_SA_I_noise: [100.0, 100.0, 100.0]\n")
+        f.write("RelDynFactor.rTc_noise: [1e-06, 1e-06, 1e-06]\n")
+        f.write("RelDynFactor.angularMomentumNoise: [0.0001, 0.0001, 0.0001]\n")
+        f.write("RelDynFactor.sigmas_r_SG_G_meas: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.mu0_noise: 20\n")
+        f.write("RelDynFactor.kinoRoto_noise: [0.002, 0.002, 0.002, 0.0005, 0.0005, 0.0005]\n")
+        f.write("RelDynFactor.Q0_sigmas: [1e-05, 1e-05, 1e-05]\n")
+        f.write("RelDynFactor.r0_sigmas: [5e-08, 5e-08, 5e-08]\n")
+        f.write("RelDynFactor.R_meas_noise: [0.0002774, 0.0002774, 0.0002774]\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Loop-Closure Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("LoopClosure.ignoredFramesWindow: 10\n")
+        f.write("LoopClosure.defaultMinScore: 0.1\n")
+        f.write("LoopClosure.loweRatio: 0.75\n")
+        f.write("LoopClosure.minInliers: 6\n")
+        f.write("LoopClosure.minSharedWords: 3\n")
+        f.write("LoopClosure.commonWordsRatio: 0.8\n")
+        f.write("LoopClosure.ransacReprojThreshold: 1.0\n")
+        f.write("LoopClosure.ransacConfidence: 0.99\n")
+        f.write("LoopClosure.knnK: 1\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Viewer Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Viewer.KeyFrameSize: 0.05\n")
+        f.write("Viewer.KeyFrameLineWidth: 1\n")
+        f.write("Viewer.GraphLineWidth: 0.9\n")
+        f.write("Viewer.PointSize: 2\n")
+        f.write("Viewer.CameraSize: 0.08\n")
+        f.write("Viewer.CameraLineWidth: 3\n")
+        f.write("Viewer.ViewpointX: -100.0\n")
+        f.write("Viewer.ViewpointY: 100.0\n")
+        f.write("Viewer.ViewpointZ: 100.0\n")
+        f.write("Viewer.ViewpointF: 500\n")
+        f.write("Viewer.TriadScale: 1\n")
+        f.write("Viewer.Width: 1920\n")
+        f.write("Viewer.Height: 1080\n")
+        f.write("Viewer.clipNear: 0.1\n")
+        f.write("Viewer.clipFar: 1000\n")
+        f.write("Viewer.fov: 45\n")
+        f.write("Viewer.DrawObject: 1\n")
+        f.write("Viewer.LightPower: 20.0\n\n")
+
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Depth Simulator Parameters\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("Simulator.clipNear: 0.1\n")
+        f.write("Simulator.clipFar: 4000\n")
+        f.write("Simulator.DrawObject: 1\n")
+        f.write("Simulator.LightPower: 20.0\n\n")
+
+        # Add trajectory generation metadata as comments
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write("# Trajectory Generation Metadata (for reference only)\n")
+        f.write("#--------------------------------------------------------------------------------------------\n")
+        f.write(f"# trial_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# path_mode: {path_mode}\n")
+        f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
+        f.write(f"# agent_id: {agent_idx}\n")
+        f.write(f"# mu_ref: {mu_ref}\n")
+        f.write(f"# h_orbit: {h_orbit}\n")
+        f.write(f"# tend: {tend}\n")
+        f.write(f"# tstep: {tstep_eff}\n")
+        f.write(f"# inc: {inc}\n")
+        f.write(f"# ecc: {ecc}\n")
+
+    print(f"  [CONFIG]  {config_filepath}")
+
+def write_sensormeasurements(output_dir: str,
+                                nbSteps: int,
+                                timestamps: np.ndarray,
+                                q_IC_m: np.ndarray,
+                                omega_CI_C_m: np.ndarray,
+                                state_A_I: np.ndarray,
+                                f_specific_S_m: np.ndarray,
+                                tau_specific_S: np.ndarray,):
+    # --- sensormeasurements.txt ---
+    sensor_filepath = os.path.join(output_dir, "sensormeasurements.txt")
+    with open(sensor_filepath, "w") as f:
+        f.write("nSamples = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("timestamps = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+        f.write("q_IS_m = \n")
+        np.savetxt(f, q_IC_m, fmt="%f %f %f %f")
+        # Same sign convention as gtValues.txt: negate omega_CI_C to get ω_SI^S
+        # (see detailed comment in gtValues.txt section above)
+        f.write("omega_SI_S_m = \n")
+        np.savetxt(f, -omega_CI_C_m, fmt="%f %f %f")
+        f.write("r_AO_I = \n")
+        np.savetxt(f, state_A_I[:, 0:3], fmt="%f %f %f")
+        f.write("f_s_S_m = \n")
+        np.savetxt(f, f_specific_S_m, fmt="%f %f %f")
+        f.write("tau_s_S = \n")
+        np.savetxt(f, tau_specific_S, fmt="%f %f %f")
+    print(f"  [SENSOR]  {sensor_filepath}")
+
+def read_gt_values(file_path):
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+    
+    # Find section headers to locate the data
+    sections = {}
+    current_section = None
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if '=' in line:
+            current_section = line.split('=')[0].strip()  # Get the part before '='
+            sections[current_section] = i + 1  # Start of data is next line
+            
+    # Now extract data based on section positions
+    nSamples = int(lines[sections['nSamples']].strip())
+    
+     # helper: return None if the section isn't in the file
+    def read_block(name, width):
+        if name not in sections:
+            return None
+        start = sections[name]
+        return np.array(
+            [list(map(float, lines[start+i].split())) for i in range(nSamples)]
+        ).reshape(nSamples, width)
+    
+    timestamps = read_block("timestamps", 1).ravel()
+    q_GS   = read_block("q_GS",   4)
+    q_IG   = read_block("q_IG",   4)
+    q_IS   = read_block("q_IS",   4)
+    r_SG_G = read_block("r_SG_G", 3)
+    r_OG_G = read_block("r_OG_G", 3)
+
+    # Extract sun_az_el if it exists
+    if 'sun_az_el' in sections:
+        sun_az_el = read_block("sun_az_el", 2)
+    else:
+        sun_az = read_block("sun_az", 1)
+        sun_el = read_block("sun_el", 1)
+        sun_az_el = np.hstack([sun_el, sun_az]) if sun_az is not None else None
+
+    data_dict = {
+        "nSamples": nSamples,
+        "timestamps": timestamps,
+        "q_GS": q_GS,
+        "r_SG_G": r_SG_G,
+        "q_IG": q_IG,
+        "q_IS": q_IS,
+        "r_OG_G": r_OG_G,
+        "sun_az_el": sun_az_el
+    }
+    return data_dict
+
+def _to_native(obj):
+    """Recursively convert numpy types to Python native types."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.float32, np.float64)):
+        return float(obj)
+    if isinstance(obj, (np.int32, np.int64)):
+        return int(obj)
+    if isinstance(obj, list):
+        return [_to_native(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    return obj
+
+def create_json(camera, data_dict, tstep, tend, foutput, earth=False, stars=False):
+    # Format earth location data
+    earth_loc_data = [{"data": e_loc} for e_loc in data_dict['r_OG_G']]
+    
+    # Format sun rotation data 
+    # IMPORTANT: Note the order - first element is elevation, second is azimuth
+    sun_rot_data = []
+    for s_rot in data_dict['sun_az_el']:
+        # s_rot[0] is elevation, s_rot[1] is azimuth in the gtValues file
+        sun_rot_data.append({"data": [[s_rot[0]], [s_rot[1]]]})
+    
+    # Compute vertical FOV in radians & aspect ratio
+    yfov_rad = 2 * np.arctan((camera['resolution'] / 2) / camera['focal_length'])
+    aspect   = float(camera['resolution']) / float(camera['resolution'])
+
+    data = {
+        "post_process_params": {
+            "cam_shutter_speed": 200.0,
+            "cam_iso": 100.0,
+            "cam_aperture": 4.0,
+            "exposure_comp": 0.01,
+            "bloom_intensity": 0.1,
+            "chromatic_aberration_intensity": 0.0,
+            "chromatic_aberration_start_offset": 0.0,
+            "vignette_intensity": 0.1,
+            "lens_flare_intensity": 0.1,
+            "film_grain_intensity": 0.1
+        },
+        "custom_model_params": {
+            # Scale should be set to 1.0 for real-dimensioned models
+             "scale": 1.0,
+             "custom_model_path": "C:\\Users\\jdflo\\Documents\\UE5-SpaceImageSimulator\\models\\hst.fbx"
+            # "scale": 0.00028,
+            # "custom_model_path": "C:\\Users\\jdflo\\Documents\\UE5-SpaceImageSimulator\\models\\integral.fbx"
+        },
+        "timing_params": {
+          "tstep": tstep,
+          "tend": tend
+        },
+        "camera_params": { # Unused in simulator, but used to create config.yaml
+            "focal_length": camera['focal_length'],
+            "fov": np.rad2deg(2*np.arctan((camera['resolution']/2)/camera['focal_length'])),
+            "x_resolution": camera['resolution'],
+            "y_resolution": camera['resolution']
+        },
+        "cameras": [
+            {
+                "type":        "perspective",
+                "perspective": {
+                    "aspectRatio": aspect,
+                    "yfov":        float(yfov_rad)
+                }
+            }
+        ],
+        "environment_params": {
+            "light_brightness": 128000.0,
+            "star_vis": False if stars == "false" or not stars else True,
+            "earth_vis": False if earth == "false" or not earth else True,
+            "earth_loc": earth_loc_data,
+            "sun_rot": sun_rot_data
+        },
+        "nSamples": data_dict['nSamples'],
+        "timestamps": data_dict['timestamps'].tolist(),
+        "q_GS": [{"data": quat} for quat in data_dict['q_GS']],
+        "r_SG_G": [{"data": r} for r in data_dict['r_SG_G']]
+    }
+    
+    foutput = f'{foutput}'
+    with open(foutput, 'w') as json_file:
+        data = _to_native(data)
+        json.dump(data, json_file, indent=4)
+
+def rename_imgs_in_folder(folder):
+
+    # Iterate over files in the directory
+    for filename in os.listdir(folder):
+        # Check if the file starts with 'simulator_image_' and ends with '.png'
+        if filename.endswith(".png"):
+            # Extract the number from the original filename
+            number = filename.split('_')[-1].split('.')[0]
+            # Create the new filename with leading zeros
+            new_filename = f"img_{int(number):05d}.png"
+
+            # Get full paths
+            old_file = os.path.join(folder, filename)
+            new_file = os.path.join(folder, new_filename)
+            
+            # Rename the file
+            os.rename(old_file, new_file)
+
+def create_ffmpeg(gt_output, filename):
+    parent_directory = os.path.dirname(gt_output)
+    output_video = os.path.join(parent_directory, filename + '.mp4')
+    print(f"Creating video {output_video} from images in {gt_output}")
+    
+    ffmpeg_command = [
+        # ffmpeg
+        r'C:\ffmpeg\bin\ffmpeg.exe',
+        '-framerate', str(30),
+        '-i', os.path.join(gt_output, "img_%05d.png"),
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        output_video
+    ]
+    
+    my_env = os.environ.copy()
+
+    try:
+        # Set working directory to ensure correct relative paths
+        result = subprocess.run(
+            ffmpeg_command,
+            check=True,
+            env=my_env,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True
+        )
+        print(f"Video created successfully: {output_video}")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error creating video: {e}")
+        print(f"ffmpeg stderr: {e.stderr}")
+        return False
