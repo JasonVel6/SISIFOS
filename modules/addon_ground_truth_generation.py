@@ -16,8 +16,10 @@ import json
 import os
 import shutil
 import numpy as np
+import trimesh
 
 import bpy
+from modules.geometry import depth_from_trimesh
 from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
 from bpy.types import Panel, Operator, PropertyGroup
 from bpy.app.handlers import persistent
@@ -551,21 +553,11 @@ def load_handler_after_rend_frame(
                 normal0 = load_file_data_to_numpy(scene, tmp_file_path0, "Normal")
             """ Depth + Disparity """
             if vision_blender.bool_save_depth:
-                if is_stereo_activated:
-                    tmp_file_path1 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix1),
-                    )
-                    z1, disp1 = load_file_data_to_numpy(scene, tmp_file_path1, "Depth")
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix0),
-                    )
-                else:
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH, "{:04d}_Depth.exr".format(scene.frame_current)
-                    )
-                z0, disp0 = load_file_data_to_numpy(scene, tmp_file_path0, "Depth")
+                z0 = depth_from_trimesh(scene, extrinsic_mat0)
+                disp0 = None
+                if is_stereo_activated and extrinsic_mat1 is not None:
+                    z1 = depth_from_trimesh(scene, extrinsic_mat1)
+                    disp1 = None
             if scene.render.engine == "CYCLES":
                 """Segmentation masks"""
                 if (
