@@ -53,6 +53,7 @@ if (-not (Test-Path variable:SISIFOS_OLD_PROMPT)) {
 $env:PATH = "$BlenderPythonDir;$BlenderDir;$env:PATH"
 $env:BLENDER = $BlenderExe
 $env:PYTHON = $BlenderPython
+$env:UV_PROJECT_ENVIRONMENT = Split-Path -Path $BlenderPythonDir -Parent
 
 # 2. Modify Prompt
 if (Test-Path variable:Global:__VSCodeState) {
@@ -84,6 +85,7 @@ function global:deactivate {
         Remove-Item env:\SISIFOS_OLD_PATH -ErrorAction SilentlyContinue
         Remove-Item env:\BLENDER -ErrorAction SilentlyContinue
         Remove-Item env:\PYTHON -ErrorAction SilentlyContinue
+        Remove-Item env:\UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
         Remove-Item function:deactivate -ErrorAction SilentlyContinue
         Write-Host "[SISIFOS] Environment deactivated." -ForegroundColor Yellow
     }
