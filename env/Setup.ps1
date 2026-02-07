@@ -56,6 +56,7 @@ try {
 
     # 4. Setup Python Environment
     Push-Location $ProjectRoot
+    $env:UV_PROJECT_ENVIRONMENT = Split-Path -Path $BlenderPythonDir -Parent
 
     Update-Progress "Bootstrapping pip..."
     & $BlenderPython -m ensurepip --upgrade *>$null
@@ -82,6 +83,7 @@ try {
     & $BlenderPython -m uv pip install --no-deps --editable . -q *>$null
     if ($LASTEXITCODE -ne 0) { throw "editable install failed" }
     
+    Remove-Item env:\UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
     Pop-Location
 
     # Clear progress
