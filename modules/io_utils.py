@@ -4,6 +4,8 @@ from pathlib import Path
 from datetime import datetime
 from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb, _id_to_color
 
+# TODO determine what in here needs to get moved to the trajectory module
+
 def vprint(msg: str, verbose: bool = True):
     if verbose:
         print(msg)

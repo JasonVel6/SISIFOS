@@ -19,13 +19,13 @@ sys.path.append(os.getcwd())
 from modules.config import SceneConfig
 from modules.renderer import BlenderRenderer
 from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, vprint
-from modules.trajectory import (
-    write_camera_trajectory_v2, load_camera_trajectory_v2, 
+from modules.trajectory.sampling_trajectory import (
+    write_camera_trajectory_v2, 
     sun_sweep_90, make_fake_frame_from_frame0
 )
-
-SUN_AZ_MAN = [0]
-SUN_EL_MAN = [-90, -45, 0, 45, 90]
+from modules.trajectory.trajectory_io import (
+    read_camera_trajectory_to_frames
+)
 
 def main(config_path: str):
     PROJECT_ROOT = Path(__file__).parent.resolve()
@@ -48,7 +48,7 @@ def main(config_path: str):
     gt_path = renders_base_dir / "camera_traj.txt"
     ensure_dir(gt_path.parent)
 
-    if not gt_path.exists():
+    if not gt_path.exists(): # why would it exist? we generate this file as a timestamp essentially getting rid of this possibility
         write_camera_trajectory_v2(
             str(gt_path),
             N=config.setup.num_frames,
@@ -56,7 +56,7 @@ def main(config_path: str):
             R_RPO=config.setup.R_RPO,
         )
     
-    frames = load_camera_trajectory_v2(str(gt_path))
+    frames = read_camera_trajectory_to_frames(str(gt_path))
     print(f"\n[Session] Timestamp: {timestamp}")
     print(f"[Session] Renders output: {renders_base_dir}/")
     
@@ -68,6 +68,7 @@ def main(config_path: str):
     res_x, res_y = config.camera.resolution
     
     # Setup Sweeps
+    # TODO we will need to make this able to do in a config file
     exp_sweep_map = config.setup.sweep_exposure if config.setup.sweep_exposure else {"00": config.setup.t_ref_s}
     sun_sweep_map = config.setup.sweep_sun_az_el if config.setup.sweep_sun_az_el else sun_sweep_90()
     

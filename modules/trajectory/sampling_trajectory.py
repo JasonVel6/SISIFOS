@@ -3,9 +3,10 @@ import random
 from pathlib import Path
 from typing import List, Dict
 from mathutils import Vector, Quaternion
-from .geometry import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
-from .io_utils import ensure_dir
+from trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
+from ..io_utils import ensure_dir
 
+# TODO we can prob move this
 def sun_sweep_90(az_step: int = 90,
     el_step: int = 90,
     az_range=(45, 360),     # [start, end) in degrees
@@ -32,6 +33,7 @@ def sun_sweep_90(az_step: int = 90,
             idx += 1
     return sweep
 
+# TODO this can also probably get moved
 def make_fake_frame_from_frame0(
     frame0: dict,
     seed: int,
@@ -111,6 +113,7 @@ def make_fake_frame_from_frame0(
         "q_I_C": q_I_C1,
     }
 
+# TODO this should rename
 def write_camera_trajectory_v2(
     out_path: str,
     N: int,
@@ -138,6 +141,7 @@ def write_camera_trajectory_v2(
       q_I_C = orientation of camera frame relative to inertial
       
     Earth/clouds/atmosphere stay at inertial origin (0,0,0) with fixed orientation.
+    TODO this method can be integrated into the other writing methods but for now lets keep it like this.
     """
     out_path = str(Path(out_path))
     
@@ -225,47 +229,6 @@ def write_camera_trajectory_v2(
         print(f"Trajectory (v2 - inertial orbital) written to: {out_path}")
     
     return out_path
-
-def load_camera_trajectory_v2(path: str) -> List[Dict]:
-    """
-    Load trajectory from v2 file (inertial frame reference).
-    
-    File format (per line):
-      p_G_I(3)  q_I_G(4)  p_C_I(3)  q_I_C(4)  sun_az(1)  sun_el(1)
-      = 16 floats total per line
-    
-    Returns list of dicts with keys:
-      p_G_I: position of target in inertial frame
-      q_I_G: orientation of target relative to inertial
-      p_C_I: position of camera in inertial frame
-      q_I_C: orientation of camera relative to inertial
-      sun_az, sun_el: sun angles
-    """
-    traj = []
-    with open(path, "r") as f:
-        for line_num, ln in enumerate(f, 1):
-            ln = ln.strip()
-            if not ln or ln.startswith("#"):
-                continue
-            
-            parts = [float(x) for x in ln.split()]
-            if len(parts) < 14:
-                raise ValueError(f"Line {line_num}: Expected 14 floats, got {len(parts)}")
-            
-            # Parse: p_G_I(3) q_I_G(4) p_C_I(3) q_I_C(4) sun_az sun_el
-            p_G_I = Vector((parts[0], parts[1], parts[2]))
-            q_I_G = Quaternion((parts[3], parts[4], parts[5], parts[6])).normalized()
-            p_C_I = Vector((parts[7], parts[8], parts[9]))
-            q_I_C = Quaternion((parts[10], parts[11], parts[12], parts[13])).normalized()
-            
-            traj.append({
-                "p_G_I": p_G_I,
-                "q_I_G": q_I_G,
-                "p_C_I": p_C_I,
-                "q_I_C": q_I_C,
-            })
-    
-    return traj
 
 def write_camera_approach(
     out_path: str,
