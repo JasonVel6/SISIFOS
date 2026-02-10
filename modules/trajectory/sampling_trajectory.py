@@ -114,7 +114,7 @@ def make_fake_frame_from_frame0(
     }
 
 # TODO this should rename
-def write_camera_trajectory_v2(
+def write_camera_trajectory_fib(
     out_path: str,
     N: int,
     R_LEO: float,
