@@ -3,8 +3,8 @@ import random
 from pathlib import Path
 from typing import List, Dict
 from mathutils import Vector, Quaternion
-from trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
-from ..io_utils import ensure_dir
+from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
+from modules.io_utils import ensure_dir
 
 # TODO we can prob move this
 def sun_sweep_90(az_step: int = 90,

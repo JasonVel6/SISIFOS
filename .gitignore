@@ -17,7 +17,6 @@ __pycache__/
 # Blender
 *.blend
 *.blend1
-!assets/Earth.blend
 renders/
 
 # Trajectory outputs

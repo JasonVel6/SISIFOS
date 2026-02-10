@@ -52,20 +52,20 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from modules.config import (TrajectoryConfig)
-from motion_cases import (
+from modules.trajectory.motion_cases import (
     init_inertial, init_hill, init_tumbling,
     validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
 )
 
 # TODO Evaluate what we need in the math function
-from trajectory_math import (
+from modules.trajectory.trajectory_math import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
-    _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity
+    _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity,
+    calcInitCondChaser
 )
-from trajectory_math import calcInitCondChaser
-from plot_figure import plot_trial_trajectories
-from trajectory_io import write_camera_trajectory, write_gtvalues, write_json, write_config, write_sensormeasurements
+from modules.trajectory.plot_figure import plot_trial_trajectories
+from modules.trajectory.trajectory_io import write_camera_trajectory, write_gtvalues, write_json, write_config, write_sensormeasurements
 
 # ---------------- Paths ----------------
 # TODO a lot of this should go in the main method as it should only be run if running from command line
@@ -77,7 +77,7 @@ DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "output")
 # ============================================================================
 # MAIN Function
 # ============================================================================
-def generate_trajectories(config: TrajectoryConfig, base_output_file: str):
+def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: str) -> list[str]:
     # Initialize random seeds for reproducibility
     if config.seed is not None:
         master_seed = config.seed
@@ -528,6 +528,8 @@ def generate_trajectories(config: TrajectoryConfig, base_output_file: str):
         payload = config.model_dump()
         json.dump(payload, f, indent=2)
 
+    agent_folders = []
+
     camera_obj = {"focal_length": config.FOCAL_LENGTH_PX, "resolution": config.CAMERA_RESOLUTION, "lens_flare": config.LENS_FLARE} # We prob dont need to do this and can just pass a config
 
     for mc_trial in range(config.num_mc):
@@ -587,6 +589,7 @@ def generate_trajectories(config: TrajectoryConfig, base_output_file: str):
 
             agent_folder = os.path.join(mc_folder, f"agent_{agent_idx}")
             os.makedirs(agent_folder, exist_ok=True)
+            agent_folders.append(agent_folder)
 
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
@@ -653,6 +656,8 @@ def generate_trajectories(config: TrajectoryConfig, base_output_file: str):
     print(f"       Master seed: {config.seed}")
     print(f"       Mode: {config.path_mode}")
     print(f"       {config.num_mc} MC trials, {config.num_agents} agent(s) each")
+
+    return agent_folders
 
 
 # ============================================================================
