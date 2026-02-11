@@ -183,11 +183,62 @@ def check_any_obj_with_non_zero_index():
     return False
 
 
+def get_principled_bsdf_node(material):
+    if material is None or not material.use_nodes or material.node_tree is None:
+        return None
+    for node in material.node_tree.nodes:
+        if node.type == "BSDF_PRINCIPLED":
+            return node
+    return None
+
+
+def get_material_property_key(material, precision=6):
+    node = get_principled_bsdf_node(material)
+    if node is None:
+        return ("NO_PRINCIPLED", material.name if material else "NONE")
+    metallic = round(float(node.inputs["Metallic"].default_value), precision)
+    roughness = round(float(node.inputs["Roughness"].default_value), precision)
+    ior = round(float(node.inputs["IOR"].default_value), precision)
+    alpha = round(float(node.inputs["Alpha"].default_value), precision)
+    return (metallic, roughness, ior, alpha)
+
+
+def assign_material_indexes_by_properties(precision=6):
+    key_to_index = {}
+    next_index = 1
+    for material in bpy.data.materials:
+        key = get_material_property_key(material, precision=precision)
+        if key not in key_to_index:
+            key_to_index[key] = next_index
+            next_index += 1
+        material.pass_index = key_to_index[key]
+    return key_to_index
+
+
+def check_any_material_with_non_zero_index():
+    for material in bpy.data.materials:
+        if material.pass_index != 0:
+            return True
+    return False
+
+
+def check_any_materials_for_segmentation():
+    return len(bpy.data.materials) > 0
+
+
 def get_largest_object_name_length():
     max_chars = 0
     for obj in bpy.data.objects:
         if len(obj.name) > max_chars:
             max_chars = len(obj.name)
+    return max_chars
+
+
+def get_largest_material_name_length():
+    max_chars = 0
+    for material in bpy.data.materials:
+        if len(material.name) > max_chars:
+            max_chars = len(material.name)
     return max_chars
 
 
@@ -202,6 +253,18 @@ def get_struct_array_of_obj_indexes():
     for ind, obj in enumerate(bpy.data.objects):
         obj_indexes[ind] = (obj.name, obj.pass_index)
     return obj_indexes
+
+
+def get_struct_array_of_material_indexes():
+    # ref: https://numpy.org/doc/stable/user/basics.rec.html
+    n_chars = get_largest_material_name_length()
+    n_materials = len(bpy.data.materials)
+    mat_indexes = np.zeros(
+        n_materials, dtype=[("name", "U{}".format(n_chars)), ("pass_index", "<u2")]
+    )
+    for ind, material in enumerate(bpy.data.materials):
+        mat_indexes[ind] = (material.name, material.pass_index)
+    return mat_indexes
 
 
 def is_stereo_ok_for_disparity(scene):
@@ -366,8 +429,9 @@ def load_handler_render_init(scene):
         ## Segmentation masks and optical flow only work in Cycles
         if scene.render.engine == "CYCLES":
             if vision_blender.bool_save_segmentation_masks:
-                if not bpy.context.view_layer.use_pass_object_index:
-                    bpy.context.view_layer.use_pass_object_index = True
+                assign_material_indexes_by_properties(precision=6)
+                if not bpy.context.view_layer.use_pass_material_index:
+                    bpy.context.view_layer.use_pass_material_index = True
             if vision_blender.bool_save_opt_flow:
                 if not bpy.context.view_layer.use_pass_vector:
                     bpy.context.view_layer.use_pass_vector = True
@@ -414,11 +478,11 @@ def load_handler_render_init(scene):
         if scene.render.engine == "CYCLES":
             """Segmentation masks"""
             if vision_blender.bool_save_segmentation_masks:
-                # We can only generate segmentation masks if that are any labeled objects (objects w/ index set)
-                non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
-                if non_zero_obj_ind_found:
+                # We can only generate segmentation masks if any materials are indexed
+                non_zero_mat_ind_found = check_any_material_with_non_zero_index()
+                if non_zero_mat_ind_found:
                     slot_seg_mask = _new_slot(node_output, "####_Segmentation_Mask")
-                    links.new(rl.outputs["IndexOB"], slot_seg_mask)
+                    links.new(rl.outputs["IndexMA"], slot_seg_mask)
             """ Optical flow - Current to next frame """
             if vision_blender.bool_save_opt_flow:
                 # Create new slot in output node
@@ -570,9 +634,9 @@ def load_handler_after_rend_frame(
                 """Segmentation masks"""
                 if (
                     vision_blender.bool_save_segmentation_masks
-                    and check_any_obj_with_non_zero_index()
+                    and check_any_material_with_non_zero_index()
                 ):
-                    seg_masks_indexes = get_struct_array_of_obj_indexes()
+                    seg_masks_indexes = get_struct_array_of_material_indexes()
                     if is_stereo_activated:
                         tmp_file_path1 = os.path.join(
                             TMP_FILES_PATH,
@@ -768,11 +832,11 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
             )
 
         if vision_blender.bool_save_segmentation_masks and context.engine == "CYCLES":
-            non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
-            if not non_zero_obj_ind_found:
+            has_any_materials = check_any_materials_for_segmentation()
+            if not has_any_materials:
                 col = layout.column(align=True)
                 col.label(
-                    text="No object index found yet for Segmentation Masks...",
+                    text="No material found yet for Segmentation Masks...",
                     icon="ERROR",
                 )
 
