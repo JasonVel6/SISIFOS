@@ -205,32 +205,66 @@ def _build_material_color_map() -> dict[int, tuple[float, float, float]]:
     return color_map
 
 
-def _save_segmentation_from_npz(npz_src: Path, gt_npz_dir: Path, gt_seg_dir: Path, color_map):
+def _build_collection_color_map() -> tuple[dict[str, int], dict[int, tuple[float, float, float]]]:
+    collection_to_index = vision_addon.assign_object_indexes_by_collection()
+    color_map = {}
+    for idx in sorted(collection_to_index.values()):
+        color_map[idx] = _color_for_id(idx, color_map)
+    return collection_to_index, color_map
+
+
+def _write_collection_color_log(
+    path: Path,
+    collection_to_index: dict[str, int],
+    color_map: dict[int, tuple[float, float, float]],
+):
+    lines = ["idx\tname\thex"]
+    for name, idx in sorted(collection_to_index.items(), key=lambda item: item[1]):
+        color = _color_for_id(int(idx), color_map)
+        hex_color = _rgb_to_hex(color)
+        lines.append(f"{idx}\t{name}\t{hex_color}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _save_segmentation_from_npz(
+    npz_src: Path,
+    gt_npz_dir: Path,
+    gt_seg_dir: Path,
+    color_map,
+    seg_key: str = "segmentation_masks",
+    use_id_color: bool = False,
+    seg_suffix: str = "Seg",
+):
     npz_src = Path(npz_src)
     gt_npz_dir.mkdir(parents=True, exist_ok=True)
     gt_seg_dir.mkdir(parents=True, exist_ok=True)
 
     npz_dst = gt_npz_dir / npz_src.name
-    if npz_dst.resolve() != npz_src.resolve():
+    if npz_dst.exists():
+        npz_src = npz_dst
+    elif npz_dst.resolve() != npz_src.resolve():
         try:
             npz_src.replace(npz_dst)
         except Exception:
             shutil.copy2(npz_src, npz_dst)
             npz_src.unlink(missing_ok=True)
+        npz_src = npz_dst
 
-    data = np.load(npz_dst, allow_pickle=True)
-    if "segmentation_masks" not in data:
+    data = np.load(npz_src, allow_pickle=True)
+    if seg_key not in data:
         return None
 
-    seg = np.rint(data["segmentation_masks"]).astype(np.int32)
-    max_id = int(seg.max()) if seg.size else 0
-    colors = np.zeros((max_id + 1, 3), dtype=np.float32)
-    for idx in range(max_id + 1):
-        colors[idx] = _color_for_id(idx, color_map)
-
-    base = npz_dst.stem
-    rgb = colors[seg]
-    plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), rgb)
+    base = npz_src.stem
+    seg = np.rint(data[seg_key]).astype(np.int32)
+    if use_id_color:
+        rgb = _id_to_color(seg)
+    else:
+        max_id = int(seg.max()) if seg.size else 0
+        colors = np.zeros((max_id + 1, 3), dtype=np.float32)
+        for idx in range(max_id + 1):
+            colors[idx] = _color_for_id(idx, color_map)
+        rgb = colors[seg]
+    plt.imsave(str(gt_seg_dir / f"{base}_{seg_suffix}.png"), rgb)
     return np.unique(seg)
 
 
@@ -244,9 +278,15 @@ def main() -> None:
     _configure_segmentation(scene)
 
     output_root = ensure_dir(PROJECT_ROOT / "renders" / get_timestamp_folder() / f"{blend_path.stem}_SEG")
-    color_map = _build_material_color_map()
-    _log_material_colors(color_map)
-    _write_material_color_log(output_root / "material_color_log.txt", color_map)
+    material_color_map = _build_material_color_map()
+    _log_material_colors(material_color_map)
+    _write_material_color_log(output_root / "material_color_log.txt", material_color_map)
+    collection_to_index, collection_color_map = _build_collection_color_map()
+    _write_collection_color_log(
+        output_root / "collection_color_log.txt",
+        collection_to_index,
+        collection_color_map,
+    )
     traj_path = output_root / "camera_traj.txt"
     write_camera_trajectory_v2(
         str(traj_path),
@@ -306,7 +346,16 @@ def main() -> None:
                 npz_src,
                 gt_dirs["gt_npz"],
                 gt_dirs["gt_seg"],
-                color_map,
+                material_color_map,
+                seg_suffix="SegMaterial",
+            )
+            _save_segmentation_from_npz(
+                npz_src,
+                gt_dirs["gt_npz"],
+                gt_dirs["gt_seg"],
+                collection_color_map,
+                seg_key="segmentation_masks_collection",
+                seg_suffix="SegCollection",
             )
 
 

@@ -215,6 +215,25 @@ def assign_material_indexes_by_properties(precision=6):
     return key_to_index
 
 
+def assign_object_indexes_by_collection():
+    collections = []
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        for col in obj.users_collection:
+            if col not in collections:
+                collections.append(col)
+    collections.sort(key=lambda c: c.name)
+    collection_to_index = {col: idx + 1 for idx, col in enumerate(collections)}
+    for obj in bpy.data.objects:
+        if obj.type != "MESH":
+            continue
+        indices = [collection_to_index.get(col) for col in obj.users_collection]
+        indices = [idx for idx in indices if idx is not None]
+        obj.pass_index = min(indices) if indices else 0
+    return {col.name: idx for col, idx in collection_to_index.items()}
+
+
 def check_any_material_with_non_zero_index():
     for material in bpy.data.materials:
         if material.pass_index != 0:
@@ -350,6 +369,8 @@ def save_data_to_npz(
     opt_flw1,
     seg_masks0,
     seg_masks1,
+    seg_masks_collection0,
+    seg_masks_collection1,
     seg_masks_indexes,
     intrinsic_mat,
     extrinsic_mat0,
@@ -362,6 +383,7 @@ def save_data_to_npz(
     out_dict0 = {
         "optical_flow": opt_flw0,
         "segmentation_masks": seg_masks0,
+        "segmentation_masks_collection": seg_masks_collection0,
         "segmentation_masks_indexes": seg_masks_indexes,
         "intrinsic_mat": intrinsic_mat,
         "extrinsic_mat": extrinsic_mat0,
@@ -376,6 +398,7 @@ def save_data_to_npz(
         out_dict1 = {
             "optical_flow": opt_flw1,
             "segmentation_masks": seg_masks1,
+            "segmentation_masks_collection": seg_masks_collection1,
             "segmentation_masks_indexes": seg_masks_indexes,
             "intrinsic_mat": intrinsic_mat,
             "extrinsic_mat": extrinsic_mat1,
@@ -430,8 +453,11 @@ def load_handler_render_init(scene):
         if scene.render.engine == "CYCLES":
             if vision_blender.bool_save_segmentation_masks:
                 assign_material_indexes_by_properties(precision=6)
+                assign_object_indexes_by_collection()
                 if not bpy.context.view_layer.use_pass_material_index:
                     bpy.context.view_layer.use_pass_material_index = True
+                if not bpy.context.view_layer.use_pass_object_index:
+                    bpy.context.view_layer.use_pass_object_index = True
             if vision_blender.bool_save_opt_flow:
                 if not bpy.context.view_layer.use_pass_vector:
                     bpy.context.view_layer.use_pass_vector = True
@@ -483,6 +509,12 @@ def load_handler_render_init(scene):
                 if non_zero_mat_ind_found:
                     slot_seg_mask = _new_slot(node_output, "####_Segmentation_Mask")
                     links.new(rl.outputs["IndexMA"], slot_seg_mask)
+                non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
+                if non_zero_obj_ind_found:
+                    slot_seg_collection = _new_slot(
+                        node_output, "####_Segmentation_Collection"
+                    )
+                    links.new(rl.outputs["IndexOB"], slot_seg_collection)
             """ Optical flow - Current to next frame """
             if vision_blender.bool_save_opt_flow:
                 # Create new slot in output node
@@ -590,6 +622,8 @@ def load_handler_after_rend_frame(
         disp1 = None
         seg_masks0 = None
         seg_masks1 = None
+        seg_masks_collection0 = None
+        seg_masks_collection1 = None
         seg_masks_indexes = None
         opt_flw0 = None
         opt_flw1 = None
@@ -661,6 +695,36 @@ def load_handler_after_rend_frame(
                     seg_masks0 = load_file_data_to_numpy(
                         scene, tmp_file_path0, "Segmentation"
                     )
+                if (
+                    vision_blender.bool_save_segmentation_masks
+                    and check_any_obj_with_non_zero_index()
+                ):
+                    if is_stereo_activated:
+                        tmp_file_path1 = os.path.join(
+                            TMP_FILES_PATH,
+                            "{:04d}_Segmentation_Collection{}.exr".format(
+                                scene.frame_current, suffix1
+                            ),
+                        )
+                        seg_masks_collection1 = load_file_data_to_numpy(
+                            scene, tmp_file_path1, "Segmentation"
+                        )
+                        tmp_file_path0 = os.path.join(
+                            TMP_FILES_PATH,
+                            "{:04d}_Segmentation_Collection{}.exr".format(
+                                scene.frame_current, suffix0
+                            ),
+                        )
+                    else:
+                        tmp_file_path0 = os.path.join(
+                            TMP_FILES_PATH,
+                            "{:04d}_Segmentation_Collection.exr".format(
+                                scene.frame_current
+                            ),
+                        )
+                    seg_masks_collection0 = load_file_data_to_numpy(
+                        scene, tmp_file_path0, "Segmentation"
+                    )
                 """ Optical flow - Forward -> from current to next frame"""
                 if vision_blender.bool_save_opt_flow:
                     if is_stereo_activated:
@@ -701,6 +765,8 @@ def load_handler_after_rend_frame(
             opt_flw1,
             seg_masks0,
             seg_masks1,
+            seg_masks_collection0,
+            seg_masks_collection1,
             seg_masks_indexes,  # Same indexes for both cameras
             intrinsic_mat,  # Both cameras have the same intrinsic parameters
             extrinsic_mat0,

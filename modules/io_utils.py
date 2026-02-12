@@ -87,4 +87,7 @@ def handle_gt_from_npz(
     # --------- SEGMENTATION (addon-provided) ---------
     if "segmentation_masks" in data:
         seg = data["segmentation_masks"]
-        plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
+        plt.imsave(str(gt_seg_dir / f"{base}_SegMaterial.png"), _id_to_color(seg))
+    if "segmentation_masks_collection" in data:
+        seg = data["segmentation_masks_collection"]
+        plt.imsave(str(gt_seg_dir / f"{base}_SegCollection.png"), _id_to_color(seg))

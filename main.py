@@ -95,7 +95,7 @@ def main(config_path: str):
             "gt_depth": ensure_dir(gt_root / "Depth"),
             "gt_norm": ensure_dir(gt_root / "Normal"),
             "gt_flow": ensure_dir(gt_root / "Flow"),
-            "gt_seg": ensure_dir(gt_root / "Seg")
+            "gt_seg": ensure_dir(gt_root / "Seg"),
         }
         
         if config.model_rotation_z_deg != 0:
