@@ -24,7 +24,7 @@ from modules.renderer import BlenderRenderer
 from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, vprint
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib, 
-    sun_sweep_90, make_fake_frame_from_frame0
+    make_fake_frame_from_frame0
 )
 from modules.trajectory.trajectory_io import (
     read_camera_trajectory_to_frames
@@ -35,26 +35,20 @@ DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 
 def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
         # Generate the trajectory TODO at some point maybe we can pass a path but the trajectory generator is quite fast for now
-    if config.trajectoty_type == "trajectory_generator":
+    if config.trajectory_type == "trajectory_generator":
         agent_folders = generate_trajectories_dynamical(config.trajectory, str(output_dir))
         
-    elif config.trajectoty_type == "sampling_trajectory":
-        raise NotImplementedError("Sampling-based trajectory generation is not yet implemented. Please use 'trajectory_generator' or implement the sampling-based generator.")
-
-        timestamp = get_timestamp_folder()
-        renders_base_dir = PROJECT_ROOT / "renders" / timestamp
-        gt_path = renders_base_dir / "camera_traj.txt"
-        ensure_dir(gt_path.parent)
-
-        if not gt_path.exists(): # why would it exist? we generate this file as a timestamp essentially getting rid of this possibility
-            write_camera_trajectory_v2(
-                str(gt_path),
-                N=config.setup.num_frames,
-                R_LEO=config.setup.R_LEO,
-                R_RPO=config.setup.R_RPO,
+    elif config.trajectory_type == "sampling_trajectory":
+        agent_folders = write_camera_trajectory_fib(
+                str(output_dir),
+                N=config.trajectory_sampling.num_frames,
+                R_LEO=config.trajectory_sampling.R_LEO,
+                R_RPO=config.trajectory_sampling.R_RPO,
+                sun_az=config.trajectory_sampling.sun_az,
+                sun_el=config.trajectory_sampling.sun_el,
         )
     else:
-        raise ValueError(f"Invalid trajectory type: {config.trajectoty_type}. Must be 'trajectory_generator' or 'sampling_trajectory'.")
+        raise ValueError(f"Invalid trajectory type: {config.trajectory_type}. Must be 'trajectory_generator' or 'sampling_trajectory'.")
     
     return agent_folders
 
@@ -74,14 +68,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     res_x, res_y = config.camera.resolution
     
-    # Setup Sweeps
-    # TODO we will need to make this able to do in a config file
-    exp_sweep_map = config.setup.sweep_exposure if config.setup.sweep_exposure else {"00": config.setup.t_ref_s}
-    sun_sweep_map = config.setup.sweep_sun_az_el if config.setup.sweep_sun_az_el else sun_sweep_90()
-    
     N_digits = int(math.log10(len(frames))) + 1
-    N_azel_keys = int(math.log10(len(sun_sweep_map))) + 1
-    N_exp_keys = int(math.log10(len(exp_sweep_map))) + 1
 
     for model in models:
         model_folder_name = f"{model.name}"
@@ -109,9 +96,11 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         if config.model_rotation_z_deg != 0:
             renderer.rotate_z(model, config.model_rotation_z_deg)
 
-        total = len(frame_ids) * len(exp_sweep_map) * len(sun_sweep_map)/2
+        total = len(frame_ids)
         print("Enabling blur is: ", config.setup.enable_blur)
         
+        # TODO will need to fix the tqdm progress bar
+        # already doesnt quite work because of blender spamming the console will need to fix this later
         with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
             for i in frame_ids:
                 fr = frames[i]
@@ -125,35 +114,30 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                         force_camera_lookat=True,
                     )
                 
-                for sweep_key_exp, exp_value in exp_sweep_map.items():
-                    current_output_dir = model_out_dir / f"exp_{str(sweep_key_exp).zfill(N_exp_keys)}"
-                    ensure_dir(current_output_dir)
                     
-                    for sweep_key_azel, azel in sun_sweep_map.items():
-                        if int(sweep_key_azel) < 4:
-                            if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
-                                fps = renderer.scene.render.fps / renderer.scene.render.fps_base
-                                shutter_frames = exp_value * fps * config.setup.blur_shutter_factor
-                                renderer.render_frame_motion_blur_traj(
-                                    cam, model, sun, fr, fake_fr2, i, shutter_frames,
-                                    current_output_dir, exp_value, azel, sweep_key_azel, N_azel_keys, N_digits
-                                )
-                            else:
-                                renderer.render_frame_v2(
-                                    cam, model, sun, fr, i, current_output_dir, exp_value,
-                                    azel, sweep_key_azel, N_azel_keys, N_digits
-                                )
-                            pbar.update(1)
+                if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
+                    fps = renderer.scene.render.fps / renderer.scene.render.fps_base
+                    shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
+                    renderer.render_frame_motion_blur_traj(
+                        cam, model, sun, fr, fake_fr2, i, shutter_frames,
+                        model_out_dir, config.camera.exposure_time_s, N_digits
+                    )
+                else:
+                    renderer.render_frame_v2(
+                        cam, model, sun, fr, i, model_out_dir, config.camera.exposure_time_s,
+                        N_digits
+                    )
+                pbar.update(1)
 
-                    # Post-process NPZ
-                    npz_src = Path(os.path.join(current_output_dir, f'{i:04d}.npz'))
-                    if npz_src.exists():
-                        handle_gt_from_npz(
-                            npz_src,
-                            gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
-                            gt_dirs["gt_flow"], gt_dirs["gt_seg"],
-                            config.setup.R_RPO
-                        )
+                # Post-process NPZ TODO fix this but commenting for now
+                # npz_src = Path(os.path.join(current_output_dir, f'{i:04d}.npz'))
+                # if npz_src.exists():
+                #     handle_gt_from_npz(
+                #         npz_src,
+                #         gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
+                #         gt_dirs["gt_flow"], gt_dirs["gt_seg"],
+                #         config.setup.R_RPO
+                #     )
 
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
@@ -214,7 +198,7 @@ if __name__ == "__main__":
 
     if args.sweep_config_path:
 
-        if args.config_path or args.sweep_config_path:
+        if args.config_path:
             raise RuntimeError("Cannot specify --sweep_config_path together with --config_path. Please provide only one of these options.")
 
         print(f"[SISFOS] Loading sweep config from: {args.sweep_config_path}")

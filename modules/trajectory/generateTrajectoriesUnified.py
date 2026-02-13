@@ -148,6 +148,7 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
     roll = np.zeros(config.num_mc)
 
     # TODO parameterize distributions
+    # TODO should be able to override some of these parameters
     for mc_trial in range(config.num_mc):
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
@@ -603,8 +604,8 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 q_IG=q_IG_mc,
                 r_CO_I=state_C_I_mc_ag[:, 0:3],
                 q_IC=q_IC_mc_ag,
-                sun_az=az_I_mc,
-                sun_el=el_I_mc,
+                sun_az=np.rad2deg(az_I_mc),
+                sun_el=np.rad2deg(el_I_mc),
             )
             gtvalues_filepath = write_gtvalues(
                 output_dir=agent_folder,

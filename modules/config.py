@@ -1,3 +1,12 @@
+"""
+config.py
+
+Defines the configuration schema for the trajectory generator and renderer
+
+
+TODO need to unify multiple sources of truth for parameters like camera settings and exposure time, currently they are defined in multiple places which is not ideal and can lead to bugs if they get out of sync, ideally we would have a single source of truth for each parameter and reference it in both places, this will require some refactoring but will improve maintainability and reduce the risk of bugs in the future
+"""
+
 import time
 from pydantic import BaseModel, Field, computed_field
 from typing import List, Dict, Optional, Tuple, Any, Literal
@@ -25,7 +34,7 @@ class CameraConfig(BaseModel):
     clip_end: float = 5000000.0
     resolution: Tuple[int, int] = (480, 480)
     lens_flare: float = 0.01 # TODO see if we really need this because it is only used in the trajectory generator
-    exposure_time_s: float = 1.0/60.0
+    exposure_time_s: float = 1.0/60.0 # TODO resolve this exposure time being in multiple places and not being used in the renderer, should be unified and used in both places
 
 
 class RenderConfig(BaseModel):
@@ -39,15 +48,12 @@ class RenderConfig(BaseModel):
 
 class SetupConfig(BaseModel):
     """Environment Setup"""
-    # Sweep definitions (optional)
-    sweep_exposure: Optional[Dict[str, float]] = None # TODO get rid of this
-    sweep_sun_az_el: Optional[Dict[str, Dict[str, float]]] = None
     # Reference settings
     earth_mode: Literal["on", "off"] = "on"
     stars_mode: Literal["on", "off"] = "on"
     enable_blur: Literal["on", "off"] = "off"
     enable_glare: Literal["on", "off"] = "off"
-    t_ref_s: float = 0.01666667
+    t_ref_s: float = 0.01666667 # TODO why is this deffined here and in the camera config
     blur_shutter_factor: float =  0.8
     blur_motion_factor: float =  0.8
     glare_threshold: float = 0.95
@@ -59,6 +65,8 @@ class SamplingTrajectoryConfig(BaseModel):
     num_frames: int = 200
     R_RPO: float = 70.0
     R_LEO: float = 10000.0
+    sun_az: float = 0.0
+    sun_el: float = 0.0
 
 
 class TrajectoryConfig(BaseModel):
@@ -162,7 +170,7 @@ class SceneConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
-    trajectoty_type: Literal["trajectory_generator", "sampling_trajectory"] = "trajectory_generator"
+    trajectory_type: Literal["trajectory_generator", "sampling_trajectory"] = "trajectory_generator"
     trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
     trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig)
     # Vision Blender addon settings

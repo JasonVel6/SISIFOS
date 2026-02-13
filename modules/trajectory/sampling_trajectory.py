@@ -7,31 +7,31 @@ from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_unif
 from modules.io_utils import ensure_dir
 
 # TODO we can prob move this
-def sun_sweep_90(az_step: int = 90,
-    el_step: int = 90,
-    az_range=(45, 360),     # [start, end) in degrees
-    el_range=(-45, 90),    # inclusive
-    include_end_az: bool = False,  # keep 360? usually False because 0 == 360
-) -> dict:
-    """ It does a sweep of sun directions every 90 degrees per angle.
-        It will be implemented in a more generalized way.
-    """
-    az0, az1 = az_range
-    el0, el1 = el_range
+# def sun_sweep_90(az_step: int = 90,
+#     el_step: int = 90,
+#     az_range=(45, 360),     # [start, end) in degrees
+#     el_range=(-45, 90),    # inclusive
+#     include_end_az: bool = False,  # keep 360? usually False because 0 == 360
+# ) -> dict:
+#     """ It does a sweep of sun directions every 90 degrees per angle.
+#         It will be implemented in a more generalized way.
+#     """
+#     az0, az1 = az_range
+#     el0, el1 = el_range
 
-    az_vals = list(range(int(az0), int(az1), int(az_step)))
-    if include_end_az and az1 not in az_vals:
-        az_vals.append(int(az1))
+#     az_vals = list(range(int(az0), int(az1), int(az_step)))
+#     if include_end_az and az1 not in az_vals:
+#         az_vals.append(int(az1))
 
-    el_vals = list(range(int(el0), int(el1) + 1, int(el_step)))
+#     el_vals = list(range(int(el0), int(el1) + 1, int(el_step)))
 
-    sweep = {}
-    idx = 0
-    for el in el_vals:
-        for az in az_vals:
-            sweep[f"{idx:02d}"] = {"sun_az_deg": float(az), "sun_el_deg": float(el)}
-            idx += 1
-    return sweep
+#     sweep = {}
+#     idx = 0
+#     for el in el_vals:
+#         for az in az_vals:
+#             sweep[f"{idx:02d}"] = {"sun_az_deg": float(az), "sun_el_deg": float(el)}
+#             idx += 1
+#     return sweep
 
 # TODO this can also probably get moved
 def make_fake_frame_from_frame0(
@@ -115,14 +115,16 @@ def make_fake_frame_from_frame0(
 
 # TODO this should rename
 def write_camera_trajectory_fib(
-    out_path: str,
+    out_dir: str,
     N: int,
     R_LEO: float,
     R_RPO: float,
+    sun_az: float = 0.0,
+    sun_el: float = 0.0,
     shuffle_points: bool = False,
     seed: int = 0,
     verbose: bool = True,
-) -> str:
+) -> list[str]:
     """
     Generate camera Fibonacci-style file with INERTIAL FRAME reference.
     
@@ -143,7 +145,7 @@ def write_camera_trajectory_fib(
     Earth/clouds/atmosphere stay at inertial origin (0,0,0) with fixed orientation.
     TODO this method can be integrated into the other writing methods but for now lets keep it like this.
     """
-    out_path = str(Path(out_path))
+    out_path = str(Path(out_dir) / "camera_traj.txt")
     
     sphere_pts = fibonacci_sphere(N, radius=1.0)
     
@@ -189,6 +191,7 @@ def write_camera_trajectory_fib(
                     f"{q_IG_wxyz[0]:.9f} {q_IG_wxyz[1]:.9f} {q_IG_wxyz[2]:.9f} {q_IG_wxyz[3]:.9f}  "
                     f"{p_C_I.x:12.6f} {p_C_I.y:12.6f} {p_C_I.z:12.6f}  "
                     f"{q_IC_wxyz[0]:.9f} {q_IC_wxyz[1]:.9f} {q_IC_wxyz[2]:.9f} {q_IC_wxyz[3]:.9f}  "
+                    f"{sun_az:.6f} {sun_el:.6f}"
                 )
 
         # Fibonacci sphere point (unit direction)
@@ -220,6 +223,7 @@ def write_camera_trajectory_fib(
             f"{q_IG_wxyz[0]:.9f} {q_IG_wxyz[1]:.9f} {q_IG_wxyz[2]:.9f} {q_IG_wxyz[3]:.9f}  "
             f"{p_C_I.x:12.6f} {p_C_I.y:12.6f} {p_C_I.z:12.6f}  "
             f"{q_IC_wxyz[0]:.9f} {q_IC_wxyz[1]:.9f} {q_IC_wxyz[2]:.9f} {q_IC_wxyz[3]:.9f}  "
+            f"{sun_az:.6f} {sun_el:.6f}"
         )
     ensure_dir(Path(out_path).parent)
     with open(out_path, "w") as f:
@@ -228,8 +232,9 @@ def write_camera_trajectory_fib(
     if verbose:
         print(f"Trajectory (v2 - inertial orbital) written to: {out_path}")
     
-    return out_path
+    return [out_dir]
 
+# TODO this isnt used
 def write_camera_approach(
     out_path: str,
     N: int,
@@ -244,12 +249,12 @@ def write_camera_approach(
     sun_el: float = 0.0,
     verbose: bool = True,
     include_rpo_column: bool = True
-) -> str:
+) -> list[str]:
     """
     This is a demo approach phase. Not actually implementing the trajectory module
     """
 
-    out_path = str(Path(out_path))
+    out_path = str(Path(out_path) / "camera_traj.txt")
 
     
     if N < 2:
@@ -354,4 +359,4 @@ def write_camera_approach(
 
     if verbose:
         print(f"Trajectory (orbit + approach) written to: {out_path}")
-    return out_path
+    return [out_path]

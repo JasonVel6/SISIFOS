@@ -50,17 +50,20 @@ def write_camera_trajectory(output_dir: str,
     lines.extend(camera_trajectory_header)
 
     for i in range(nbSteps):
-        p_G_I = r_GO_I[i]
-        q_I_G = q_IG[i]
-        p_C_I = r_CO_I[i]
-        q_I_C = q_IC[i]
+        p_G_I = -r_GO_I[i]
+        q_I_G = Quaternion(q_IG[i])
+        # q_I_G.invert()
+        p_C_I = -r_CO_I[i]
+        q_I_C = Quaternion(q_IC[i])
+        # q_I_C.invert()
 
         line = (
             f"{p_G_I[0]:.6f} {p_G_I[1]:.6f} {p_G_I[2]:.6f} " # p_G_I
             f"{q_I_G[0]:.6f} {q_I_G[1]:.6f} {q_I_G[2]:.6f} {q_I_G[3]:.6f} " # q_I_G
             f"{p_C_I[0]:.6f} {p_C_I[1]:.6f} {p_C_I[2]:.6f} " # p_C_I
             f"{q_I_C[0]:.6f} {q_I_C[1]:.6f} {q_I_C[2]:.6f} {q_I_C[3]:.6f} " # q_I_C
-            f"{sun_az:.6f} {sun_el:.6f}"
+            # f"{sun_az:.6f} {sun_el:.6f}"
+            f"{0} {0}" # TODO remove this i am just debugging
         )
         lines.append(line)
 
@@ -102,12 +105,16 @@ def read_camera_trajectory_to_frames(path: str) -> List[Dict]:
             q_I_G = Quaternion((parts[3], parts[4], parts[5], parts[6])).normalized()
             p_C_I = Vector((parts[7], parts[8], parts[9]))
             q_I_C = Quaternion((parts[10], parts[11], parts[12], parts[13])).normalized()
+            sun_az = parts[14]
+            sun_el = parts[15]
             
             traj.append({
                 "p_G_I": p_G_I,
                 "q_I_G": q_I_G,
                 "p_C_I": p_C_I,
                 "q_I_C": q_I_C,
+                "sun_az": sun_az,
+                "sun_el": sun_el
             })
     
     return traj
