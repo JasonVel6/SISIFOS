@@ -4,71 +4,19 @@
     "objects": {
         "Target": {
             "name": "Target",
-            "blend_path": "assets/spacecraft_models_0_5.blend",
-            "position": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "rotation_euler_deg": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "scale": 1.0,
-            "hide_render": false,
-            "extra_scale": 1.0
+            "blend_path": "assets/spacecraft_models_0_5.blend"
         },
         "Earth": {
             "name": "Earth",
-            "blend_path": "assets/Earth.blend",
-            "position": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "rotation_euler_deg": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "scale": 1.0,
-            "hide_render": false,
-            "extra_scale": 10.0
+            "blend_path": "assets/Earth.blend"
         },
         "Clouds": {
-            "name": null,
-            "blend_path": "",
-            "position": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "rotation_euler_deg": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "scale": 1.0,
-            "hide_render": false,
-            "extra_scale": 10.0
+            "name": "Clouds",
+            "blend_path": null
         },
         "Atmo": {
             "name": "Atmo",
-            "blend_path": null,
-            "position": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "rotation_euler_deg": [
-                0.0,
-                0.0,
-                0.0
-            ],
-            "scale": 1.0,
-            "hide_render": false,
-            "extra_scale": 10.0
+            "blend_path": null
         }
     },
     "camera": {
@@ -98,15 +46,15 @@
         "R_LEO": 8000.0,
         "sweep_exposure": null,
         "sweep_sun_az_el": null,
-        "earth_mode": "ON",
-        "stars_mode": "ON",
+        "earth_mode": "on",
+        "stars_mode": "on",
         "t_ref_s": 0.01666667,
         "sun_az_ref": 0.0,
         "sun_el_ref": 90.0,
-        "enable_blur": "OFF",
+        "enable_blur": "off",
         "blur_shutter_factor": 8.8,
         "blur_motion_factor": 8.8,
-        "enable_glare": "OFF",
+        "enable_glare": "off",
         "glare_threshold": 0.95,
         "glare_size": 6
     },

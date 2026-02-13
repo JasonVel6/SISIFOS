@@ -175,9 +175,6 @@ class BlenderRenderer:
                         frame_id: int,
                         output_dir: Path,
                         exposure_time_s: float,
-                        azel: Dict,
-                        sun_key: str,
-                        N_azel_keys:int,
                         N_digits:int) -> None:
         """
         Render single frame using INERTIAL FRAME trajectory data.
@@ -198,8 +195,8 @@ class BlenderRenderer:
         q_I_G = frame_dict["q_I_G"]
         p_C_I = frame_dict["p_C_I"]
         q_I_C = frame_dict["q_I_C"]
-        sun_az = azel["sun_az_deg"]
-        sun_el = azel["sun_el_deg"]
+        sun_az = frame_dict["sun_az"]
+        sun_el = frame_dict["sun_el"]
         
         # Apply poses
         model.rotation_mode = "QUATERNION"
@@ -272,9 +269,8 @@ class BlenderRenderer:
         
         # Render
         #exp_tag = f"{int(round(exposure_time_s * 1e6)):08d}us"
-        sun_tag = f"sun_{str(sun_key).zfill(N_azel_keys)}"
         #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id).zfill(N_digits)}_{sun_tag}"
+        stem = f"{str(frame_id).zfill(N_digits)}"
         
         self.scene.render.filepath = str(output_dir / f"frame_{stem}")
         self.scene.frame_set(frame_id)
@@ -290,17 +286,14 @@ class BlenderRenderer:
                      shutter:float,
                      output_dir: Path,
                      exposure_time_s: float,
-                     azel: Dict,
-                    sun_key: str,
-                    N_azel_keys:int,
                     N_digits:int) -> None:
         clear_anim(cam)
         clear_anim(model)
         self.scene.frame_start = frame_id1
         self.scene.frame_end = frame_id1+1
         self.scene.frame_set(frame_id1)
-        sun_az = azel["sun_az_deg"]
-        sun_el = azel["sun_el_deg"]
+        sun_az = frame_dict1["sun_az"]
+        sun_el = frame_dict1["sun_el"]
         set_sun_direction(sun, sun_az, sun_el)
         bpy.context.view_layer.update()
         base_ev = self.scene.view_settings.exposure
@@ -339,8 +332,7 @@ class BlenderRenderer:
             cy.motion_blur_position = 'START'  
         self.scene.frame_set(frame_id1)
         bpy.context.view_layer.update()
-        sun_tag = f"sun_{str(sun_key).zfill(N_azel_keys)}"
         #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id1).zfill(N_digits)}_{sun_tag}_blurred"
+        stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
         self.scene.render.filepath = str(output_dir / f"frame_{stem}")
         bpy.ops.render.render(write_still=True)
