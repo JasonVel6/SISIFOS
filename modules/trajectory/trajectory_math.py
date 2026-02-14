@@ -2,11 +2,6 @@
 This is the file complete all of the basic math functions used in this project.
 If you want to use these function, you can import this file as follows:
 
-[in Python code]
-import sys
-import os
-sys.path.append(os.path.abspath('PATH_TO_THIS_FILE')) (TODO not super clean)
-from math_function import *
 TODO this could prob use some unit testing to make sure that we dont accidentally break anything
 TODO could also likely benefit from some organization
 """

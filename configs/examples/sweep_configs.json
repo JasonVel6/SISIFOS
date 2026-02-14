@@ -61,7 +61,7 @@
       "R_LEO": 10000.0
     },
     "trajectory": {
-      "path_mode": "inertial",
+      "path_mode": "tumbling",
       "seed": 210880714,
       "num_agents": 1,
       "num_mc": 1,

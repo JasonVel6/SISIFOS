@@ -377,6 +377,7 @@ def apply_target_orientation(target, q_IG, debug_frame=None):
     # For Blender, we need G->I (local->world), which is the conjugate
     # Conjugate: (w, -x, -y, -z)
     q_blender = Quaternion((qw, -qx, -qy, -qz))
+    q_blender = Quaternion((1, 0, 0, 0))
 
     target.rotation_quaternion = q_blender
 
@@ -1186,7 +1187,7 @@ def prepare_slam_dataset(traj_root, traj_path, timestamps, num_frames):
         "gtValues.txt",
         "Config.yaml",
         "sensormeasurements.txt",
-        "camera_traj.txt"
+        "camera_traj_legacy.txt"
     ]
 
     for filename in files_to_copy:
@@ -1224,7 +1225,7 @@ def discover_trajectory_folders(base_dir):
         folder_path = os.path.join(base_dir, name)
         if not os.path.isdir(folder_path):
             continue
-        traj_file = os.path.join(folder_path, "camera_traj.txt")
+        traj_file = os.path.join(folder_path, "camera_traj_legacy.txt")
         if os.path.isfile(traj_file):
             trajectories.append((name, folder_path))
 
@@ -1284,7 +1285,7 @@ def render_trajectory(traj_name, traj_path, output_base_dir):
     print(f"RENDERING TRAJECTORY: {traj_name}")
     print("="*60)
 
-    camera_traj_file = os.path.join(traj_path, "camera_traj.txt")
+    camera_traj_file = os.path.join(traj_path, "camera_traj_legacy.txt")
     if not os.path.isfile(camera_traj_file):
         print(f"ERROR: camera_traj.txt not found in {traj_path}")
         return False
@@ -1298,10 +1299,10 @@ def render_trajectory(traj_name, traj_path, output_base_dir):
 if __name__ == "__main__":
 
     # Configuration paths
-    OUTPUTFILE_DIR = "/home/jdflo/satslam/SISIFOS/outputfile"
-    earth_path = "./Earth.blend"
-    hdri_path = "./HDRIs/8k_stars.jpg"
-    SCENE_PATH = "/home/jdflo/satslam/SISIFOS/scene.blend"
+    OUTPUTFILE_DIR = "/Users/lucas/Desktop/DCSL/SISIFOS/output/02_13_26_2026_02_1353_tumbling/mc_trial_0/"
+    earth_path = "/Users/lucas/Desktop/DCSL/SISIFOS/assets/Earth.blend"
+    hdri_path = "/Users/lucas/Desktop/DCSL/SISIFOS/assets/starmap_2020_16k.exr"
+    SCENE_PATH = "/Users/lucas/Desktop/DCSL/SISIFOS/assets/scene.blend"
 
     # Discover and select trajectories
     trajectories = discover_trajectory_folders(OUTPUTFILE_DIR)
@@ -1356,13 +1357,13 @@ if __name__ == "__main__":
 
     # Enable GPU rendering (CUDA for GTX 1080 Ti)
     # TODO we may want to enable this
-    cycles_prefs = bpy.context.preferences.addons['cycles'].preferences
-    cycles_prefs.compute_device_type = 'CUDA'
-    cycles_prefs.get_devices()
-    for device in cycles_prefs.devices:
-        device.use = True
-        print(f"  Enabled device: {device.name}")
-    bpy.context.scene.cycles.device = 'GPU'
+    # cycles_prefs = bpy.context.preferences.addons['cycles'].preferences
+    # cycles_prefs.compute_device_type = 'CUDA'
+    # cycles_prefs.get_devices()
+    # for device in cycles_prefs.devices:
+    #     device.use = True
+    #     print(f"  Enabled device: {device.name}")
+    # bpy.context.scene.cycles.device = 'GPU'
 
     bpy.context.scene.cycles.samples = render_samples
     # Always load Earth.blend (contains Sun light needed for illumination)
@@ -1378,7 +1379,7 @@ if __name__ == "__main__":
     for obj in bpy.data.objects:
         print(f" - {obj.name} ({obj.type})")
     print("=============================\n")
-    addon_path = os.path.abspath("/home/jdflo/satslam/SISIFOS/scripts/addon_ground_truth_generation.py")
+    addon_path = os.path.abspath("./addon_ground_truth_generation_new.py")
 
     spec = importlib.util.spec_from_file_location("vision_blender_addon", addon_path)
     mod = importlib.util.module_from_spec(spec)
@@ -1521,7 +1522,7 @@ if __name__ == "__main__":
                 print(f"  {obj_name}: scale reset to {tuple(orig_scale)}")
 
         # Load trajectory data
-        camera_traj_file = os.path.join(traj_path, "camera_traj.txt")
+        camera_traj_file = os.path.join(traj_path, "camera_traj_legacy.txt")
         if not os.path.isfile(camera_traj_file):
             print(f"ERROR: camera_traj.txt not found in {traj_path}, skipping...")
             continue

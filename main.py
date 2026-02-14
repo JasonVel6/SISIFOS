@@ -27,14 +27,17 @@ from modules.trajectory.sampling_trajectory import (
     make_fake_frame_from_frame0
 )
 from modules.trajectory.trajectory_io import (
-    read_camera_trajectory_to_frames
+    read_camera_trajectory_to_frames,
+    read_camera_trajectory_legacy,
+    get_scaled_trajectory_in_ECI,
+    make_frames_from_trajectory,
 )
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 
 DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 
 def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
-        # Generate the trajectory TODO at some point maybe we can pass a path but the trajectory generator is quite fast for now
+    # Generate the trajectory TODO at some point maybe we can pass a path but the trajectory generator is quite fast for now
     if config.trajectory_type == "trajectory_generator":
         agent_folders = generate_trajectories_dynamical(config.trajectory, str(output_dir))
         
@@ -57,9 +60,14 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     print(config.setup)
     cam, sun = renderer.setup_total()
 
-    trajectory_file = renders_base_dir / "camera_traj.txt"
+    # TODO the legacy stuff will need to go
+    trajectory_file = renders_base_dir / "camera_traj_legacy.txt"
     
-    frames = read_camera_trajectory_to_frames(str(trajectory_file))
+    # TODO will not work with sampling right now must fix
+    # frames = read_camera_trajectory_legacy(str(trajectory_file))
+    trajectory = read_camera_trajectory_legacy(str(trajectory_file))
+    trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=1/1000)
+    frames = make_frames_from_trajectory(trajectory)
     print(f"[Session] Renders output: {renders_base_dir}/")
     
     models = renderer.select_models_to_render()
@@ -100,6 +108,8 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         print("Enabling blur is: ", config.setup.enable_blur)
         
         # TODO will need to fix the tqdm progress bar
+        # TODO why is the first frame not quite right
+        # TODO can we do some kind of sampling around to see if we can see the earth and that orientations are right
         # already doesnt quite work because of blender spamming the console will need to fix this later
         with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
             for i in frame_ids:

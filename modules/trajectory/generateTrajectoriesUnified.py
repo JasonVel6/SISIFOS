@@ -65,7 +65,9 @@ from modules.trajectory.trajectory_math import (
     calcInitCondChaser
 )
 from modules.trajectory.plot_figure import plot_trial_trajectories
-from modules.trajectory.trajectory_io import write_camera_trajectory, write_gtvalues, write_json, write_config, write_sensormeasurements
+from modules.trajectory.trajectory_io import (write_camera_trajectory, 
+    write_gtvalues, write_json, write_config, write_sensormeasurements, 
+    write_camera_trajectory_legacy)
 
 # ---------------- Paths ----------------
 # TODO a lot of this should go in the main method as it should only be run if running from command line
@@ -628,6 +630,19 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 v_GO_I=v_GO_I_mc,
                 state_C_I=state_C_I_mc_ag
             )
+
+            write_camera_trajectory_legacy(
+                output_dir=agent_folder,
+                timestamps=timestamps,
+                nbSteps=nbSteps,
+                q_GC=q_GC_mc_ag,
+                q_IG=q_IG_mc,
+                r_CG_G=r_CG_G_mc_ag,
+                r_OG_G=r_OG_G_mc,
+                az_G=az_G_mc,
+                el_G=el_G_mc,
+            )
+
             write_json(output_dir=agent_folder, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=config.tend)
 
             write_sensormeasurements(output_dir=agent_folder,
@@ -712,7 +727,7 @@ def main():
     base_output_file = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{config.path_mode}")
     os.makedirs(base_output_file, exist_ok=True)
 
-    generate_trajectories(config=config, base_output_file=base_output_file)
+    generate_trajectories_dynamical(config=config, base_output_file=base_output_file)
 
 if __name__ == "__main__":
     main()

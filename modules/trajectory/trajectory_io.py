@@ -8,7 +8,6 @@ import json
 from mathutils import Vector, Quaternion
 import subprocess
 
-# TODO need to find where to put this
 # Target model
 SHAPE_MODEL_FILENAME = "../models/integral.obj"
 
@@ -72,6 +71,126 @@ def write_camera_trajectory(output_dir: str,
         f.write("\n")  # ensure newline at end of file
 
     return camera_traj_filepath
+
+# TODO lets make this csv
+def write_camera_trajectory_legacy(output_dir: str,
+                            nbSteps: int,
+                            timestamps: np.ndarray,
+                            q_GC: np.ndarray, # quaternion from camera to G
+                            r_CG_G: np.ndarray, # vector from G to C in G frame
+                            r_OG_G: np.ndarray, # vector from G to O in G frame
+                            az_G: np.ndarray,
+                            el_G: np.ndarray,
+                            q_IG: np.ndarray, # quaternion from G to I
+                            ) -> str:
+    blender_filepath = os.path.join(output_dir, "camera_traj_legacy.txt")
+    with open(blender_filepath, "w") as f:
+        f.write("nbTruePts = \n")
+        f.write(f"{nbSteps}\n")
+        f.write("tspan = \n")
+        np.savetxt(f, timestamps, fmt="%f")
+        f.write("q_GC = \n")
+        np.savetxt(f, q_GC, fmt="%f %f %f %f")
+        f.write("r_CG_G = \n")
+        np.savetxt(f, r_CG_G, fmt="%f %f %f")
+        f.write("r_OG_G = \n")
+        np.savetxt(f, r_OG_G, fmt="%f %f %f")
+        f.write("sun_az_G = \n")
+        np.savetxt(f, az_G, fmt="%f")
+        f.write("sun_el_G = \n")
+        np.savetxt(f, el_G, fmt="%f")
+        f.write("q_IG = \n")
+        np.savetxt(f, q_IG, fmt="%f %f %f %f")
+    print(f"  [BLENDER] {blender_filepath}")
+    return blender_filepath
+
+def read_camera_trajectory_legacy(file_path: str) -> Dict[str, np.ndarray]:
+    with open(file_path, 'r') as f:
+        lines = [line.strip() for line in f if line.strip() != ""]
+
+    # Find section indices
+    idx_nb    = lines.index("nbTruePts =")
+    idx_tspan = lines.index("tspan =")
+    idx_qGC   = lines.index("q_GC =")
+    idx_rCG   = lines.index("r_CG_G =")
+    idx_rOG   = lines.index("r_OG_G =")
+    idx_saz   = lines.index("sun_az_G =")
+    idx_sel   = lines.index("sun_el_G =")
+    idx_qIG   = lines.index("q_IG =")
+
+    # Read counts
+    nbTruePts = np.array(int(lines[idx_nb + 1]))
+
+    # Parse arrays
+    tspan  = np.array([float(x) for x in lines[idx_tspan+1 : idx_tspan+1+nbTruePts]])
+    q_GC   = np.array([list(map(float, x.split())) for x in lines[idx_qGC+1 : idx_qGC+1+nbTruePts]])
+    r_CG   = np.array([list(map(float, x.split())) for x in lines[idx_rCG+1 : idx_rCG+1+nbTruePts]])
+    r_OG_G = np.array([list(map(float, x.split())) for x in lines[idx_rOG+1 : idx_rOG+1+nbTruePts]])
+    sun_az_G = np.array([float(x) for x in lines[idx_saz+1 : idx_saz+1+nbTruePts]])
+    sun_el_G = np.array([float(x) for x in lines[idx_sel+1 : idx_sel+1+nbTruePts]])
+    q_IG   = np.array([list(map(float, x.split())) for x in lines[idx_qIG+1 : idx_qIG+1+nbTruePts]])
+
+    return {
+        "N": nbTruePts,
+        "t": tspan,
+        "q_GC": q_GC,
+        "r_CG": r_CG,
+        "r_OG": r_OG_G,
+        "sun_az_G": sun_az_G,
+        "sun_el_G": sun_el_G,
+        "q_IG": q_IG
+    }
+    
+# NOTE TODO most of this math is done in a sort of pseudo frame where the origin is the earth but the axes are with the G frame
+# We may want to adjust this for consistency and clarity
+def get_scaled_trajectory_in_ECI(trajectory: Dict[str, np.ndarray], earth_dist_scale_factor: float = 1/1000) -> Dict[str, np.ndarray]:
+    nbTruePts = trajectory["N"]
+    t = trajectory["t"]
+    q_GC = trajectory["q_GC"]
+    r_CG = trajectory["r_CG"]
+    r_OG = trajectory["r_OG"]
+    q_IG = trajectory["q_IG"]
+    sun_az_G = trajectory["sun_az_G"]
+    sun_el_G = trajectory["sun_el_G"]
+
+    # Modify orbits
+    r_OG_scaled = r_OG * earth_dist_scale_factor
+    r_CO_scaled = r_OG_scaled + r_CG
+
+    # Modify the orientations
+    # TODO this should be cleaned up
+    q_IG = np.zeros_like(q_IG)
+    q_IG[0, :] = 1.0 # identity rotation since we are not changing the orientation of the target relative to the earth
+    qx, qy, qz, qw = (q_GC[:, 0], q_GC[:, 1], q_GC[:, 2], q_GC[:, 3])
+    q_GC_rotated = np.zeros_like(q_GC)
+    q_GC_rotated[:, :] = np.array([qz, qw, -qx, -qy]).T # TODO a bit of a hackey way to fix this should make it more documented clear and consistent
+
+    return {
+        "N": nbTruePts,
+        "t": t,
+        "q_GC": q_GC_rotated,
+        "q_IG": q_IG,
+        "r_CO": r_CO_scaled,
+        "r_OG": r_OG_scaled,
+        "sun_az_G": sun_az_G,
+        "sun_el_G": sun_el_G
+    }
+
+
+def make_frames_from_trajectory(trajectory: Dict[str, np.ndarray]) -> List[Dict]:
+    # TODO these frames are a little funky right now but will fix
+    frames = []
+    for i in range(trajectory["N"]):
+        frame = {
+            "p_G_I": trajectory["r_OG"][i],
+            "q_I_G": trajectory["q_IG"][i],
+            "p_C_I": trajectory["r_CO"][i],
+            "q_I_C": trajectory["q_GC"][i],
+            "sun_az": trajectory["sun_az_G"][i],
+            "sun_el": trajectory["sun_el_G"][i]
+        }
+        frames.append(frame)
+    return frames
 
 
 def read_camera_trajectory_to_frames(path: str) -> List[Dict]:
@@ -228,7 +347,6 @@ def write_gtvalues(output_dir: str,
     print(f"  [GTVAL]   {gtvalues_filepath}")
     return gtvalues_filepath
 
-# TODO make camera obj a datastructure later
 def write_json(output_dir: str, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
     # --- JSON file for UE5 simulator (read from gtValues.txt) ---
     filename = "gtValues"
