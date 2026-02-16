@@ -4,6 +4,7 @@ Module for reading and writing trajectory related files
 from typing import Dict, List
 import numpy as np
 import os
+import csv
 import json
 from mathutils import Vector, Quaternion
 import subprocess
@@ -21,19 +22,25 @@ camera_trajectory_header = [
 
 def write_camera_trajectory(output_dir: str,
                             nbSteps: int,
+                            timestamps: np.ndarray,
                             r_GO_I: np.ndarray, # vector from O to G in inertial frame
                             q_IG: np.ndarray, # quaternion from G to I
                             r_CO_I: np.ndarray, # vector from O to C in inertial frame
                             q_IC: np.ndarray, # quaternion from C to I
-                            sun_az: float,
-                            sun_el: float,
+                            sun_az_I: np.ndarray,
+                            sun_el_I: np.ndarray,
                             ) -> str:
     """
-    Write camera_traj.txt for Blender import.
+    Write camera trajectory CSV with inertial-frame variables.
     a data structure to hold everything may be a good idea
 
-    File format (one row per frame):
-    p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el
+    CSV columns:
+    timestamp,
+    p_G_I_x, p_G_I_y, p_G_I_z,
+    q_I_G_w, q_I_G_x, q_I_G_y, q_I_G_z,
+    p_C_I_x, p_C_I_y, p_C_I_z,
+    q_I_C_w, q_I_C_x, q_I_C_y, q_I_C_z,
+    sun_az, sun_el
 
     Note the frame conventions here follow the Trajectory generation standard
     
@@ -43,200 +50,152 @@ def write_camera_trajectory(output_dir: str,
       p_C_I = position of camera (C) in inertial frame at radius (R_LEO + R_RPO)
       q_I_C = orientation of camera frame relative to inertial
     """
-    camera_traj_filepath = os.path.join(output_dir, "camera_traj.txt")
+    camera_traj_filepath = os.path.join(output_dir, "camera_traj.csv")
 
-    lines = []
-    lines.extend(camera_trajectory_header)
+    p_G_I = -np.asarray(r_GO_I[:nbSteps], dtype=float)
+    q_I_G = np.asarray(q_IG[:nbSteps], dtype=float)
+    p_C_I = -np.asarray(r_CO_I[:nbSteps], dtype=float)
+    q_I_C = np.asarray(q_IC[:nbSteps], dtype=float)
+    sun_az = np.asarray(sun_az_I[:nbSteps], dtype=float)
+    sun_el = np.asarray(sun_el_I[:nbSteps], dtype=float)
 
-    for i in range(nbSteps):
-        p_G_I = -r_GO_I[i]
-        q_I_G = Quaternion(q_IG[i])
-        # q_I_G.invert()
-        p_C_I = -r_CO_I[i]
-        q_I_C = Quaternion(q_IC[i])
-        # q_I_C.invert()
+    header = [
+        "timestamp",
+        "p_G_I_x", "p_G_I_y", "p_G_I_z",
+        "q_I_G_w", "q_I_G_x", "q_I_G_y", "q_I_G_z",
+        "p_C_I_x", "p_C_I_y", "p_C_I_z",
+        "q_I_C_w", "q_I_C_x", "q_I_C_y", "q_I_C_z",
+        "sun_az", "sun_el",
+    ]
 
-        line = (
-            f"{p_G_I[0]:.6f} {p_G_I[1]:.6f} {p_G_I[2]:.6f} " # p_G_I
-            f"{q_I_G[0]:.6f} {q_I_G[1]:.6f} {q_I_G[2]:.6f} {q_I_G[3]:.6f} " # q_I_G
-            f"{p_C_I[0]:.6f} {p_C_I[1]:.6f} {p_C_I[2]:.6f} " # p_C_I
-            f"{q_I_C[0]:.6f} {q_I_C[1]:.6f} {q_I_C[2]:.6f} {q_I_C[3]:.6f} " # q_I_C
-            # f"{sun_az:.6f} {sun_el:.6f}"
-            f"{0} {0}" # TODO remove this i am just debugging
-        )
-        lines.append(line)
-
-    with open(camera_traj_filepath, "w") as f:
-        f.write("\n".join(lines)) # write all of the lines
-        f.write("\n")  # ensure newline at end of file
+    with open(camera_traj_filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        for i in range(nbSteps):
+            writer.writerow([
+                timestamps[i],
+                p_G_I[i, 0], p_G_I[i, 1], p_G_I[i, 2],
+                q_I_G[i, 0], q_I_G[i, 1], q_I_G[i, 2], q_I_G[i, 3],
+                p_C_I[i, 0], p_C_I[i, 1], p_C_I[i, 2],
+                q_I_C[i, 0], q_I_C[i, 1], q_I_C[i, 2], q_I_C[i, 3],
+                sun_az[i], sun_el[i],
+            ])
 
     return camera_traj_filepath
 
-# TODO lets make this csv
-def write_camera_trajectory_legacy(output_dir: str,
-                            nbSteps: int,
-                            timestamps: np.ndarray,
-                            q_GC: np.ndarray, # quaternion from camera to G
-                            r_CG_G: np.ndarray, # vector from G to C in G frame
-                            r_OG_G: np.ndarray, # vector from G to O in G frame
-                            az_G: np.ndarray,
-                            el_G: np.ndarray,
-                            q_IG: np.ndarray, # quaternion from G to I
-                            ) -> str:
-    blender_filepath = os.path.join(output_dir, "camera_traj_legacy.txt")
-    with open(blender_filepath, "w") as f:
-        f.write("nbTruePts = \n")
-        f.write(f"{nbSteps}\n")
-        f.write("tspan = \n")
-        np.savetxt(f, timestamps, fmt="%f")
-        f.write("q_GC = \n")
-        np.savetxt(f, q_GC, fmt="%f %f %f %f")
-        f.write("r_CG_G = \n")
-        np.savetxt(f, r_CG_G, fmt="%f %f %f")
-        f.write("r_OG_G = \n")
-        np.savetxt(f, r_OG_G, fmt="%f %f %f")
-        f.write("sun_az_G = \n")
-        np.savetxt(f, az_G, fmt="%f")
-        f.write("sun_el_G = \n")
-        np.savetxt(f, el_G, fmt="%f")
-        f.write("q_IG = \n")
-        np.savetxt(f, q_IG, fmt="%f %f %f %f")
-    print(f"  [BLENDER] {blender_filepath}")
-    return blender_filepath
+def read_camera_trajectory(file_path: str) -> Dict[str, np.ndarray]:
+    """
+    Read camera trajectory CSV and return NumPy arrays in dictionary.
+    """
+    required_cols = [
+        "timestamp",
+        "p_G_I_x", "p_G_I_y", "p_G_I_z",
+        "q_I_G_w", "q_I_G_x", "q_I_G_y", "q_I_G_z",
+        "p_C_I_x", "p_C_I_y", "p_C_I_z",
+        "q_I_C_w", "q_I_C_x", "q_I_C_y", "q_I_C_z",
+        "sun_az", "sun_el",
+    ]
 
-def read_camera_trajectory_legacy(file_path: str) -> Dict[str, np.ndarray]:
-    with open(file_path, 'r') as f:
-        lines = [line.strip() for line in f if line.strip() != ""]
+    rows = []
+    with open(file_path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"CSV file has no header: {file_path}")
+        missing = [c for c in required_cols if c not in reader.fieldnames]
+        if missing:
+            raise ValueError(f"Missing columns in camera trajectory CSV: {missing}")
+        rows = list(reader)
 
-    # Find section indices
-    idx_nb    = lines.index("nbTruePts =")
-    idx_tspan = lines.index("tspan =")
-    idx_qGC   = lines.index("q_GC =")
-    idx_rCG   = lines.index("r_CG_G =")
-    idx_rOG   = lines.index("r_OG_G =")
-    idx_saz   = lines.index("sun_az_G =")
-    idx_sel   = lines.index("sun_el_G =")
-    idx_qIG   = lines.index("q_IG =")
-
-    # Read counts
-    nbTruePts = np.array(int(lines[idx_nb + 1]))
-
-    # Parse arrays
-    tspan  = np.array([float(x) for x in lines[idx_tspan+1 : idx_tspan+1+nbTruePts]])
-    q_GC   = np.array([list(map(float, x.split())) for x in lines[idx_qGC+1 : idx_qGC+1+nbTruePts]])
-    r_CG   = np.array([list(map(float, x.split())) for x in lines[idx_rCG+1 : idx_rCG+1+nbTruePts]])
-    r_OG_G = np.array([list(map(float, x.split())) for x in lines[idx_rOG+1 : idx_rOG+1+nbTruePts]])
-    sun_az_G = np.array([float(x) for x in lines[idx_saz+1 : idx_saz+1+nbTruePts]])
-    sun_el_G = np.array([float(x) for x in lines[idx_sel+1 : idx_sel+1+nbTruePts]])
-    q_IG   = np.array([list(map(float, x.split())) for x in lines[idx_qIG+1 : idx_qIG+1+nbTruePts]])
-
-    return {
-        "N": nbTruePts,
-        "t": tspan,
-        "q_GC": q_GC,
-        "r_CG": r_CG,
-        "r_OG": r_OG_G,
-        "sun_az_G": sun_az_G,
-        "sun_el_G": sun_el_G,
-        "q_IG": q_IG
+    trajectory = {
+        "timestamps": np.array([float(r["timestamp"]) for r in rows], dtype=float),
+        "p_G_I": np.array([[float(r["p_G_I_x"]), float(r["p_G_I_y"]), float(r["p_G_I_z"])] for r in rows], dtype=float),
+        "q_I_G": np.array([[float(r["q_I_G_w"]), float(r["q_I_G_x"]), float(r["q_I_G_y"]), float(r["q_I_G_z"])] for r in rows], dtype=float),
+        "p_C_I": np.array([[float(r["p_C_I_x"]), float(r["p_C_I_y"]), float(r["p_C_I_z"])] for r in rows], dtype=float),
+        "q_I_C": np.array([[float(r["q_I_C_w"]), float(r["q_I_C_x"]), float(r["q_I_C_y"]), float(r["q_I_C_z"])] for r in rows], dtype=float),
+        "sun_az": np.array([float(r["sun_az"]) for r in rows], dtype=float),
+        "sun_el": np.array([float(r["sun_el"]) for r in rows], dtype=float),
     }
-    
-# NOTE TODO most of this math is done in a sort of pseudo frame where the origin is the earth but the axes are with the G frame
-# We may want to adjust this for consistency and clarity
+
+    required_keys = ("timestamps", "p_G_I", "q_I_G", "p_C_I", "q_I_C", "sun_az", "sun_el")
+    lengths = [len(trajectory[k]) for k in required_keys]
+    if len(set(lengths)) != 1:
+        raise ValueError(f"Inconsistent trajectory lengths across keys: {dict(zip(required_keys, lengths))}")
+
+    trajectory["N"] = np.array(lengths[0], dtype=int)
+    return trajectory
+
 def get_scaled_trajectory_in_ECI(trajectory: Dict[str, np.ndarray], earth_dist_scale_factor: float = 1/1000) -> Dict[str, np.ndarray]:
     nbTruePts = trajectory["N"]
-    t = trajectory["t"]
-    q_GC = trajectory["q_GC"]
-    r_CG = trajectory["r_CG"]
-    r_OG = trajectory["r_OG"]
-    q_IG = trajectory["q_IG"]
-    sun_az_G = trajectory["sun_az_G"]
-    sun_el_G = trajectory["sun_el_G"]
+    timestamps = trajectory["timestamps"]
+    p_G_I = trajectory["p_G_I"]
+    q_I_G = trajectory["q_I_G"]
+    p_C_I = trajectory["p_C_I"]
+    q_I_C = trajectory["q_I_C"]
+    sun_az = trajectory["sun_az"]
+    sun_el = trajectory["sun_el"]
 
     # Modify orbits
-    r_OG_scaled = r_OG * earth_dist_scale_factor
-    r_CO_scaled = r_OG_scaled + r_CG
+    # Bring the orbit closer to the earth but keep the relative transformation between the camera and the target the same
+    r_GC_I = p_G_I - p_C_I  # Vector from C to G in inertial frame
+    p_C_I_scaled = p_C_I * earth_dist_scale_factor
+    p_G_O_scaled = p_C_I_scaled + r_GC_I
 
     # Modify the orientations
-    # TODO this should be cleaned up
-    q_IG = np.zeros_like(q_IG)
-    q_IG[0, :] = 1.0 # identity rotation since we are not changing the orientation of the target relative to the earth
-    qx, qy, qz, qw = (q_GC[:, 0], q_GC[:, 1], q_GC[:, 2], q_GC[:, 3])
-    q_GC_rotated = np.zeros_like(q_GC)
-    q_GC_rotated[:, :] = np.array([qz, qw, -qx, -qy]).T # TODO a bit of a hackey way to fix this should make it more documented clear and consistent
+    q_IG = q_I_G  # Target orientation relative to inertial stays the same
 
     return {
         "N": nbTruePts,
-        "t": t,
-        "q_GC": q_GC_rotated,
+        "t": timestamps,
+        "q_IC": q_I_C,
         "q_IG": q_IG,
-        "r_CO": r_CO_scaled,
-        "r_OG": r_OG_scaled,
-        "sun_az_G": sun_az_G,
-        "sun_el_G": sun_el_G
+        "p_C_I": p_C_I_scaled,
+        "p_G_I": p_G_O_scaled,
+        "sun_az": sun_az,
+        "sun_el": sun_el
     }
 
-
-def make_frames_from_trajectory(trajectory: Dict[str, np.ndarray]) -> List[Dict]:
-    # TODO these frames are a little funky right now but will fix
+def make_frames_from_trajectory(
+    trajectory: Dict[str, np.ndarray],
+    debug_camera_orientation: bool = False,
+    num_samples_on_axis: int = 4,
+) -> List[Dict]:
     frames = []
+
+    if num_samples_on_axis < 1:
+        raise ValueError("num_samples_on_axis must be >= 1")
+
+    # Skip 0 rad because the base frame is always included unchanged.
+    debug_angles = np.linspace(0.0, 2.0 * np.pi, num_samples_on_axis, endpoint=False)[1:]
+
     for i in range(trajectory["N"]):
         frame = {
-            "p_G_I": trajectory["r_OG"][i],
+            "p_G_I": trajectory["p_G_I"][i],
             "q_I_G": trajectory["q_IG"][i],
-            "p_C_I": trajectory["r_CO"][i],
-            "q_I_C": trajectory["q_GC"][i],
-            "sun_az": trajectory["sun_az_G"][i],
-            "sun_el": trajectory["sun_el_G"][i]
+            "p_C_I": trajectory["p_C_I"][i],
+            "q_I_C": trajectory["q_IC"][i],
+            "sun_az": trajectory["sun_az"][i],
+            "sun_el": trajectory["sun_el"][i]
         }
         frames.append(frame)
+        if debug_camera_orientation:
+            # Generate additional camera orientations around local X/Y only.
+            # Do not rotate around local forward axis (-Z), because that does
+            # not change the visible scene content.
+            q_IC = Quaternion(tuple(trajectory["q_IC"][i]))
+            for axis in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+                for angle in debug_angles:
+                    q_CCprime = Quaternion(axis, float(angle))
+                    q_variant = (q_IC @ q_CCprime).normalized()
+                    frames.append({
+                        "p_G_I": trajectory["p_G_I"][i],
+                        "q_I_G": trajectory["q_IG"][i],
+                        "p_C_I": trajectory["p_C_I"][i],
+                        "q_I_C": np.array([q_variant.w, q_variant.x, q_variant.y, q_variant.z], dtype=float),
+                        "sun_az": trajectory["sun_az"][i],
+                        "sun_el": trajectory["sun_el"][i]
+                    })
+            
     return frames
-
-
-def read_camera_trajectory_to_frames(path: str) -> List[Dict]:
-    """
-    Load trajectory from v2 file (inertial frame reference).
-    
-    File format (per line):
-      p_G_I(3)  q_I_G(4)  p_C_I(3)  q_I_C(4)  sun_az(1)  sun_el(1)
-      = 16 floats total per line
-    
-    Returns list of dicts with keys:
-      p_G_I: position of target in inertial frame
-      q_I_G: orientation of target relative to inertial
-      p_C_I: position of camera in inertial frame
-      q_I_C: orientation of camera relative to inertial
-      sun_az, sun_el: sun angles
-    """
-    traj = []
-    with open(path, "r") as f:
-        for line_num, ln in enumerate(f, 1):
-            ln = ln.strip()
-            if not ln or ln.startswith("#"):
-                continue
-            
-            parts = [float(x) for x in ln.split()]
-            if len(parts) < 14:
-                raise ValueError(f"Line {line_num}: Expected 14 floats, got {len(parts)}")
-            
-            # Parse: p_G_I(3) q_I_G(4) p_C_I(3) q_I_C(4) sun_az sun_el
-            p_G_I = Vector((parts[0], parts[1], parts[2]))
-            q_I_G = Quaternion((parts[3], parts[4], parts[5], parts[6])).normalized()
-            p_C_I = Vector((parts[7], parts[8], parts[9]))
-            q_I_C = Quaternion((parts[10], parts[11], parts[12], parts[13])).normalized()
-            sun_az = parts[14]
-            sun_el = parts[15]
-            
-            traj.append({
-                "p_G_I": p_G_I,
-                "q_I_G": q_I_G,
-                "p_C_I": p_C_I,
-                "q_I_C": q_I_C,
-                "sun_az": sun_az,
-                "sun_el": sun_el
-            })
-    
-    return traj
 
 def write_gtvalues(output_dir: str,
                     nbSteps: int,

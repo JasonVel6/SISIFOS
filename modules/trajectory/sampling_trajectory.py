@@ -1,10 +1,12 @@
 import math
 import random
+import numpy as np
 from pathlib import Path
 from typing import List, Dict
 from mathutils import Vector, Quaternion
 from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
 from modules.io_utils import ensure_dir
+from modules.trajectory.trajectory_io import write_camera_trajectory
 
 # TODO we can prob move this
 # def sun_sweep_90(az_step: int = 90,
@@ -126,51 +128,42 @@ def write_camera_trajectory_fib(
     verbose: bool = True,
 ) -> list[str]:
     """
-    Generate camera Fibonacci-style file with INERTIAL FRAME reference.
+    Generate camera Fibonacci-style trajectory in ECI arrays and write using
+    the shared trajectory writer.
     
     Target (G) orbits on sphere at radius R_LEO.
     Camera (C) is positioned radially outward from target at distance R_RPO,
     looking back toward origin.
     Both use same Fibonacci sphere angles.
     
-    File format (one row per frame):
-      p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el
-    
-    Where:
-      p_G_I = position of target (G) in inertial frame at radius R_LEO
-      q_I_G = orientation of target frame relative to inertial
-      p_C_I = position of camera (C) in inertial frame at radius (R_LEO + R_RPO)
-      q_I_C = orientation of camera frame relative to inertial
-      
     Earth/clouds/atmosphere stay at inertial origin (0,0,0) with fixed orientation.
-    TODO this method can be integrated into the other writing methods but for now lets keep it like this.
     """
-    out_path = str(Path(out_dir) / "camera_traj.txt")
-    
     sphere_pts = fibonacci_sphere(N, radius=1.0)
     
     if shuffle_points:
         random.seed(seed)
         random.shuffle(sphere_pts)
-    
-    lines = [
-        "# camera_traj_v2.txt (inertial frame reference - orbital configuration)",
-        "# p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el",
-        f"# Target orbits at radius R_LEO = {R_LEO:.2f} m",
-        f"# Camera at radius R_LEO + R_RPO = {R_LEO + R_RPO:.2f} m, looking toward origin",
-        "# Earth/atmosphere at origin with fixed orientation",
-        "#"
-    ]
-    
+
+    num_steps = 2 * N
+    p_G_I = np.zeros((num_steps, 3), dtype=float)
+    q_IG_wxyz = np.zeros((num_steps, 4), dtype=float)
+    p_C_I = np.zeros((num_steps, 3), dtype=float)
+    q_IC_wxyz = np.zeros((num_steps, 4), dtype=float)
+    sun_az_arr = np.full((num_steps,), float(sun_az), dtype=float)
+    sun_el_arr = np.full((num_steps,), float(sun_el), dtype=float)
+
     for i in range(N):
+        idx_front = 2 * i
+        idx_back = idx_front + 1
+
         # Fibonacci sphere point (unit direction)
         direction_radial = sphere_pts[i].normalized()
         
         # Target position at radius R_LEO
-        p_G_I = direction_radial * R_LEO
+        p_G_I_front = direction_radial * R_LEO
         
         # Camera position at radius R_LEO + R_RPO (same direction)
-        p_C_I = direction_radial * (R_LEO + R_RPO)
+        p_C_I_front = direction_radial * (R_LEO + R_RPO)
         
         # Random target orientation in inertial frame
         rng = random.Random(seed + i)
@@ -184,24 +177,22 @@ def write_camera_trajectory_fib(
         q_IC = look_direction.to_track_quat('-Z', 'Y').normalized()
         
         # Convert quaternions to wxyz format
-        q_IG_wxyz = quat_to_wxyz(q_IG)
-        q_IC_wxyz = quat_to_wxyz(q_IC)
-        lines.append(
-                    f"{p_G_I.x:12.6f} {p_G_I.y:12.6f} {p_G_I.z:12.6f}  "
-                    f"{q_IG_wxyz[0]:.9f} {q_IG_wxyz[1]:.9f} {q_IG_wxyz[2]:.9f} {q_IG_wxyz[3]:.9f}  "
-                    f"{p_C_I.x:12.6f} {p_C_I.y:12.6f} {p_C_I.z:12.6f}  "
-                    f"{q_IC_wxyz[0]:.9f} {q_IC_wxyz[1]:.9f} {q_IC_wxyz[2]:.9f} {q_IC_wxyz[3]:.9f}  "
-                    f"{sun_az:.6f} {sun_el:.6f}"
-                )
+        q_IG_wxyz_front = quat_to_wxyz(q_IG)
+        q_IC_wxyz_front = quat_to_wxyz(q_IC)
+
+        p_G_I[idx_front] = (p_G_I_front.x, p_G_I_front.y, p_G_I_front.z)
+        q_IG_wxyz[idx_front] = q_IG_wxyz_front
+        p_C_I[idx_front] = (p_C_I_front.x, p_C_I_front.y, p_C_I_front.z)
+        q_IC_wxyz[idx_front] = q_IC_wxyz_front
 
         # Fibonacci sphere point (unit direction)
         direction_radial = -sphere_pts[i].normalized()
         
         # Target position at radius R_LEO
-        p_G_I = direction_radial * R_LEO
+        p_G_I_back = direction_radial * R_LEO
         
         # Camera position at radius R_LEO - R_RPO (no Earth)
-        p_C_I = direction_radial * (R_LEO - R_RPO)
+        p_C_I_back = direction_radial * (R_LEO - R_RPO)
         
         # Random target orientation in inertial frame
         rng = random.Random(seed + i)
@@ -215,19 +206,26 @@ def write_camera_trajectory_fib(
         q_IC = look_direction.to_track_quat('-Z', 'Y').normalized()
         
         # Convert quaternions to wxyz format
-        q_IG_wxyz = quat_to_wxyz(q_IG)
-        q_IC_wxyz = quat_to_wxyz(q_IC)
-        
-        lines.append(
-            f"{p_G_I.x:12.6f} {p_G_I.y:12.6f} {p_G_I.z:12.6f}  "
-            f"{q_IG_wxyz[0]:.9f} {q_IG_wxyz[1]:.9f} {q_IG_wxyz[2]:.9f} {q_IG_wxyz[3]:.9f}  "
-            f"{p_C_I.x:12.6f} {p_C_I.y:12.6f} {p_C_I.z:12.6f}  "
-            f"{q_IC_wxyz[0]:.9f} {q_IC_wxyz[1]:.9f} {q_IC_wxyz[2]:.9f} {q_IC_wxyz[3]:.9f}  "
-            f"{sun_az:.6f} {sun_el:.6f}"
-        )
-    ensure_dir(Path(out_path).parent)
-    with open(out_path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+        q_IG_wxyz_back = quat_to_wxyz(q_IG)
+        q_IC_wxyz_back = quat_to_wxyz(q_IC)
+
+        p_G_I[idx_back] = (p_G_I_back.x, p_G_I_back.y, p_G_I_back.z)
+        q_IG_wxyz[idx_back] = q_IG_wxyz_back
+        p_C_I[idx_back] = (p_C_I_back.x, p_C_I_back.y, p_C_I_back.z)
+        q_IC_wxyz[idx_back] = q_IC_wxyz_back
+
+    ensure_dir(Path(out_dir))
+    out_path = write_camera_trajectory(
+        output_dir=out_dir,
+        nbSteps=num_steps,
+        timestamps=np.linspace(0.0, (num_steps - 1) * 0.5, num=num_steps),  # e.g. 0.5s step
+        r_GO_I=-p_G_I,
+        q_IG=q_IG_wxyz,
+        r_CO_I=-p_C_I,
+        q_IC=q_IC_wxyz,
+        sun_az_I=sun_az_arr,
+        sun_el_I=sun_el_arr,
+    )
     
     if verbose:
         print(f"Trajectory (v2 - inertial orbital) written to: {out_path}")

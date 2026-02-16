@@ -54,11 +54,11 @@
       "glare_threshold": 0.95,
       "glare_size": 6
     },
-    "trajectory_type": "trajectory_generator",
+    "trajectory_type": "sampling_trajectory",
     "trajectory_sampling": {
       "num_frames": 200,
       "R_RPO": 70.0,
-      "R_LEO": 10000.0
+      "R_LEO": 10000000.0
     },
     "trajectory": {
       "path_mode": "tumbling",

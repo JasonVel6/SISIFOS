@@ -66,8 +66,7 @@ from modules.trajectory.trajectory_math import (
 )
 from modules.trajectory.plot_figure import plot_trial_trajectories
 from modules.trajectory.trajectory_io import (write_camera_trajectory, 
-    write_gtvalues, write_json, write_config, write_sensormeasurements, 
-    write_camera_trajectory_legacy)
+    write_gtvalues, write_json, write_config, write_sensormeasurements)
 
 # ---------------- Paths ----------------
 # TODO a lot of this should go in the main method as it should only be run if running from command line
