@@ -61,10 +61,8 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     trajectory_file = renders_base_dir / "camera_traj.csv"
     
-    # TODO will not work with sampling right now must fix
     trajectory = read_camera_trajectory(str(trajectory_file))
-    # TODO make the scale factor a config parameter
-    trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=1/1000)
+    trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
     print(f"[Session] Renders output: {renders_base_dir}/")
     

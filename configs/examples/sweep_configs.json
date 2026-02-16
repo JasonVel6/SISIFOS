@@ -9,15 +9,18 @@
       },
       "Earth": {
         "name": "Earth",
-        "blend_path": "assets/Earth.blend"
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
       },
       "Clouds": {
         "name": "Clouds",
-        "blend_path": null
+        "blend_path": null,
+        "scale_factor": 10.0
       },
       "Atmo": {
         "name": "Atmo",
-        "blend_path": null
+        "blend_path": null,
+        "scale_factor": 10.0
       }
     },
     "camera": {
@@ -54,7 +57,7 @@
       "glare_threshold": 0.95,
       "glare_size": 6
     },
-    "trajectory_type": "sampling_trajectory",
+    "trajectory_type": "trajectory_generator",
     "trajectory_sampling": {
       "num_frames": 200,
       "R_RPO": 70.0,

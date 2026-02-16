@@ -632,18 +632,6 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 state_C_I=state_C_I_mc_ag
             )
 
-            write_camera_trajectory_legacy(
-                output_dir=agent_folder,
-                timestamps=timestamps,
-                nbSteps=nbSteps,
-                q_GC=q_GC_mc_ag,
-                q_IG=q_IG_mc,
-                r_CG_G=r_CG_G_mc_ag,
-                r_OG_G=r_OG_G_mc,
-                az_G=az_G_mc,
-                el_G=el_G_mc,
-            )
-
             write_json(output_dir=agent_folder, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=config.tend)
 
             write_sensormeasurements(output_dir=agent_folder,

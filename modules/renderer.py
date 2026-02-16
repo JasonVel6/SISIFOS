@@ -136,10 +136,9 @@ class BlenderRenderer:
         sun = bpy.data.objects["Sun"]  # or create one
         bpy.context.view_layer.update()
         sun.data.energy = 10.0
-        # TODO this should be parameterized
-        scale_object_by_factor(earth,  10)
-        scale_object_by_factor(clouds, 10)
-        scale_object_by_factor(atmo,   10)
+        scale_object_by_factor(earth,  self.config.objects["Earth"].scale_factor)
+        scale_object_by_factor(clouds,  self.config.objects["Clouds"].scale_factor)
+        scale_object_by_factor(atmo,   self.config.objects["Atmo"].scale_factor)
         return cam, sun
     
     def select_models_to_render(self) -> List[bpy.types.Object]:

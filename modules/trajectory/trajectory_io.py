@@ -86,6 +86,22 @@ def write_camera_trajectory(output_dir: str,
 def read_camera_trajectory(file_path: str) -> Dict[str, np.ndarray]:
     """
     Read camera trajectory CSV and return NumPy arrays in dictionary.
+    
+    CSV columns:
+    timestamp,
+    p_G_I_x, p_G_I_y, p_G_I_z,
+    q_I_G_w, q_I_G_x, q_I_G_y, q_I_G_z,
+    p_C_I_x, p_C_I_y, p_C_I_z,
+    q_I_C_w, q_I_C_x, q_I_C_y, q_I_C_z,
+    sun_az, sun_el
+
+    Note the frame conventions here follow the Trajectory generation standard
+    
+    Where:
+      p_G_I = position of target (G) in inertial frame at radius R_LEO
+      q_I_G = orientation of target frame relative to inertial
+      p_C_I = position of camera (C) in inertial frame at radius (R_LEO + R_RPO)
+      q_I_C = orientation of camera frame relative to inertial
     """
     required_cols = [
         "timestamp",
@@ -125,6 +141,13 @@ def read_camera_trajectory(file_path: str) -> Dict[str, np.ndarray]:
     return trajectory
 
 def get_scaled_trajectory_in_ECI(trajectory: Dict[str, np.ndarray], earth_dist_scale_factor: float = 1/1000) -> Dict[str, np.ndarray]:
+    """
+    Scale the trajectory's positions by earth_dist_scale_factor to bring it closer to Earth, while keeping the relative transformations between camera and target the same.
+
+    Args:
+        trajectory: Dictionary containing trajectory data with keys "N", "timestamps", "p_G_I", "q_I_G", "p_C_I", "q_I_C", "sun_az", "sun_el".
+        earth_dist_scale_factor: Factor to scale the positions by. For example, 1/1000 will bring a 1000 km orbit down to 1 km.
+    """
     nbTruePts = trajectory["N"]
     timestamps = trajectory["timestamps"]
     p_G_I = trajectory["p_G_I"]

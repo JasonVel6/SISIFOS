@@ -19,10 +19,10 @@ import enum
 class ObjectConfig(BaseModel):
     name: str
     blend_path: Optional[str] = None
+    scale_factor: float = 1.0
     # TODO the position and rotation were not used but it could be useful to define them for other objects in the future
     # position: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
     # rotation_euler_deg: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
-    # scale: float = 1.0
 
 
 class CameraConfig(BaseModel):
@@ -42,7 +42,8 @@ class RenderConfig(BaseModel):
     bg_color: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
     motion_blur: float = 0.0
     noise_strength: float = 0.0
-
+    # We scale the earth and bring it closer to the camera to help rendering
+    earth_dist_scale_factor: float = 0.001
 
 class SetupConfig(BaseModel):
     """Environment Setup"""
