@@ -545,6 +545,7 @@ def norm_to_rgb(normals):
 # ===========================================================
 # 3D SCENE VISUALIZATION
 # ===========================================================
+# TODO want to add these to the trajectory generator
 
 def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
                      camera_trajectory, target_trajectory, output_dir,

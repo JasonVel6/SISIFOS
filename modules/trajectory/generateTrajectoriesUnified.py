@@ -601,14 +601,16 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
 
             write_camera_trajectory(
                 output_dir=agent_folder,
+                timestamps=timestamps,
                 nbSteps=nbSteps,
                 r_GO_I=r_GO_I_mc,
                 q_IG=q_IG_mc,
                 r_CO_I=state_C_I_mc_ag[:, 0:3],
                 q_IC=q_IC_mc_ag,
-                sun_az=np.rad2deg(az_I_mc),
-                sun_el=np.rad2deg(el_I_mc),
+                sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
+                sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
             )
+
             gtvalues_filepath = write_gtvalues(
                 output_dir=agent_folder,
                 nbSteps=nbSteps,

@@ -19,12 +19,10 @@ import enum
 class ObjectConfig(BaseModel):
     name: str
     blend_path: Optional[str] = None
-    # TODO I dont think these are used if we get an error then lets resolve it
-    # position: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0]) # TODO why is this needed as it is deffined by the trajectory generator?
+    # TODO the position and rotation were not used but it could be useful to define them for other objects in the future
+    # position: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
     # rotation_euler_deg: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
     # scale: float = 1.0
-    # hide_render: bool = False
-    # extra_scale: float = 1.0              # Potential dditional scaling after loading
 
 
 class CameraConfig(BaseModel):

@@ -27,10 +27,9 @@ from modules.trajectory.sampling_trajectory import (
     make_fake_frame_from_frame0
 )
 from modules.trajectory.trajectory_io import (
-    read_camera_trajectory_to_frames,
-    read_camera_trajectory_legacy,
     get_scaled_trajectory_in_ECI,
     make_frames_from_trajectory,
+    read_camera_trajectory
 )
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 
@@ -60,12 +59,11 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     print(config.setup)
     cam, sun = renderer.setup_total()
 
-    # TODO the legacy stuff will need to go
-    trajectory_file = renders_base_dir / "camera_traj_legacy.txt"
+    trajectory_file = renders_base_dir / "camera_traj.csv"
     
     # TODO will not work with sampling right now must fix
-    # frames = read_camera_trajectory_legacy(str(trajectory_file))
-    trajectory = read_camera_trajectory_legacy(str(trajectory_file))
+    trajectory = read_camera_trajectory(str(trajectory_file))
+    # TODO make the scale factor a config parameter
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=1/1000)
     frames = make_frames_from_trajectory(trajectory)
     print(f"[Session] Renders output: {renders_base_dir}/")
