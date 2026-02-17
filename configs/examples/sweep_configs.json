@@ -57,7 +57,8 @@
       "glare_threshold": 0.95,
       "glare_size": 6
     },
-    "trajectory_type": "trajectory_generator",
+    "trajectory_type": "filepath",
+    "trajectory_filepath": "renders/02_17_26_2026_02_1102_tumbling/mc_trial_0/agent_0",
     "trajectory_sampling": {
       "num_frames": 200,
       "R_RPO": 70.0,
@@ -95,8 +96,8 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 1.0,
-      "tend": 500.0,
-      "tstep": 0.5,
+      "tend": 200.0,
+      "tstep": 1.0,
       "MIN_F2F_PX_MED": 3.0,
       "m": 4000.0,
       "l": 5.0,

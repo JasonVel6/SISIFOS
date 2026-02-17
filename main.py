@@ -36,7 +36,6 @@ from modules.trajectory.generateTrajectoriesUnified import generate_trajectories
 DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 
 def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
-    # Generate the trajectory TODO at some point maybe we can pass a path but the trajectory generator is quite fast for now
     if config.trajectory_type == "trajectory_generator":
         agent_folders = generate_trajectories_dynamical(config.trajectory, str(output_dir))
         
@@ -49,6 +48,28 @@ def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
                 sun_az=config.trajectory_sampling.sun_az,
                 sun_el=config.trajectory_sampling.sun_el,
         )
+    elif config.trajectory_type == "filepath":
+        if not config.trajectory_filepath:
+            raise ValueError("Trajectory type is set to 'filepath' but no trajectory_filepath is provided in the config.")
+        
+        # Copy the contents of the provided folder to the output directory to ensure all outputs are organized under the same base output folder
+        src_folder = Path(config.trajectory_filepath)
+        if not src_folder.exists() or not src_folder.is_dir():
+            raise ValueError(f"Provided trajectory_filepath '{config.trajectory_filepath}' does not exist or is not a directory.")
+        
+        dest_folder = output_dir
+        ensure_dir(dest_folder)
+        for item in src_folder.iterdir():
+            if item.is_file():
+                dest = dest_folder / item.name
+                if not dest.exists():
+                    os.symlink(item.resolve(), dest)  # Create a symlink to avoid copying large files
+            elif item.is_dir():
+                dest = dest_folder / item.name
+                if not dest.exists():
+                    os.symlink(item.resolve(), dest)  # Create a symlink to avoid copying large folders
+                    
+        agent_folders = [str(dest_folder)]
     else:
         raise ValueError(f"Invalid trajectory type: {config.trajectory_type}. Must be 'trajectory_generator' or 'sampling_trajectory'.")
     
