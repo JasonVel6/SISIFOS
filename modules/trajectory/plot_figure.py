@@ -2,10 +2,10 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
+from matplotlib import animation
 from scipy.spatial.transform import Rotation
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for Blender
-import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 # --------------------------- utilities ---------------------------
@@ -282,7 +282,7 @@ def plot_trial_trajectories(
 # 3D SCENE VISUALIZATION
 # ======================================================
 def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
-                     camera_trajectory, target_trajectory, output_dir,
+                     camera_trajectory, target_trajectory,
                      show_trajectory_window=50, sun_az_deg=None, sun_el_deg=None,
                      sun_cam_angle_G=None):
     """
@@ -308,8 +308,6 @@ def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
         Full camera trajectory in inertial coordinates
     target_trajectory : array-like (N, 3)
         Full target trajectory in inertial coordinates
-    output_dir : str
-        Directory to save the plot
     show_trajectory_window : int
         Number of frames before/after to show in trajectory
     sun_az_deg : float, optional
@@ -517,13 +515,11 @@ def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
 
     plt.tight_layout()
 
-    # Save
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f"scene_{frame_idx:04d}.png")
-    plt.savefig(output_path, dpi=100)
+    # Return rendered RGB frame to caller (no file I/O here)
+    fig.canvas.draw()
+    frame_rgb = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
     plt.close(fig)
-
-    return output_path
+    return frame_rgb
 
 def generate_scene_plots(output_dir: str,
                             p_C_I: np.ndarray,
@@ -599,6 +595,8 @@ def generate_scene_plots(output_dir: str,
     print(f"    Target: tumbling via q_IG")
     print(f"    Lighting: sun transformed to body frame, compared with camera direction")
 
+    rendered_frames = []
+    rendered_indices = []
     for i in range(0, n_frames, every_n_frames):
         # Get rotation from Inertial to Body frame at this timestep
         qw, qx, qy, qz = q_IG_arr[i]
@@ -614,21 +612,52 @@ def generate_scene_plots(output_dir: str,
         # Compute sun-camera angle in body frame (accurate lighting metric for tumbling target)
         sun_cam_angle_body = np.degrees(np.arccos(np.clip(np.dot(sun_dir_body, cam_dir_body), -1, 1)))
 
-        plot_scene_frame(
+        frame_rgb = plot_scene_frame(
             frame_idx=i,
             camera_loc=p_C_I[i],
             target_loc=p_G_I[i],
             sun_dir_I=sun_dir_I,  # Static sun in inertial frame for visualization
             camera_trajectory=p_C_I,
             target_trajectory=p_G_I,
-            output_dir=scene_dir,
             sun_az_deg=sun_az_I[0],  # Frame 0 values (static)
             sun_el_deg=sun_el_I[0],
             sun_cam_angle_G=sun_cam_angle_body  # Accurate angle accounting for tumbling
         )
+        frame_path = os.path.join(scene_dir, f"scene_{i:04d}.png")
+        plt.imsave(frame_path, frame_rgb)
+        rendered_frames.append(frame_rgb)
+        rendered_indices.append(i)
 
         if i % 50 == 0:
             print(f"  Generated scene plot for frame {i}/{n_frames}")
+
+    if rendered_frames:
+        anim_fig, anim_ax = plt.subplots(figsize=(16, 5))
+        anim_ax.axis("off")
+        image_artist = anim_ax.imshow(rendered_frames[0])
+
+        def _update(k):
+            image_artist.set_data(rendered_frames[k])
+            anim_ax.set_title(f"Scene frame {rendered_indices[k]}")
+            return [image_artist]
+
+        anim = animation.FuncAnimation(
+            anim_fig,
+            _update,
+            frames=len(rendered_frames),
+            interval=100,
+            blit=True,
+        )
+        video_path = os.path.join(output_dir, "scene_animation.mp4")
+        gif_path = os.path.join(output_dir, "scene_animation.gif")
+        if animation.writers.is_available("ffmpeg"):
+            anim.save(video_path, writer=animation.FFMpegWriter(fps=10))
+            print(f"  Scene animation saved to: {video_path}")
+        else:
+            print("  ffmpeg not found. Saving GIF instead.")
+            anim.save(gif_path, writer=animation.PillowWriter(fps=10))
+            print(f"  Scene animation saved to: {gif_path}")
+        plt.close(anim_fig)
 
     print(f"  Scene plots saved to: {scene_dir}")
     return scene_dir
