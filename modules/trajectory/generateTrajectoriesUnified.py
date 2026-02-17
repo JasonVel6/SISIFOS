@@ -64,7 +64,7 @@ from modules.trajectory.trajectory_math import (
     _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity,
     calcInitCondChaser
 )
-from modules.trajectory.plot_figure import plot_trial_trajectories
+from modules.trajectory.plot_figure import plot_trial_trajectories, generate_scene_plots
 from modules.trajectory.trajectory_io import (write_camera_trajectory, 
     write_gtvalues, write_json, write_config, write_sensormeasurements)
 
@@ -72,7 +72,7 @@ from modules.trajectory.trajectory_io import (write_camera_trajectory,
 # TODO a lot of this should go in the main method as it should only be run if running from command line
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 SISIFOS_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
-DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "output")
+DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
 
 
 # ============================================================================
@@ -563,7 +563,6 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
         el_I_mc = el_I[mc_trial]
 
         # Generate plots
-        # try:
         plot_trial_trajectories(
             state_A_I=state_A_I_mc,
             state_C_I=state_C_I_mc,
@@ -656,6 +655,15 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                             tend=config.tend,
                             inc=inc[mc_trial],
                             ecc=ecc[mc_trial],)
+            
+            generate_scene_plots(
+                output_dir=agent_folder,
+                p_C_I=state_C_I_mc_ag[:, 0:3],
+                p_G_I=r_GO_I_mc,
+                sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
+                sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                r_CG_arr=r_CG_G_mc_ag,
+                q_IG_arr=q_IG_mc)
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {config.seed}")

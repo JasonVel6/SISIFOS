@@ -2,7 +2,11 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
-
+from scipy.spatial.transform import Rotation
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for Blender
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 # --------------------------- utilities ---------------------------
 
@@ -273,3 +277,358 @@ def plot_trial_trajectories(
     if show:
         plt.show(block=True)
     return fig
+
+# ======================================================
+# 3D SCENE VISUALIZATION
+# ======================================================
+def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
+                     camera_trajectory, target_trajectory, output_dir,
+                     show_trajectory_window=50, sun_az_deg=None, sun_el_deg=None,
+                     sun_cam_angle_G=None):
+    """
+    Generate a 3D plot showing the Blender scene geometry for a single frame.
+
+    Scene setup (INERTIAL FRAME):
+    - Earth is at origin (0, 0, 0)
+    - Sun direction from sun_az/sun_el (per-frame)
+    - Target MOVES around Earth
+    - Camera MOVES with target, looking at target
+
+    Parameters:
+    -----------
+    frame_idx : int
+        Current frame number
+    camera_loc : array-like (3,)
+        Camera position in inertial/world coordinates
+    target_loc : array-like (3,)
+        Target position in inertial/world coordinates
+    sun_dir_I : array-like (3,)
+        Sun direction unit vector (from sun_az/sun_el converted to Cartesian)
+    camera_trajectory : array-like (N, 3)
+        Full camera trajectory in inertial coordinates
+    target_trajectory : array-like (N, 3)
+        Full target trajectory in inertial coordinates
+    output_dir : str
+        Directory to save the plot
+    show_trajectory_window : int
+        Number of frames before/after to show in trajectory
+    sun_az_deg : float, optional
+        Sun azimuth in degrees (for display)
+    sun_el_deg : float, optional
+        Sun elevation in degrees (for display)
+    sun_cam_angle_G : float, optional
+        Pre-computed sun-camera angle in G frame (accurate lighting metric)
+    """
+    fig = plt.figure(figsize=(16, 5))
+
+    # Convert to numpy arrays
+    camera_loc = np.array(camera_loc)
+    target_loc = np.array(target_loc)
+    sun_dir = np.array(sun_dir_I)
+    sun_dir = sun_dir / (np.linalg.norm(sun_dir) + 1e-9)
+
+    # Camera look-at direction (camera looks toward target)
+    cam_to_target = target_loc - camera_loc
+    cam_to_target_dist = np.linalg.norm(cam_to_target)
+    look_at_dir = cam_to_target / (cam_to_target_dist + 1e-9)
+
+    # Earth direction from target
+    earth_dir_from_target = -target_loc / (np.linalg.norm(target_loc) + 1e-9)
+
+    # Earth direction from target (for display)
+    earth_lookat_angle = np.degrees(np.arccos(np.clip(np.dot(earth_dir_from_target, look_at_dir), -1, 1)))
+
+    # Use pre-computed G-frame angle if available (accurate), otherwise fall back to inertial approx
+    if sun_cam_angle_G is not None:
+        sun_camera_angle = sun_cam_angle_G
+    else:
+        # Fallback: compute in inertial frame (less accurate)
+        sun_camera_angle = np.degrees(np.arccos(np.clip(np.dot(sun_dir, -look_at_dir), -1, 1)))
+
+    # Refined illumination classification with transition zone
+    # - Full front-lit: sun_camera_angle < 80° (definitely lit)
+    # - Transition zone: 80° <= angle < 100° (partial/uncertain lighting)
+    # - Full back-lit: angle >= 100° (definitely in shadow)
+    if sun_camera_angle < 80:
+        target_color = 'gold'
+        lit_status = "FRONT-LIT"
+    elif sun_camera_angle < 100:
+        target_color = 'orange'
+        lit_status = f"TRANSITION ({sun_camera_angle:.1f}°)"
+    else:
+        target_color = 'gray'
+        lit_status = "BACK-LIT"
+
+    is_front_lit = sun_camera_angle < 90  # Keep for legacy compatibility
+
+    # Trajectory window
+    n_frames = len(camera_trajectory)
+    start_idx = max(0, frame_idx - show_trajectory_window)
+    end_idx = min(n_frames, frame_idx + show_trajectory_window)
+
+    # ===== Plot 1: World frame view (Earth at origin) =====
+    ax1 = fig.add_subplot(1, 4, 1, projection='3d')
+
+    # Earth at origin
+    ax1.scatter([0], [0], [0], c='green', s=200, marker='o', label='Earth', zorder=5)
+
+    # Target position
+    ax1.scatter([target_loc[0]], [target_loc[1]], [target_loc[2]],
+                c=target_color, s=100, marker='*', label='Target', zorder=5)
+
+    # Camera position
+    ax1.scatter([camera_loc[0]], [camera_loc[1]], [camera_loc[2]],
+                c='blue', s=80, marker='^', label='Camera', zorder=5)
+
+    # Camera look-at arrow (from camera toward target)
+    arrow_scale = cam_to_target_dist * 0.8
+    look_arrow = look_at_dir * arrow_scale
+    ax1.quiver(camera_loc[0], camera_loc[1], camera_loc[2],
+               look_arrow[0], look_arrow[1], look_arrow[2],
+               color='blue', arrow_length_ratio=0.1, lw=2, label='Look-at')
+
+    # Sun direction arrow (from origin, showing light direction)
+    sun_arrow = sun_dir * arrow_scale
+    ax1.quiver(0, 0, 0, sun_arrow[0], sun_arrow[1], sun_arrow[2],
+               color='orange', arrow_length_ratio=0.1, lw=3, label='Sun dir')
+
+    # Target trajectory
+    if end_idx > start_idx:
+        traj_t = target_trajectory[start_idx:end_idx]
+        ax1.plot(traj_t[:, 0], traj_t[:, 1], traj_t[:, 2], 'r-', alpha=0.4, lw=1)
+
+    ax1.set_xlabel('X')
+    ax1.set_ylabel('Y')
+    ax1.set_zlabel('Z')
+    sun_info = f"az={sun_az_deg:.1f}° el={sun_el_deg:.1f}°" if sun_az_deg is not None else f"∠={sun_camera_angle:.1f}°"
+    ax1.set_title(f'World Frame (Earth at origin)\n{lit_status} | Sun {sun_info}')
+    ax1.legend(loc='upper left', fontsize=6)
+
+    # ===== Plot 2: Target-centered view =====
+    ax2 = fig.add_subplot(1, 4, 2, projection='3d')
+
+    # Positions relative to target
+    cam_rel = camera_loc - target_loc
+    earth_rel = -target_loc
+
+    # Target at center
+    ax2.scatter([0], [0], [0], c=target_color, s=150, marker='*', label='Target', zorder=5)
+
+    # Camera position relative to target
+    ax2.scatter([cam_rel[0]], [cam_rel[1]], [cam_rel[2]],
+                c='blue', s=100, marker='^', label='Camera', zorder=5)
+
+    # Camera look-at arrow (from camera toward target = toward origin)
+    look_arrow_rel = -cam_rel / (np.linalg.norm(cam_rel) + 1e-9) * cam_to_target_dist * 0.5
+    ax2.quiver(cam_rel[0], cam_rel[1], cam_rel[2],
+               look_arrow_rel[0], look_arrow_rel[1], look_arrow_rel[2],
+               color='blue', arrow_length_ratio=0.15, lw=2, label='Look-at')
+
+    # Sun direction arrow
+    arrow_scale2 = cam_to_target_dist * 0.6
+    sun_arrow2 = sun_dir * arrow_scale2
+    ax2.quiver(0, 0, 0, sun_arrow2[0], sun_arrow2[1], sun_arrow2[2],
+               color='orange', arrow_length_ratio=0.15, lw=3, label='Sun dir')
+
+    # Earth direction arrow (from target toward Earth)
+    earth_arrow = earth_dir_from_target * arrow_scale2
+    ax2.quiver(0, 0, 0, earth_arrow[0], earth_arrow[1], earth_arrow[2],
+               color='green', arrow_length_ratio=0.15, lw=3, label='Earth dir')
+
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_zlabel('Z (m)')
+    ax2.set_title(f'Frame {frame_idx} | Range: {cam_to_target_dist:.1f}m')
+    ax2.legend(loc='upper left', fontsize=6)
+
+    max_range = cam_to_target_dist * 1.5
+    ax2.set_xlim([-max_range, max_range])
+    ax2.set_ylim([-max_range, max_range])
+    ax2.set_zlim([-max_range, max_range])
+
+    # ===== Plot 3: Top-down view (X-Y plane) =====
+    ax3 = fig.add_subplot(1, 4, 3)
+
+    # Draw lit hemisphere indicator
+    r_indicator = max_range * 0.9
+    sun_2d = sun_dir[:2]
+    sun_2d_norm = np.linalg.norm(sun_2d)
+    if sun_2d_norm > 0.1:
+        sun_2d_unit = sun_2d / sun_2d_norm
+        sun_angle = np.arctan2(sun_2d_unit[1], sun_2d_unit[0])
+        theta_lit = np.linspace(sun_angle - np.pi/2, sun_angle + np.pi/2, 50)
+        x_lit = r_indicator * np.cos(theta_lit)
+        y_lit = r_indicator * np.sin(theta_lit)
+        ax3.fill(np.append(x_lit, 0), np.append(y_lit, 0), color='yellow', alpha=0.15, label='Lit side')
+
+    # Target at center
+    ax3.scatter([0], [0], c=target_color, s=150, marker='*', label='Target', zorder=5)
+
+    # Camera
+    ax3.scatter([cam_rel[0]], [cam_rel[1]], c='blue', s=100, marker='^', label='Camera', zorder=5)
+
+    # Camera look-at arrow
+    ax3.arrow(cam_rel[0], cam_rel[1], look_arrow_rel[0], look_arrow_rel[1],
+              head_width=2, head_length=1.5, fc='blue', ec='blue', lw=1.5)
+
+    # Sun direction
+    ax3.arrow(0, 0, sun_arrow2[0], sun_arrow2[1], head_width=3, head_length=2,
+              fc='orange', ec='orange', lw=2, label='Sun')
+
+    # Earth direction
+    ax3.arrow(0, 0, earth_arrow[0], earth_arrow[1], head_width=3, head_length=2,
+              fc='green', ec='green', lw=2, label='Earth')
+
+    ax3.set_xlabel('X (m)')
+    ax3.set_ylabel('Y (m)')
+    ax3.set_title(f'Top-Down (X-Y)\nSun-Cam angle: {sun_camera_angle:.1f}°')
+    ax3.set_aspect('equal')
+    ax3.legend(loc='upper left', fontsize=6)
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xlim([-max_range, max_range])
+    ax3.set_ylim([-max_range, max_range])
+
+    # ===== Plot 4: Alignment diagram (conceptual) =====
+    ax4 = fig.add_subplot(1, 4, 4)
+    ax4.set_xlim(-1.5, 1.5)
+    ax4.set_ylim(-0.5, 0.5)
+    ax4.set_aspect('equal')
+    ax4.axis('off')
+
+    # Draw alignment: Sun -> Camera -> Target -> Earth
+    positions = {'Sun': -1.2, 'Camera': -0.4, 'Target': 0.4, 'Earth': 1.2}
+    colors = {'Sun': 'orange', 'Camera': 'blue', 'Target': target_color, 'Earth': 'green'}
+    markers = {'Sun': 'o', 'Camera': '^', 'Target': '*', 'Earth': 'o'}
+    sizes = {'Sun': 200, 'Camera': 150, 'Target': 200, 'Earth': 200}
+
+    for name, x in positions.items():
+        ax4.scatter([x], [0], c=colors[name], s=sizes[name], marker=markers[name], zorder=5)
+        ax4.text(x, -0.25, name, ha='center', fontsize=9)
+
+    # Draw arrows showing ideal alignment
+    ax4.annotate('', xy=(-0.5, 0), xytext=(-1.0, 0),
+                arrowprops=dict(arrowstyle='->', color='orange', lw=2))
+    ax4.annotate('', xy=(0.3, 0), xytext=(-0.3, 0),
+                arrowprops=dict(arrowstyle='->', color='blue', lw=2))
+    ax4.annotate('', xy=(1.0, 0), xytext=(0.5, 0),
+                arrowprops=dict(arrowstyle='->', color='gray', lw=2, ls='--'))
+
+    ax4.set_title(f'{lit_status}\nSun-Cam: {sun_camera_angle:.1f}° | Earth-LookAt: {earth_lookat_angle:.1f}°')
+
+    plt.tight_layout()
+
+    # Save
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, f"scene_{frame_idx:04d}.png")
+    plt.savefig(output_path, dpi=100)
+    plt.close(fig)
+
+    return output_path
+
+def generate_scene_plots(output_dir: str,
+                            p_C_I: np.ndarray,
+                            p_G_I: np.ndarray,
+                            sun_az_I: np.ndarray,
+                            sun_el_I: np.ndarray,
+                            r_CG_arr: np.ndarray,
+                            q_IG_arr: np.ndarray,
+                            every_n_frames=1,
+                            max_frames=None):
+    """
+    Generate 3D scene plots for multiple frames in the INERTIAL FRAME.
+
+    Scene setup:
+    - Earth is at origin (0, 0, 0) in inertial frame
+    - Sun is STATIC in inertial frame (set from frame 0 sun_az/sun_el)
+    - Target MOVES around Earth AND TUMBLES (via q_IG)
+    - Camera MOVES with target, looking at target
+    - Lighting is computed by transforming sun direction into body frame
+
+    Parameters:
+    -----------
+    output_dir : str
+        Directory to save plots
+    p_C_I : array-like (N, 3)
+        Camera positions in inertial coordinates for each frame
+    p_G_I : array-like (N, 3)
+        Target positions in inertial coordinates for each frame
+    sun_az_I : array-like (N,)
+        Sun azimuth angles (degrees) per frame - frame 0 used for static sun
+    sun_el_I : array-like (N,)
+        Sun elevation angles (degrees) per frame - frame 0 used for static sun
+    r_CG_arr : array-like (N, 3)
+        Camera position in G frame (body frame) per frame
+    q_IG_arr : array-like (N, 4)
+        Quaternion [w, x, y, z] from Inertial to Body (G) frame per frame
+    every_n_frames : int
+        Generate plot every N frames (1 = every frame)
+    max_frames : int or None
+        Maximum number of frames to process
+    """
+    n_frames = min(
+        len(p_C_I),
+        len(p_G_I),
+        len(sun_az_I),
+        len(sun_el_I),
+        len(r_CG_arr),
+        len(q_IG_arr),
+    )
+
+    if max_frames is not None:
+        n_frames = min(n_frames, max_frames)
+    if n_frames <= 0:
+        raise ValueError("No frames available to plot scene figures.")
+    if every_n_frames <= 0:
+        raise ValueError("every_n_frames must be >= 1.")
+
+    # Compute STATIC sun direction in inertial frame from frame 0
+    az0_rad = np.radians(sun_az_I[0])
+    el0_rad = np.radians(sun_el_I[0])
+    sun_dir_I = np.array([
+        np.cos(el0_rad) * np.cos(az0_rad),
+        np.cos(el0_rad) * np.sin(az0_rad),
+        np.sin(el0_rad)
+    ])
+
+    scene_dir = os.path.join(output_dir, "ScenePlots")
+    os.makedirs(scene_dir, exist_ok=True)
+
+    print(f"\n=== Generating scene plots to {scene_dir} ===")
+    print(f"    Earth: at origin (0,0,0)")
+    print(f"    Sun: STATIC in inertial frame (from frame 0: az={sun_az_I[0]:.1f}° el={sun_el_I[0]:.1f}°)")
+    print(f"    Target: tumbling via q_IG")
+    print(f"    Lighting: sun transformed to body frame, compared with camera direction")
+
+    for i in range(0, n_frames, every_n_frames):
+        # Get rotation from Inertial to Body frame at this timestep
+        qw, qx, qy, qz = q_IG_arr[i]
+        rot_IG = Rotation.from_quat([qx, qy, qz, qw])
+
+        # Transform static sun direction from Inertial to Body frame
+        sun_dir_body = rot_IG.apply(sun_dir_I)
+
+        # Camera direction toward target in body frame: -r_CG / |r_CG|
+        r_CG_i = r_CG_arr[i]
+        cam_dir_body = -r_CG_i / (np.linalg.norm(r_CG_i) + 1e-9)
+
+        # Compute sun-camera angle in body frame (accurate lighting metric for tumbling target)
+        sun_cam_angle_body = np.degrees(np.arccos(np.clip(np.dot(sun_dir_body, cam_dir_body), -1, 1)))
+
+        plot_scene_frame(
+            frame_idx=i,
+            camera_loc=p_C_I[i],
+            target_loc=p_G_I[i],
+            sun_dir_I=sun_dir_I,  # Static sun in inertial frame for visualization
+            camera_trajectory=p_C_I,
+            target_trajectory=p_G_I,
+            output_dir=scene_dir,
+            sun_az_deg=sun_az_I[0],  # Frame 0 values (static)
+            sun_el_deg=sun_el_I[0],
+            sun_cam_angle_G=sun_cam_angle_body  # Accurate angle accounting for tumbling
+        )
+
+        if i % 50 == 0:
+            print(f"  Generated scene plot for frame {i}/{n_frames}")
+
+    print(f"  Scene plots saved to: {scene_dir}")
+    return scene_dir

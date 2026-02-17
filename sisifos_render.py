@@ -9,6 +9,8 @@ from matplotlib.colors import hsv_to_rgb
 from datetime import datetime
 from math import degrees
 
+# TODO delete this file before we push the PR
+
 # ===========================================================
 # GLOBAL SETTINGS
 # ===========================================================
@@ -27,6 +29,7 @@ def vprint(*args):
     if VERBOSE:
         print(*args)
 
+# TODO we may want to add this to the other script to generate a video
 def images_to_video_ffmpeg(
     input_pattern,
     output_path,
@@ -545,8 +548,6 @@ def norm_to_rgb(normals):
 # ===========================================================
 # 3D SCENE VISUALIZATION
 # ===========================================================
-# TODO want to add these to the trajectory generator
-
 def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
                      camera_trajectory, target_trajectory, output_dir,
                      show_trajectory_window=50, sun_az_deg=None, sun_el_deg=None,
@@ -1144,7 +1145,7 @@ def force_uv_mapping(obj):
 
             print(f"Updated {mat.name}: now using UV mapping for {img_node.name}")
 
-
+# TODO DO we need this in the main script
 def prepare_slam_dataset(traj_root, traj_path, timestamps, num_frames):
     """
     Prepare the rendered output for SLAM pipeline consumption.
@@ -1188,7 +1189,7 @@ def prepare_slam_dataset(traj_root, traj_path, timestamps, num_frames):
         "gtValues.txt",
         "Config.yaml",
         "sensormeasurements.txt",
-        "camera_traj_legacy.txt"
+        "camera_traj.txt"
     ]
 
     for filename in files_to_copy:
@@ -1226,12 +1227,13 @@ def discover_trajectory_folders(base_dir):
         folder_path = os.path.join(base_dir, name)
         if not os.path.isdir(folder_path):
             continue
-        traj_file = os.path.join(folder_path, "camera_traj_legacy.txt")
+        traj_file = os.path.join(folder_path, "camera_traj.txt")
         if os.path.isfile(traj_file):
             trajectories.append((name, folder_path))
 
     return trajectories
 
+# TODO some kind of trajectory selection would be nice in the other script
 def select_trajectories_interactive(trajectories):
     """
     TODO useful functionality that we may want
@@ -1357,7 +1359,7 @@ if __name__ == "__main__":
     scene.render.engine = "CYCLES"
 
     # Enable GPU rendering (CUDA for GTX 1080 Ti)
-    # TODO we may want to enable this
+    # TODO we may want to enable this in
     # cycles_prefs = bpy.context.preferences.addons['cycles'].preferences
     # cycles_prefs.compute_device_type = 'CUDA'
     # cycles_prefs.get_devices()
@@ -1861,6 +1863,7 @@ if __name__ == "__main__":
             )
 
         # Generate video for scene plots
+        # TODO we want this in the other script
         scene_plots_dir = os.path.join(traj_root, "ScenePlots")
         if os.path.isdir(scene_plots_dir):
             scene_pngs = sorted(glob.glob(os.path.join(scene_plots_dir, "scene_*.png")))

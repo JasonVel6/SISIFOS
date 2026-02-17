@@ -8,34 +8,7 @@ from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_unif
 from modules.io_utils import ensure_dir
 from modules.trajectory.trajectory_io import write_camera_trajectory
 
-# TODO we can prob move this
-# def sun_sweep_90(az_step: int = 90,
-#     el_step: int = 90,
-#     az_range=(45, 360),     # [start, end) in degrees
-#     el_range=(-45, 90),    # inclusive
-#     include_end_az: bool = False,  # keep 360? usually False because 0 == 360
-# ) -> dict:
-#     """ It does a sweep of sun directions every 90 degrees per angle.
-#         It will be implemented in a more generalized way.
-#     """
-#     az0, az1 = az_range
-#     el0, el1 = el_range
-
-#     az_vals = list(range(int(az0), int(az1), int(az_step)))
-#     if include_end_az and az1 not in az_vals:
-#         az_vals.append(int(az1))
-
-#     el_vals = list(range(int(el0), int(el1) + 1, int(el_step)))
-
-#     sweep = {}
-#     idx = 0
-#     for el in el_vals:
-#         for az in az_vals:
-#             sweep[f"{idx:02d}"] = {"sun_az_deg": float(az), "sun_el_deg": float(el)}
-#             idx += 1
-#     return sweep
-
-# TODO this can also probably get moved
+# TODO Find a better place for this method
 def make_fake_frame_from_frame0(
     frame0: dict,
     seed: int,
