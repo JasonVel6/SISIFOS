@@ -125,7 +125,7 @@ def prepare_slam_dataset(traj_root, traj_path, timestamps, num_frames):
     with open(imglist_path, "w") as f:
         for i in range(num_frames):
             ts = timestamps[i] if i < len(timestamps) else i * 1.0
-            f.write(f"{ts:.6f} images/img_{i:05d}.png\n")
+            f.write(f"{ts:.6f} images/img_{i:04d}.png\n")
     print(f"  Created: {imglist_path}")
 
     # Copy source files from trajectory folder to render output

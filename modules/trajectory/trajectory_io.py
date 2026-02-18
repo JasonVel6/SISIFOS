@@ -730,7 +730,7 @@ def rename_imgs_in_folder(folder):
             # Extract the number from the original filename
             number = filename.split('_')[-1].split('.')[0]
             # Create the new filename with leading zeros
-            new_filename = f"img_{int(number):05d}.png"
+            new_filename = f"img_{int(number):04d}.png"
 
             # Get full paths
             old_file = os.path.join(folder, filename)
@@ -748,7 +748,7 @@ def create_ffmpeg(gt_output, filename):
         # ffmpeg
         r'C:\ffmpeg\bin\ffmpeg.exe',
         '-framerate', str(30),
-        '-i', os.path.join(gt_output, "img_%05d.png"),
+        '-i', os.path.join(gt_output, "img_%04d.png"),
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
         output_video

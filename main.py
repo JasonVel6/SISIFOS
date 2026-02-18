@@ -94,7 +94,8 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     res_x, res_y = config.camera.resolution
     
-    N_digits = int(math.log10(len(frames))) + 1
+    # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
+    N_digits = max(4, int(math.log10(len(frames))) + 1)
 
     for model in models:
         model_folder_name = f"{model.name}"
@@ -172,7 +173,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
         # Generate video from rendered frames
         images_to_video_ffmpeg(
-            input_pattern = os.path.join(model_out_dir, "frame_%d.png"),
+            input_pattern = os.path.join(model_out_dir, "frame_%04d.png"),
             output_path   = os.path.join(model_out_dir, "output_video.mp4"),
             fps = 5,
             crf = 20
