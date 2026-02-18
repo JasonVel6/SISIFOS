@@ -10,7 +10,8 @@ from mathutils import Quaternion
 from .config import SceneConfig
 from .io_utils import vprint
 from .blender_utils import (
-    append_blend_objects, scale_object_by_factor, set_sun_direction, 
+    append_blend_objects, append_blend_objects_filtered, list_blend_object_names,
+    remove_objects_from_scene, scale_object_by_factor, set_sun_direction, 
     clear_anim, keyframe_pose
 )
 
@@ -35,7 +36,6 @@ class BlenderRenderer:
 
 
         new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
-        new_objects2 = append_blend_objects(self.config.objects["Target"].blend_path)
 
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
@@ -132,7 +132,6 @@ class BlenderRenderer:
         earth  = bpy.data.objects["Earth"]
         clouds = bpy.data.objects["Clouds"]
         atmo   = bpy.data.objects["Atmo"]
-        target = bpy.data.objects["Target"]
         sun = bpy.data.objects["Sun"]  # or create one
         bpy.context.view_layer.update()
         sun.data.energy = 10.0
@@ -141,24 +140,42 @@ class BlenderRenderer:
         scale_object_by_factor(atmo,   10)
         return cam, sun
     
-    def select_models_to_render(self) -> List[bpy.types.Object]:
-        """Get list of RF_* models to render."""
-        
-        models = [o for o in bpy.data.objects
-                 if o.parent is None and o.name.startswith("RF_")]
+    def get_model_names_to_render(self) -> List[str]:
+        """Inspect the blend file and return RF_* root names to render (without loading)."""
+        blend_path = self.config.objects["Target"].blend_path
+        all_names = list_blend_object_names(blend_path)
+        rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
         if self.config.selected_models:
-            models = [m for m in models if m.name in self.config.selected_models]
-        
-        return sorted(models, key=lambda o: o.name.lower())
-    
-    def hide_all_except(self, target_root, all_roots):
-        """Hide all models except target."""
-        for r in all_roots:
-            hide = (r != target_root)
-            r.hide_render = hide
-            for c in r.children_recursive:
-                c.hide_render = hide
-        bpy.context.view_layer.update()
+            rf_names = [n for n in rf_names if n in self.config.selected_models]
+        return rf_names
+
+    def load_spacecraft(self, model_name: str) -> bpy.types.Object:
+        """Load a single spacecraft (root + descendants) into the scene and return the root."""
+        blend_path = self.config.objects["Target"].blend_path
+        all_names = list_blend_object_names(blend_path)
+
+        names_to_load = [model_name] + [n for n in all_names if not n.startswith("RF_")]
+        loaded_objs = append_blend_objects_filtered(blend_path, names_to_load)
+
+        root = bpy.data.objects.get(model_name)
+        if root is None:
+            raise RuntimeError(f"Spacecraft root '{model_name}' not found after append")
+
+        # Keep only root and its actual descendants; remove orphans
+        keep = set([root] + list(root.children_recursive))
+        orphans = [o for o in loaded_objs if o not in keep]
+        if orphans:
+            remove_objects_from_scene(orphans)
+
+        vprint(f"Loaded spacecraft '{model_name}' ({1 + len(list(root.children_recursive))} objects)", self.verbose)
+        return root
+
+    def unload_spacecraft(self, root: bpy.types.Object) -> None:
+        """Remove a spacecraft hierarchy from the scene and free memory."""
+        name = root.name
+        objs_to_remove = list(root.children_recursive) + [root]
+        remove_objects_from_scene(objs_to_remove)
+        vprint(f"Unloaded spacecraft '{name}'", self.verbose)
     
     def rotate_z(self, obj, deg: float):
         """Rotate object around local Z axis."""

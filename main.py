@@ -60,8 +60,8 @@ def main(config_path: str):
     print(f"\n[Session] Timestamp: {timestamp}")
     print(f"[Session] Renders output: {renders_base_dir}/")
     
-    models = renderer.select_models_to_render()
-    vprint(f"Rendering {len(models)} models: {[m.name for m in models]}", True)
+    model_names = renderer.get_model_names_to_render()
+    vprint(f"Rendering {len(model_names)} models: {model_names}", True)
     
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     R_RPO_tag = format_R_RPO(config.setup.R_RPO)
@@ -75,12 +75,13 @@ def main(config_path: str):
     N_azel_keys = int(math.log10(len(sun_sweep_map))) + 1
     N_exp_keys = int(math.log10(len(exp_sweep_map))) + 1
 
-    for model in models:
+    for model_name in model_names:
+        model = renderer.load_spacecraft(model_name)
+
         subfolder = f"_{R_RPO_tag}_RESX{res_x}_RESY{res_y}"
         model_out_dir = ensure_dir(renders_base_dir / (model.name + subfolder))
         gt_root = ensure_dir(model_out_dir / "GTAnnotations")
 
-        renderer.hide_all_except(model, models)
         model_out_dir = model_out_dir / "FULL"
         if str(config.setup.stars_mode).casefold() == "off":
             if str(config.setup.earth_mode).casefold() == "off":
@@ -146,6 +147,8 @@ def main(config_path: str):
                             gt_dirs["gt_flow"], gt_dirs["gt_seg"],
                             config.setup.R_RPO
                         )
+
+        renderer.unload_spacecraft(model)
 
 if __name__ == "__main__":
     # Handle Blender's command-line arguments (-b, -q, -P script.py)
