@@ -49,7 +49,6 @@ def look_at(obj, target_point: Vector) -> None:
 
 def set_sun_direction(sun_obj, sun_az_deg: float, sun_el_deg: float):
         """Orient a Sun object to match given azimuth/elevation (no location change) for ray-casting day-night."""
-        # TODO this may be easier to debug in euler
         # Convert to radians
         az = math.radians(sun_az_deg)
         el = math.radians(sun_el_deg)

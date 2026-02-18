@@ -3,8 +3,6 @@ config.py
 
 Defines the configuration schema for the trajectory generator and renderer
 
-
-TODO need to unify multiple sources of truth for parameters like camera settings and exposure time, currently they are defined in multiple places which is not ideal and can lead to bugs if they get out of sync, ideally we would have a single source of truth for each parameter and reference it in both places, this will require some refactoring but will improve maintainability and reduce the risk of bugs in the future
 """
 
 import time
@@ -20,9 +18,6 @@ class ObjectConfig(BaseModel):
     name: str
     blend_path: Optional[str] = None
     scale_factor: float = 1.0
-    # TODO the position and rotation were not used but it could be useful to define them for other objects in the future
-    # position: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
-    # rotation_euler_deg: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
 
 
 class CameraConfig(BaseModel):

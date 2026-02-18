@@ -8,7 +8,6 @@ from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_unif
 from modules.io_utils import ensure_dir
 from modules.trajectory.trajectory_io import write_camera_trajectory
 
-# TODO Find a better place for this method
 def make_fake_frame_from_frame0(
     frame0: dict,
     seed: int,
@@ -20,6 +19,8 @@ def make_fake_frame_from_frame0(
     """
     Create an artificial 'next frame' using only frame0, by perturbing camera pose
     (and optionally target orientation). Keeps target position fixed.
+
+    TODO we may want to find another place for this method
 
     frame0 keys: p_G_I, q_I_G, p_C_I, q_I_C
     returns dict with same keys.
@@ -88,7 +89,6 @@ def make_fake_frame_from_frame0(
         "q_I_C": q_I_C1,
     }
 
-# TODO this should rename
 def write_camera_trajectory_fib(
     out_dir: str,
     N: int,
@@ -205,7 +205,6 @@ def write_camera_trajectory_fib(
     
     return [out_dir]
 
-# TODO this isnt used
 def write_camera_approach(
     out_path: str,
     N: int,

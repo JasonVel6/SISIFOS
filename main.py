@@ -17,11 +17,12 @@ from pathlib import Path
 from tqdm import tqdm
 import argparse
 import json
+import numpy as np
 
 sys.path.append(os.getcwd())
 from modules.config import SceneConfig, SweepConfig
 from modules.renderer import BlenderRenderer
-from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, vprint
+from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, images_to_video_ffmpeg, vprint, prepare_slam_dataset
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib, 
     make_fake_frame_from_frame0
@@ -124,10 +125,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         total = len(frame_ids)
         print("Enabling blur is: ", config.setup.enable_blur)
         
-        # TODO will need to fix the tqdm progress bar
-        # TODO why is the first frame not quite right
-        # TODO can we do some kind of sampling around to see if we can see the earth and that orientations are right
-        # already doesnt quite work because of blender spamming the console will need to fix this later
         with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
             for i in frame_ids:
                 fr = frames[i]
@@ -156,15 +153,30 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                     )
                 pbar.update(1)
 
-                # Post-process NPZ TODO fix this but commenting for now
-                # npz_src = Path(os.path.join(current_output_dir, f'{i:04d}.npz'))
-                # if npz_src.exists():
-                #     handle_gt_from_npz(
-                #         npz_src,
-                #         gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
-                #         gt_dirs["gt_flow"], gt_dirs["gt_seg"],
-                #         config.setup.R_RPO
-                #     )
+                # Post-process NPZ
+                target_dist = float(np.linalg.norm(
+                    fr["p_G_I"] - fr["p_C_I"]
+                ))
+                npz_src = Path(os.path.join(model_out_dir, f'{i:04d}.npz'))
+                if npz_src.exists():
+                    handle_gt_from_npz(
+                        npz_src,
+                        gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
+                        gt_dirs["gt_flow"], gt_dirs["gt_seg"],
+                        target_dist
+                    )
+
+        # End of frames loop
+        timestamps = trajectory["t"]
+        prepare_slam_dataset(model_out_dir, renders_base_dir, timestamps, len(frame_ids))
+
+        # Generate video from rendered frames
+        images_to_video_ffmpeg(
+            input_pattern = os.path.join(model_out_dir, "frame_%d.png"),
+            output_path   = os.path.join(model_out_dir, "output_video.mp4"),
+            fps = 5,
+            crf = 20
+        )
 
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
@@ -187,8 +199,6 @@ def run_sweep(sweep_config: SweepConfig):
             payload = config.model_dump()
             json.dump(payload, f, indent=2)
 
-            # TODO we may want to also save the trajectory generator config but this is a task for later
-
             PROJECT_ROOT = Path(__file__).parent.resolve()
 
         # Ensure paths are absolute
@@ -210,7 +220,6 @@ if __name__ == "__main__":
     config_path = "./config.json"  # Default
     
     # Look for arguments after '--' (Blender convention)
-    # TODO lets fix this using actual argparse for readability and robustness
     if '--' in sys.argv:
         argv = sys.argv[sys.argv.index('--') + 1:]  # Arguments after '--'
     else:

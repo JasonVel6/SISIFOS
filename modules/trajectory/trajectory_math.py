@@ -3,7 +3,6 @@ This is the file complete all of the basic math functions used in this project.
 If you want to use these function, you can import this file as follows:
 
 TODO this could prob use some unit testing to make sure that we dont accidentally break anything
-TODO could also likely benefit from some organization
 """
 
 ### Import necessary libraries
@@ -620,7 +619,6 @@ def cart2sph(x, y, z):
 def _vecI_to_azel(v_I):
     """
     converts a vector in inertial frame to azimuth and elevation angles.
-    TODO consolidate this with the other method slightly different implementations
     
     :param v_I: Description
     """

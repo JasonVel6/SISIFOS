@@ -45,7 +45,6 @@ from datetime import datetime
 from scipy.linalg import expm
 
 # Add project root to path so imports work both when running directly and when imported
-# TODO clean this up
 _SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
@@ -57,7 +56,6 @@ from modules.trajectory.motion_cases import (
     validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
 )
 
-# TODO Evaluate what we need in the math function
 from modules.trajectory.trajectory_math import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
@@ -69,7 +67,6 @@ from modules.trajectory.trajectory_io import (write_camera_trajectory,
     write_gtvalues, write_json, write_config, write_sensormeasurements)
 
 # ---------------- Paths ----------------
-# TODO a lot of this should go in the main method as it should only be run if running from command line
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 SISIFOS_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
 DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
@@ -148,8 +145,6 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
     pitch = np.zeros(config.num_mc)
     roll = np.zeros(config.num_mc)
 
-    # TODO parameterize distributions
-    # TODO should be able to override some of these parameters
     for mc_trial in range(config.num_mc):
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
@@ -231,12 +226,10 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
     H_GI_I = np.zeros((config.num_mc, nbSteps, 3))
 
 
-    # TODO these could be considered constants if we want them to be defined somewhere else
     # Disturbances
     eta = np.random.multivariate_normal(config.MEAN_DEFAULT, config.COV_R_ASTRO_APS3, (config.num_agents, nbSteps))
     nu = np.random.multivariate_normal(config.MEAN_DEFAULT, config.COV_OMEGA_ASTRIX, (config.num_agents, nbSteps))
 
-    #TODO these as well
     # IMU bias
     g0 = 9.80665
     sigma_bg = np.deg2rad(config.GYRO_BIAS_SIGMA_DEGPHR) / 3600.0
@@ -676,7 +669,6 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
 # ============================================================================
 # CLI Entry Point
 # ============================================================================
-# TODO fix this with the config refactor
 def main():
     print("=" * 60)
     print("UNIFIED TRAJECTORY GENERATOR")
