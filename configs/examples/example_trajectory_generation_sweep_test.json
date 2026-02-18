@@ -112,5 +112,5 @@
     ],
     "model_rotation_z_deg": 45.0
   },
-  "sweep_parameters": {}
+  "sweep_parameters": {"trajectory.path_mode": ["tumbling", "inertial"]}
 }
