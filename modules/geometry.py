@@ -3,7 +3,16 @@ import random
 from typing import List, Tuple
 from mathutils import Vector, Matrix, Quaternion
 import numpy as np
+from pathlib import Path
+import os
+import sys
+if sys.platform != "win32":
+    _old_dl_flags = sys.getdlopenflags()
+    sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
 import trimesh
+if sys.platform != "win32":
+    sys.setdlopenflags(_old_dl_flags)
+    del _old_dl_flags
 import bpy
 
 def fibonacci_sphere(n: int, radius: float = 1.0) -> List[Vector]:
@@ -140,12 +149,8 @@ def _mesh_from_scene(scene) -> trimesh.Trimesh:
 
 
 def _make_ray_intersector(mesh: trimesh.Trimesh):
-    try:
-        from trimesh.ray.ray_pyembree import RayMeshIntersector
-        return RayMeshIntersector(mesh)
-    except Exception:
-        from trimesh.ray.ray_triangle import RayMeshIntersector
-        return RayMeshIntersector(mesh)
+    from trimesh.ray.ray_triangle import RayMeshIntersector
+    return RayMeshIntersector(mesh)
 
 
 def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
