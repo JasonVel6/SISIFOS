@@ -58,16 +58,14 @@
       "glare_size": 6
     },
     "trajectory_type": "filepath",
-    "trajectory_filepath": "renders/02_17_26_2026_02_1102_tumbling/mc_trial_0/agent_0",
+    "trajectory_filepath": "renders/<timestamp>/Config_1_mc_0_RF_Hubble/Agent_0",
     "save_depth": false,
     "save_normals": false,
     "save_optical_flow": false,
     "save_segmentation": false,
     "save_obj_poses": false,
     "frame_ids": null,
-    "selected_models": [
-      "RF_Hubble"
-    ],
+    "selected_model": "RF_Hubble",
     "model_rotation_z_deg": 45.0
   },
   "sweep_parameters": {}

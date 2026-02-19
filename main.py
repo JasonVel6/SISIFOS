@@ -22,7 +22,7 @@ import numpy as np
 sys.path.append(os.getcwd())
 from modules.config import SceneConfig, SweepConfig
 from modules.renderer import BlenderRenderer
-from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, images_to_video_ffmpeg, vprint, prepare_slam_dataset
+from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, images_to_video_ffmpeg, vprint, create_image_list
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib, 
     make_fake_frame_from_frame0
@@ -30,19 +30,31 @@ from modules.trajectory.sampling_trajectory import (
 from modules.trajectory.trajectory_io import (
     get_scaled_trajectory_in_ECI,
     make_frames_from_trajectory,
-    read_camera_trajectory
+    read_camera_trajectory,
 )
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 
 DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 
-def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
+def _sanitize_folder_token(value: str) -> str:
+    token = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in value)
+    return token.strip("_") or "Unknown"
+
+def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: str) -> list[str]:
+    model_token = _sanitize_folder_token(config.selected_model)
+
     if config.trajectory_type == "trajectory_generator":
-        agent_folders = generate_trajectories_dynamical(config.trajectory, str(output_dir))
+        agent_folders = generate_trajectories_dynamical(
+            config.trajectory,
+            str(output_dir),
+            config_prefix=config_prefix,
+            model_name=model_token,
+        )
         
     elif config.trajectory_type == "sampling_trajectory":
+        agent_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
         agent_folders = write_camera_trajectory_fib(
-                str(output_dir),
+                str(agent_folder),
                 N=config.trajectory_sampling.num_frames,
                 R_LEO=config.trajectory_sampling.R_LEO,
                 R_RPO=config.trajectory_sampling.R_RPO,
@@ -58,7 +70,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path) -> list[str]:
         if not src_folder.exists() or not src_folder.is_dir():
             raise ValueError(f"Provided trajectory_filepath '{config.trajectory_filepath}' does not exist or is not a directory.")
         
-        dest_folder = output_dir
+        dest_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
         ensure_dir(dest_folder)
         for item in src_folder.iterdir():
             if item.is_file():
@@ -88,8 +100,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     frames = make_frames_from_trajectory(trajectory)
     print(f"[Session] Renders output: {renders_base_dir}/")
     
-    models = renderer.select_models_to_render()
-    vprint(f"Rendering {len(models)} models: {[m.name for m in models]}", True)
+    model = renderer.select_model_to_render()
+    vprint(f"Rendering model: {model.name}", True)
+    all_models = renderer.get_all_models()
     
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     res_x, res_y = config.camera.resolution
@@ -97,87 +110,92 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
     N_digits = max(4, int(math.log10(len(frames))) + 1)
 
-    for model in models:
-        model_folder_name = f"{model.name}"
-        model_dir = ensure_dir(renders_base_dir / model_folder_name)
-        gt_root = ensure_dir(model_dir / "GTAnnotations")
+    gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-        renderer.hide_all_except(model, models)
-        model_out_dir = model_dir / "images"
-        if str(config.setup.stars_mode).casefold() == "off":
-            if str(config.setup.earth_mode).casefold() == "off":
-                model_out_dir = model_out_dir / "Earth_Stars_OFF"
-            model_out_dir = model_out_dir / "Stars_OFF"
-        elif str(config.setup.earth_mode).casefold() == "off":
-            model_out_dir = model_out_dir / "Earth_OFF"
+    renderer.hide_all_except(model, all_models)
+    image_out_dir = renders_base_dir / "images_raw"
+    masked_out_dir = renders_base_dir / "images"
+    if str(config.setup.stars_mode).casefold() == "off":
+        if str(config.setup.earth_mode).casefold() == "off":
+            image_out_dir = image_out_dir / "Earth_Stars_OFF"
+        image_out_dir = image_out_dir / "Stars_OFF"
+    elif str(config.setup.earth_mode).casefold() == "off":
+        image_out_dir = image_out_dir / "Earth_OFF"
 
-        # Prepare GT folders
-        gt_dirs = {
-            "gt_npz": ensure_dir(gt_root / "NPZ"),
-            "gt_depth": ensure_dir(gt_root / "Depth"),
-            "gt_norm": ensure_dir(gt_root / "Normal"),
-            "gt_flow": ensure_dir(gt_root / "Flow"),
-            "gt_seg": ensure_dir(gt_root / "Seg")
-        }
-        
-        if config.model_rotation_z_deg != 0:
-            renderer.rotate_z(model, config.model_rotation_z_deg)
+    # Prepare GT folders
+    gt_dirs = {
+        "gt_npz": ensure_dir(gt_root / "NPZ"),
+        "gt_depth": ensure_dir(gt_root / "Depth"),
+        "gt_norm": ensure_dir(gt_root / "Normal"),
+        "gt_flow": ensure_dir(gt_root / "Flow"),
+        "gt_seg": ensure_dir(gt_root / "Seg")
+    }
+    
+    if config.model_rotation_z_deg != 0:
+        renderer.rotate_z(model, config.model_rotation_z_deg)
 
-        total = len(frame_ids)
-        print("Enabling blur is: ", config.setup.enable_blur)
-        
-        with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
-            for i in frame_ids:
-                fr = frames[i]
-                fake_fr2 = None
-                if str(config.setup.enable_blur).casefold()=="on":
-                    fake_fr2 = make_fake_frame_from_frame0(
-                        fr, seed=12345 + i,
-                        cam_dir_max_deg=0.6*config.setup.blur_motion_factor,
-                        cam_radius_scale_sigma=0.01*config.setup.blur_motion_factor,
-                        target_rot_max_deg=1.0*config.setup.blur_motion_factor,
-                        force_camera_lookat=True,
-                    )
+    total = len(frame_ids)
+    print("Enabling blur is: ", config.setup.enable_blur)
+    
+    with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
+        image_filenames = []
+        for i in frame_ids:
+            fr = frames[i]
+            fake_fr2 = None
+            if str(config.setup.enable_blur).casefold()=="on":
+                fake_fr2 = make_fake_frame_from_frame0(
+                    fr, seed=12345 + i,
+                    cam_dir_max_deg=0.6*config.setup.blur_motion_factor,
+                    cam_radius_scale_sigma=0.01*config.setup.blur_motion_factor,
+                    target_rot_max_deg=1.0*config.setup.blur_motion_factor,
+                    force_camera_lookat=True,
+                )
+            
                 
-                    
-                if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
-                    fps = renderer.scene.render.fps / renderer.scene.render.fps_base
-                    shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
-                    renderer.render_frame_motion_blur_traj(
-                        cam, model, sun, fr, fake_fr2, i, shutter_frames,
-                        model_out_dir, config.camera.exposure_time_s, N_digits
-                    )
-                else:
-                    renderer.render_frame_v2(
-                        cam, model, sun, fr, i, model_out_dir, config.camera.exposure_time_s,
-                        N_digits
-                    )
-                pbar.update(1)
+            if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
+                fps = renderer.scene.render.fps / renderer.scene.render.fps_base
+                shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
+                image_filename = renderer.render_frame_motion_blur_traj(
+                    cam, model, sun, fr, fake_fr2, i, shutter_frames,
+                    image_out_dir, config.camera.exposure_time_s, N_digits
+                )
+            else:
+                image_filename = renderer.render_frame_v2(
+                    cam, model, sun, fr, i, image_out_dir, config.camera.exposure_time_s,
+                    N_digits
+                )
 
-                # Post-process NPZ
-                target_dist = float(np.linalg.norm(
-                    fr["p_G_I"] - fr["p_C_I"]
-                ))
-                npz_src = Path(os.path.join(model_out_dir, f'{i:04d}.npz'))
-                if npz_src.exists():
-                    handle_gt_from_npz(
-                        npz_src,
-                        gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
-                        gt_dirs["gt_flow"], gt_dirs["gt_seg"],
-                        target_dist
-                    )
+            image_filenames.append(image_filename)
+            pbar.update(1)
 
-        # End of frames loop
-        timestamps = trajectory["t"]
-        prepare_slam_dataset(model_dir, renders_base_dir, timestamps, len(frame_ids))
+            # Post-process NPZ
+            target_dist = float(np.linalg.norm(
+                fr["p_G_I"] - fr["p_C_I"]
+            ))
+            npz_src = Path(os.path.join(image_out_dir, f'{i:04d}.npz'))
+            if npz_src.exists():
+                handle_gt_from_npz(
+                    npz_src,
+                    gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
+                    gt_dirs["gt_flow"], gt_dirs["gt_seg"],
+                    target_dist,
+                    raw_image_filename=image_filename,
+                    raw_images_dir=str(image_out_dir),
+                    masked_images_dir=str(masked_out_dir)
+                )
 
-        # Generate video from rendered frames
-        images_to_video_ffmpeg(
-            input_pattern = os.path.join(model_out_dir, "frame_%04d.png"),
-            output_path   = os.path.join(model_out_dir, "output_video.mp4"),
-            fps = 5,
-            crf = 20
-        )
+    # End of frames loop
+    timestamps = trajectory["t"].tolist()
+    image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
+    create_image_list(str(renders_base_dir), timestamps, image_paths)
+
+    # Generate video from rendered frames
+    images_to_video_ffmpeg(
+        input_pattern = os.path.join(image_out_dir, "frame_%04d.png"),
+        output_path   = os.path.join(image_out_dir, "output_video.mp4"),
+        fps = 5,
+        crf = 20
+    )
 
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
@@ -191,16 +209,15 @@ def run_sweep(sweep_config: SweepConfig):
         payload = sweep_config.model_dump()
         json.dump(payload, f, indent=2)
 
-    for i, config in enumerate(configs):
-        trial_output_dir = output_dir / f"sweep_{i+1}"
-        ensure_dir(trial_output_dir)
+    PROJECT_ROOT = Path(__file__).parent.resolve()
 
-        # Save the config used for this trail
-        with open(trial_output_dir / "config.json", 'w') as f:
+    for i, config in enumerate(configs):
+        config_prefix = f"Config_{i+1}"
+
+        # Save each expanded config at the sweep root for reproducibility.
+        with open(output_dir / f"{config_prefix}.json", 'w') as f:
             payload = config.model_dump()
             json.dump(payload, f, indent=2)
-
-            PROJECT_ROOT = Path(__file__).parent.resolve()
 
         # Ensure paths are absolute
         if not os.path.isabs(config.scene_blend_path):
@@ -211,7 +228,7 @@ def run_sweep(sweep_config: SweepConfig):
             if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
                 obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
 
-        agent_folders = generate_trajectories(config, trial_output_dir)
+        agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
         for agent_folder in agent_folders:
             run_sisfos_with_config(config, Path(agent_folder))
 

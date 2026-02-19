@@ -141,15 +141,25 @@ class BlenderRenderer:
         scale_object_by_factor(atmo,   self.config.objects["Atmo"].scale_factor)
         return cam, sun
     
-    def select_models_to_render(self) -> List[bpy.types.Object]:
-        """Get list of RF_* models to render."""
+    def select_model_to_render(self) -> bpy.types.Object:
+        """Get RF_* model to render."""
         
         models = [o for o in bpy.data.objects
                  if o.parent is None and o.name.startswith("RF_")]
-        if self.config.selected_models:
-            models = [m for m in models if m.name in self.config.selected_models]
+        selected_model = None
+        for model in models:
+            if model.name == self.config.selected_model:
+                selected_model = model
         
-        return sorted(models, key=lambda o: o.name.lower())
+        if not selected_model:
+            raise ValueError(f"Selected model '{self.config.selected_model}' not found among RF_* objects.")
+
+        return selected_model
+    
+    def get_all_models(self) -> List[bpy.types.Object]:
+        """Get all RF_* models."""
+        return [o for o in bpy.data.objects
+                 if o.parent is None and o.name.startswith("RF_")]
     
     def hide_all_except(self, target_root, all_roots):
         """Hide all models except target."""
@@ -175,7 +185,7 @@ class BlenderRenderer:
                         frame_id: int,
                         output_dir: Path,
                         exposure_time_s: float,
-                        N_digits:int) -> None:
+                        N_digits:int) -> str:
         """
         Render single frame using INERTIAL FRAME trajectory data.
         
@@ -279,6 +289,8 @@ class BlenderRenderer:
         # Restore exposure
         self.scene.view_settings.exposure = base_ev
 
+        return f"frame_{stem}.png"
+
     def render_frame_motion_blur_traj(self,cam: bpy.types.Object,
                      model: bpy.types.Object,sun:bpy.types.Object,
                      frame_dict1: Dict,  frame_dict2: Dict,
@@ -286,7 +298,7 @@ class BlenderRenderer:
                      shutter:float,
                      output_dir: Path,
                      exposure_time_s: float,
-                    N_digits:int) -> None:
+                    N_digits:int) -> str:
         clear_anim(cam)
         clear_anim(model)
         self.scene.frame_start = frame_id1
@@ -336,3 +348,5 @@ class BlenderRenderer:
         stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
         self.scene.render.filepath = str(output_dir / f"frame_{stem}")
         bpy.ops.render.render(write_still=True)
+
+        return f"frame_{stem}.png"

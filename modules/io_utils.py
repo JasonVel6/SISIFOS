@@ -33,7 +33,10 @@ def handle_gt_from_npz(
     gt_norm_dir: Path,
     gt_flow_dir: Path,
     gt_seg_dir: Path,
-    target_dist: float
+    target_dist: float,
+    raw_image_filename: str,
+    raw_images_dir: str,
+    masked_images_dir: str
 ):
     
     npz_src = Path(npz_src)
@@ -90,66 +93,26 @@ def handle_gt_from_npz(
         seg = data["segmentation_masks"]
         plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
 
-def prepare_slam_dataset(traj_root, traj_path, timestamps, num_frames):
+    # Create masked images
+    ensure_dir(Path(masked_images_dir))
+    rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
+    rendered_img = plt.imread(rendered_img_path)
+    masked_img = np.zeros_like(rendered_img)
+    masked_img[near_mask] = rendered_img[near_mask]
+    masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
+    plt.imsave(masked_img_path, masked_img)
+
+def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     """
-    Prepare the rendered output for SLAM pipeline consumption.
-
-    This function performs the post-processing that was previously done by run_ue5.py:
-    1. Creates imgList.txt with timestamp-image pairs
-    2. Copies gtValues.txt and other source files to the render output
-
-    Note: imgList.txt always references images/ folder, which contains:
-    - Raw renders (when masking disabled)
-    - Masked images with Earth/stars removed (when masking enabled)
-    When masking is enabled, raw renders are in images_raw/.
-
-    Parameters:
-    -----------
-    traj_root : str
-        Root directory of the rendered output (e.g., renders/1203_Tumbling_mc0_cro_agent0_2024_...)
-    traj_path : str
-        Source trajectory folder path (contains gtValues.txt, Config.yaml, etc.)
-    timestamps : array-like
-        Timestamps for each frame
-    num_frames : int
-        Number of frames rendered
+    Create imgList.txt with timestamp-image pairs.
     """
-    print("\n" + "="*60)
-    print("PREPARING SLAM DATASET")
-    print("="*60)
-
-    images_dir = os.path.join(traj_root, "images")
-
-    # Create imgList.txt
-    imglist_path = os.path.join(traj_root, "imgList.txt")
+    imglist_path = os.path.join(renders_base_dir, "imgList.txt")
     with open(imglist_path, "w") as f:
-        for i in range(num_frames):
-            ts = timestamps[i] if i < len(timestamps) else i * 1.0
-            f.write(f"{ts:.6f} images/img_{i:04d}.png\n")
+        for i in range(len(timestamps)):
+            ts = timestamps[i]
+            f.write(f"{ts:.6f} {image_paths[i]}\n")
     print(f"  Created: {imglist_path}")
-
-    # Copy source files from trajectory folder to render output
-    files_to_copy = [
-        "gtValues.txt",
-        "Config.yaml",
-        "sensormeasurements.txt",
-        "camera_traj.csv",
-    ]
-
-    for filename in files_to_copy:
-        src = os.path.join(traj_path, filename)
-        dst = os.path.join(traj_root, filename)
-        if os.path.exists(src):
-            shutil.copy2(src, dst)
-            print(f"  Copied: {filename}")
-        else:
-            print(f"  [WARN] Not found: {filename}")
-
-    print("\n  SLAM dataset preparation complete!")
-    print(f"  Output directory ready for SLAM: {traj_root}")
-    print("="*60 + "\n")
-
-    return images_dir, imglist_path
+    return imglist_path
 
 def images_to_video_ffmpeg(
     input_pattern,

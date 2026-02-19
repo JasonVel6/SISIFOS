@@ -177,7 +177,7 @@ class SceneConfig(BaseModel):
     
     # Rendering control
     frame_ids: Optional[List[int]] = None  # If None, use all frames
-    selected_models: List[str] = Field(default_factory=list)  # Empty = render all RF_* models
+    selected_model: str = "RF_Hubble"
     model_rotation_z_deg: float = 45.0  # Apply initial Z rotation, will be extended to X,Y
 
 

@@ -75,7 +75,12 @@ DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
 # ============================================================================
 # MAIN Function
 # ============================================================================
-def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: str) -> list[str]:
+def generate_trajectories_dynamical(
+    config: TrajectoryConfig,
+    base_output_file: str,
+    config_prefix: str = "Config_1",
+    model_name: str = "",
+) -> list[str]:
     # Initialize random seeds for reproducibility
     if config.seed is not None:
         master_seed = config.seed
@@ -516,7 +521,7 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
     # Ensure the file exists
     os.makedirs(base_output_file, exist_ok=True)
     # Write the trajectory config for this run
-    trajectory_config_filepath = os.path.join(base_output_file, "trajectory_config.json")
+    trajectory_config_filepath = os.path.join(base_output_file, f"{config_prefix}_trajectory.json")
     with open(trajectory_config_filepath, 'w') as f:
         payload = config.model_dump()
         json.dump(payload, f, indent=2)
@@ -526,7 +531,13 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
     camera_obj = {"focal_length": config.FOCAL_LENGTH_PX, "resolution": config.CAMERA_RESOLUTION, "lens_flare": config.LENS_FLARE} # We prob dont need to do this and can just pass a config
 
     for mc_trial in range(config.num_mc):
-        mc_folder = os.path.join(base_output_file, f"mc_trial_{mc_trial}")
+        if config.num_mc > 1:
+            folder_name = f"{config_prefix}_mc_{mc_trial}"
+        else:
+            folder_name = f"{config_prefix}"
+        if model_name:
+            folder_name += f"_{model_name}"
+        mc_folder = os.path.join(base_output_file, folder_name)
         os.makedirs(mc_folder, exist_ok=True)
 
         # Select the monte carlo trial
@@ -579,7 +590,7 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
             f_specific_S_m_mc_ag = f_specific_S_m_mc[agent_idx]
             tau_specific_S_mc_ag = tau_specific_S_mc[agent_idx]
 
-            agent_folder = os.path.join(mc_folder, f"agent_{agent_idx}")
+            agent_folder = os.path.join(mc_folder, f"Agent_{agent_idx}")
             os.makedirs(agent_folder, exist_ok=True)
             agent_folders.append(agent_folder)
 
@@ -622,7 +633,6 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 state_C_I=state_C_I_mc_ag
             )
 
-            write_json(output_dir=agent_folder, gtvalues_filepath=gtvalues_filepath, camera_obj=camera_obj, tstep_eff=tstep_eff, tend=config.tend)
 
             write_sensormeasurements(output_dir=agent_folder,
                                         nbSteps=nbSteps,
