@@ -59,7 +59,7 @@ from modules.trajectory.motion_cases import (
 from modules.trajectory.trajectory_math import (
     au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
     sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
-    _seed_right, _lookat_continuous_RGS, _quat_hemi_continuous, enforce_quat_series_continuity,
+    _seed_right, _lookat_continuous, _quat_hemi_continuous, enforce_quat_series_continuity,
     calcInitCondChaser
 )
 from modules.trajectory.plot_figure import plot_trial_trajectories, generate_scene_plots
@@ -369,7 +369,7 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
 
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents
-        q_GC_prev = [None] * config.num_agents
+        q_IC_prev = [None] * config.num_agents
 
         for j in range(nbSteps):
             q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
@@ -404,22 +404,20 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 v_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_vI - np.cross(omega_GI_G[mc_trial, j], r_AG_G)
                 dr_CG_G[mc_trial, agent_idx, j] = v_CG_G[mc_trial, agent_idx, j] - np.cross(omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j])
 
-                fwd_G = -r_CG_G[mc_trial, agent_idx, j]
-                Rgs, x_right_prev[agent_idx] = _lookat_continuous_RGS(
-                    fwd_G=fwd_G,
-                    world_up_G=np.array([0.0, 0.0, 1.0]),
+                fwd_I = r_GO_I[mc_trial, j] - state_C_I[mc_trial, agent_idx, j, 0:3]
+                R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
+                    fwd_I=fwd_I,
+                    world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev[agent_idx],
                     cos_thr=0.9995,
                     sin_thr=0.03
                 )
-                R_GC[mc_trial, agent_idx, j] = Rgs
+                q_raw = R2q(R_IC[mc_trial, agent_idx, j])
+                q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
+                q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
 
-                q_raw = R2q(R_GC[mc_trial, agent_idx, j])
-                q_GC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_GC_prev[agent_idx])
-                q_GC_prev[agent_idx] = q_GC[mc_trial, agent_idx, j]
-
-                R_IC[mc_trial, agent_idx, j] = R_IG[mc_trial, j] @ R_GC[mc_trial, agent_idx, j]
-                q_IC[mc_trial, agent_idx, j] = R2q(R_IC[mc_trial, agent_idx, j])
+                R_GC[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ R_IC[mc_trial, agent_idx, j]
+                q_GC[mc_trial, agent_idx, j] = R2q(R_GC[mc_trial, agent_idx, j])
 
                 R_IC_m[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j] @ expm(sk(eta[agent_idx, j]))
                 q_IC_m[mc_trial, agent_idx, j] = R2q(R_IC_m[mc_trial, agent_idx, j])
@@ -655,8 +653,10 @@ def generate_trajectories_dynamical(config: TrajectoryConfig, base_output_file: 
                 p_G_I=r_GO_I_mc,
                 sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
                 sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                timestamps=timestamps,
                 r_CG_arr=r_CG_G_mc_ag,
-                q_IG_arr=q_IG_mc)
+                q_IG_arr=q_IG_mc,
+                q_IC_arr=q_IC_mc_ag)
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {config.seed}")

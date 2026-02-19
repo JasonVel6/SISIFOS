@@ -99,11 +99,11 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     for model in models:
         model_folder_name = f"{model.name}"
-        model_out_dir = ensure_dir(renders_base_dir / model_folder_name)
-        gt_root = ensure_dir(model_out_dir / "GTAnnotations")
+        model_dir = ensure_dir(renders_base_dir / model_folder_name)
+        gt_root = ensure_dir(model_dir / "GTAnnotations")
 
         renderer.hide_all_except(model, models)
-        model_out_dir = model_out_dir / "FULL"
+        model_out_dir = model_dir / "images"
         if str(config.setup.stars_mode).casefold() == "off":
             if str(config.setup.earth_mode).casefold() == "off":
                 model_out_dir = model_out_dir / "Earth_Stars_OFF"
@@ -169,7 +169,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
         # End of frames loop
         timestamps = trajectory["t"]
-        prepare_slam_dataset(model_out_dir, renders_base_dir, timestamps, len(frame_ids))
+        prepare_slam_dataset(model_dir, renders_base_dir, timestamps, len(frame_ids))
 
         # Generate video from rendered frames
         images_to_video_ffmpeg(

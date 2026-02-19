@@ -346,9 +346,9 @@ def _seed_right(f):
     return x / (np.linalg.norm(x) + 1e-12)
 
 
-def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
+def _lookat_continuous(fwd_I, world_up_I, x_prev=None,
                            cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
-    f = fwd_G / (np.linalg.norm(fwd_G) + 1e-12)
+    f = fwd_I / (np.linalg.norm(fwd_I) + 1e-12)
 
     use_prev = (x_prev is not None)
     x_proj = None
@@ -358,9 +358,9 @@ def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
         x_proj = x_prev - f * (f @ x_prev)
         n_proj = np.linalg.norm(x_proj)
 
-    x_up = np.cross(world_up_G, f)
+    x_up = np.cross(world_up_I, f)
     n_up = np.linalg.norm(x_up)
-    near_sing = (abs(f @ world_up_G) > cos_thr) or (n_up < sin_thr)
+    near_sing = (abs(f @ world_up_I) > cos_thr) or (n_up < sin_thr)
 
     if use_prev and n_proj > eps:
         x = x_proj / n_proj
@@ -370,8 +370,8 @@ def _lookat_continuous_RGS(fwd_G, world_up_G, x_prev=None,
         x = _seed_right(f)
 
     y = np.cross(f, x)
-    R_GS = np.column_stack((x, y, f))
-    return R_GS, x
+    R= np.column_stack((x, y, f))
+    return R, x
 
 
 def _quat_hemi_continuous(q, q_prev):

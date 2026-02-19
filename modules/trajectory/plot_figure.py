@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib import animation
+from matplotlib.lines import Line2D
 from scipy.spatial.transform import Rotation
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for Blender
@@ -521,17 +522,139 @@ def plot_scene_frame(frame_idx, camera_loc, target_loc, sun_dir_I,
     plt.close(fig)
     return frame_rgb
 
+def plot_relative_pose_frame(
+    frame_idx: int,
+    timestamp_s: float,
+    p_cg_i: np.ndarray,
+    q_ig_wxyz: np.ndarray,
+    q_ic_wxyz: np.ndarray,
+    axis_length: float,
+    plot_lim: float,
+):
+    """
+    Plot q_I_G and q_I_C axes in I, with G at origin and C at p_CG_I.
+    Returns rendered RGB frame for video assembly.
+    """
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.set_xlim(-plot_lim, plot_lim)
+    ax.set_ylim(-plot_lim, plot_lim)
+    ax.set_zlim(-plot_lim, plot_lim)
+    ax.set_xlabel("I_x")
+    ax.set_ylabel("I_y")
+    ax.set_zlabel("I_z")
+    ax.set_title("Relative Pose in I: q_I_G and q_I_C")
+    ax.set_box_aspect((1, 1, 1))
+    ax.grid(True, alpha=0.2)
+
+    # Centers and connector
+    ax.plot([0.0], [0.0], [0.0], "ko", markersize=5)
+    ax.plot([p_cg_i[0]], [p_cg_i[1]], [p_cg_i[2]], "mo", markersize=5)
+    ax.plot([0.0, p_cg_i[0]], [0.0, p_cg_i[1]], [0.0, p_cg_i[2]], "k--", linewidth=1.4)
+
+    # Build rotations from wxyz -> xyzw
+    r_ig = Rotation.from_quat([q_ig_wxyz[1], q_ig_wxyz[2], q_ig_wxyz[3], q_ig_wxyz[0]])
+    r_ic = Rotation.from_quat([q_ic_wxyz[1], q_ic_wxyz[2], q_ic_wxyz[3], q_ic_wxyz[0]])
+
+    g_basis = r_ig.apply(np.eye(3)) * axis_length
+    c_basis = r_ic.apply(np.eye(3)) * axis_length
+
+    g_colors = ("r", "g", "b")
+    c_colors = ("#ff7f0e", "#2ca02c", "#17becf")
+    for vec, color in zip(g_basis, g_colors):
+        ax.quiver(
+            0.0, 0.0, 0.0,
+            vec[0], vec[1], vec[2],
+            color=color, linewidth=2.2, arrow_length_ratio=0.15
+        )
+    for vec, color in zip(c_basis, c_colors):
+        ax.quiver(
+            p_cg_i[0], p_cg_i[1], p_cg_i[2],
+            vec[0], vec[1], vec[2],
+            color=color, linewidth=2.0, arrow_length_ratio=0.15, alpha=0.9
+        )
+
+    handles = [
+        Line2D([0], [0], color="r", lw=2.2, label="G x-axis"),
+        Line2D([0], [0], color="g", lw=2.2, label="G y-axis"),
+        Line2D([0], [0], color="b", lw=2.2, label="G z-axis"),
+        Line2D([0], [0], color="#ff7f0e", lw=2.0, label="C x-axis"),
+        Line2D([0], [0], color="#2ca02c", lw=2.0, label="C y-axis"),
+        Line2D([0], [0], color="#17becf", lw=2.0, label="C z-axis"),
+        Line2D([0], [0], marker="o", color="k", lw=0, markersize=6, label="G center"),
+        Line2D([0], [0], marker="o", color="m", lw=0, markersize=6, label="C center"),
+        Line2D([0], [0], color="k", lw=1.4, linestyle="--", label="G->C"),
+    ]
+    ax.legend(handles=handles, loc="upper right", fontsize=8)
+
+    ax.text2D(
+        0.02,
+        0.95,
+        f"frame={frame_idx}   t={timestamp_s:.3f}s   |p_CG_I|={np.linalg.norm(p_cg_i):.3f}",
+        transform=ax.transAxes,
+    )
+
+    plt.tight_layout()
+    fig.canvas.draw()
+    frame_rgb = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
+    plt.close(fig)
+    return frame_rgb
+
+def _save_animation_from_frames(
+    rendered_frames,
+    rendered_indices,
+    video_path,
+    gif_path,
+    title_prefix="Frame",
+    figsize=(16, 5),
+    fps=10,
+):
+    """Save MP4 (or GIF fallback) from pre-rendered RGB frames."""
+    if not rendered_frames:
+        return None
+
+    anim_fig, anim_ax = plt.subplots(figsize=figsize)
+    anim_ax.axis("off")
+    image_artist = anim_ax.imshow(rendered_frames[0])
+
+    def _update(k):
+        image_artist.set_data(rendered_frames[k])
+        anim_ax.set_title(f"{title_prefix} {rendered_indices[k]}")
+        return [image_artist]
+
+    anim = animation.FuncAnimation(
+        anim_fig,
+        _update,
+        frames=len(rendered_frames),
+        interval=100,
+        blit=True,
+    )
+    if animation.writers.is_available("ffmpeg"):
+        anim.save(video_path, writer=animation.FFMpegWriter(fps=fps))
+        out_path = video_path
+    else:
+        print("  ffmpeg not found. Saving GIF instead.")
+        anim.save(gif_path, writer=animation.PillowWriter(fps=fps))
+        out_path = gif_path
+    plt.close(anim_fig)
+    return out_path
+
 def generate_scene_plots(output_dir: str,
                             p_C_I: np.ndarray,
                             p_G_I: np.ndarray,
                             sun_az_I: np.ndarray,
                             sun_el_I: np.ndarray,
+                            timestamps: np.ndarray,
                             r_CG_arr: np.ndarray,
                             q_IG_arr: np.ndarray,
+                            q_IC_arr: np.ndarray,
                             every_n_frames=1,
                             max_frames=None):
     """
-    Generate 3D scene plots for multiple frames in the INERTIAL FRAME.
+    Generate two plot sets for multiple frames in the INERTIAL FRAME:
+    1) Existing world/lighting scene plots.
+    2) Relative-pose plots with q_I_G and q_I_C axes, with G at origin and C at p_CG_I.
 
     Scene setup:
     - Earth is at origin (0, 0, 0) in inertial frame
@@ -552,10 +675,14 @@ def generate_scene_plots(output_dir: str,
         Sun azimuth angles (degrees) per frame - frame 0 used for static sun
     sun_el_I : array-like (N,)
         Sun elevation angles (degrees) per frame - frame 0 used for static sun
+    timestamps : array-like (N,)
+        Frame timestamps in seconds
     r_CG_arr : array-like (N, 3)
         Camera position in G frame (body frame) per frame
     q_IG_arr : array-like (N, 4)
         Quaternion [w, x, y, z] from Inertial to Body (G) frame per frame
+    q_IC_arr : array-like (N, 4)
+        Quaternion [w, x, y, z] from Inertial to Camera (C) frame per frame
     every_n_frames : int
         Generate plot every N frames (1 = every frame)
     max_frames : int or None
@@ -566,8 +693,10 @@ def generate_scene_plots(output_dir: str,
         len(p_G_I),
         len(sun_az_I),
         len(sun_el_I),
+        len(timestamps),
         len(r_CG_arr),
         len(q_IG_arr),
+        len(q_IC_arr),
     )
 
     if max_frames is not None:
@@ -586,16 +715,26 @@ def generate_scene_plots(output_dir: str,
         np.sin(el0_rad)
     ])
 
-    scene_dir = os.path.join(output_dir, "ScenePlots")
+    scene_root = os.path.join(output_dir, "ScenePlots")
+    scene_dir = os.path.join(scene_root, "WorldScene")
+    pose_dir = os.path.join(scene_root, "RelativePose")
     os.makedirs(scene_dir, exist_ok=True)
+    os.makedirs(pose_dir, exist_ok=True)
 
-    print(f"\n=== Generating scene plots to {scene_dir} ===")
+    print(f"\n=== Generating scene plots to {scene_root} ===")
     print(f"    Earth: at origin (0,0,0)")
     print(f"    Sun: STATIC in inertial frame (from frame 0: az={sun_az_I[0]:.1f}° el={sun_el_I[0]:.1f}°)")
     print(f"    Target: tumbling via q_IG")
     print(f"    Lighting: sun transformed to body frame, compared with camera direction")
 
-    rendered_frames = []
+    # Relative pose plot sizing (slightly zoomed in vs full bounds).
+    p_cg_i_all = p_C_I[:n_frames] - p_G_I[:n_frames]
+    max_pcg_dist = float(np.max(np.linalg.norm(p_cg_i_all, axis=1))) if n_frames > 0 else 1.0
+    axis_length = max(0.15 * max_pcg_dist, 1.0)
+    pose_plot_lim = max(max_pcg_dist * 0.85 + axis_length * 0.8, axis_length * 2.0)
+
+    rendered_scene_frames = []
+    rendered_pose_frames = []
     rendered_indices = []
     for i in range(0, n_frames, every_n_frames):
         # Get rotation from Inertial to Body frame at this timestep
@@ -623,41 +762,50 @@ def generate_scene_plots(output_dir: str,
             sun_el_deg=sun_el_I[0],
             sun_cam_angle_G=sun_cam_angle_body  # Accurate angle accounting for tumbling
         )
-        frame_path = os.path.join(scene_dir, f"scene_{i:04d}.png")
-        plt.imsave(frame_path, frame_rgb)
-        rendered_frames.append(frame_rgb)
+        scene_frame_path = os.path.join(scene_dir, f"scene_{i:04d}.png")
+        plt.imsave(scene_frame_path, frame_rgb)
+        rendered_scene_frames.append(frame_rgb)
+
+        pose_rgb = plot_relative_pose_frame(
+            frame_idx=i,
+            timestamp_s=float(timestamps[i]),
+            p_cg_i=p_cg_i_all[i],
+            q_ig_wxyz=q_IG_arr[i],
+            q_ic_wxyz=q_IC_arr[i],
+            axis_length=axis_length,
+            plot_lim=pose_plot_lim,
+        )
+        pose_frame_path = os.path.join(pose_dir, f"relative_pose_{i:04d}.png")
+        plt.imsave(pose_frame_path, pose_rgb)
+        rendered_pose_frames.append(pose_rgb)
         rendered_indices.append(i)
 
         if i % 50 == 0:
             print(f"  Generated scene plot for frame {i}/{n_frames}")
 
-    if rendered_frames:
-        anim_fig, anim_ax = plt.subplots(figsize=(16, 5))
-        anim_ax.axis("off")
-        image_artist = anim_ax.imshow(rendered_frames[0])
+    scene_video = _save_animation_from_frames(
+        rendered_frames=rendered_scene_frames,
+        rendered_indices=rendered_indices,
+        video_path=os.path.join(output_dir, "scene_animation.mp4"),
+        gif_path=os.path.join(output_dir, "scene_animation.gif"),
+        title_prefix="Scene frame",
+        figsize=(16, 5),
+        fps=10,
+    )
+    if scene_video:
+        print(f"  Scene animation saved to: {scene_video}")
 
-        def _update(k):
-            image_artist.set_data(rendered_frames[k])
-            anim_ax.set_title(f"Scene frame {rendered_indices[k]}")
-            return [image_artist]
+    pose_video = _save_animation_from_frames(
+        rendered_frames=rendered_pose_frames,
+        rendered_indices=rendered_indices,
+        video_path=os.path.join(output_dir, "relative_pose_animation.mp4"),
+        gif_path=os.path.join(output_dir, "relative_pose_animation.gif"),
+        title_prefix="Relative pose frame",
+        figsize=(8, 8),
+        fps=10,
+    )
+    if pose_video:
+        print(f"  Relative-pose animation saved to: {pose_video}")
 
-        anim = animation.FuncAnimation(
-            anim_fig,
-            _update,
-            frames=len(rendered_frames),
-            interval=100,
-            blit=True,
-        )
-        video_path = os.path.join(output_dir, "scene_animation.mp4")
-        gif_path = os.path.join(output_dir, "scene_animation.gif")
-        if animation.writers.is_available("ffmpeg"):
-            anim.save(video_path, writer=animation.FFMpegWriter(fps=10))
-            print(f"  Scene animation saved to: {video_path}")
-        else:
-            print("  ffmpeg not found. Saving GIF instead.")
-            anim.save(gif_path, writer=animation.PillowWriter(fps=10))
-            print(f"  Scene animation saved to: {gif_path}")
-        plt.close(anim_fig)
-
-    print(f"  Scene plots saved to: {scene_dir}")
-    return scene_dir
+    print(f"  Scene plots saved to: {scene_root}")
+    return scene_root
