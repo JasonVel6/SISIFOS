@@ -126,6 +126,7 @@ class BlenderRenderer:
         cam = bpy.data.objects.get("Camera")
         cam.rotation_mode = 'QUATERNION'
         cam.data.lens = self.config.camera.focal_length
+        cam.data.sensor_width = self.config.camera.sensor_width
         cam.data.clip_start = self.config.camera.clip_start
         cam.data.clip_end = self.config.camera.clip_end
         
@@ -136,20 +137,30 @@ class BlenderRenderer:
         sun = bpy.data.objects["Sun"]  # or create one
         bpy.context.view_layer.update()
         sun.data.energy = 10.0
-        scale_object_by_factor(earth,  10)
-        scale_object_by_factor(clouds, 10)
-        scale_object_by_factor(atmo,   10)
+        scale_object_by_factor(earth,  self.config.objects["Earth"].scale_factor)
+        scale_object_by_factor(clouds,  self.config.objects["Clouds"].scale_factor)
+        scale_object_by_factor(atmo,   self.config.objects["Atmo"].scale_factor)
         return cam, sun
     
-    def select_models_to_render(self) -> List[bpy.types.Object]:
-        """Get list of RF_* models to render."""
+    def select_model_to_render(self) -> bpy.types.Object:
+        """Get RF_* model to render."""
         
         models = [o for o in bpy.data.objects
                  if o.parent is None and o.name.startswith("RF_")]
-        if self.config.selected_models:
-            models = [m for m in models if m.name in self.config.selected_models]
+        selected_model = None
+        for model in models:
+            if model.name == self.config.selected_model:
+                selected_model = model
         
-        return sorted(models, key=lambda o: o.name.lower())
+        if not selected_model:
+            raise ValueError(f"Selected model '{self.config.selected_model}' not found among RF_* objects.")
+
+        return selected_model
+    
+    def get_all_models(self) -> List[bpy.types.Object]:
+        """Get all RF_* models."""
+        return [o for o in bpy.data.objects
+                 if o.parent is None and o.name.startswith("RF_")]
     
     def hide_all_except(self, target_root, all_roots):
         """Hide all models except target."""
@@ -175,10 +186,7 @@ class BlenderRenderer:
                         frame_id: int,
                         output_dir: Path,
                         exposure_time_s: float,
-                        azel: Dict,
-                        sun_key: str,
-                        N_azel_keys:int,
-                        N_digits:int) -> None:
+                        N_digits:int) -> str:
         """
         Render single frame using INERTIAL FRAME trajectory data.
         
@@ -198,8 +206,8 @@ class BlenderRenderer:
         q_I_G = frame_dict["q_I_G"]
         p_C_I = frame_dict["p_C_I"]
         q_I_C = frame_dict["q_I_C"]
-        sun_az = azel["sun_az_deg"]
-        sun_el = azel["sun_el_deg"]
+        sun_az = frame_dict["sun_az"]
+        sun_el = frame_dict["sun_el"]
         
         # Apply poses
         model.rotation_mode = "QUATERNION"
@@ -272,9 +280,8 @@ class BlenderRenderer:
         
         # Render
         #exp_tag = f"{int(round(exposure_time_s * 1e6)):08d}us"
-        sun_tag = f"sun_{str(sun_key).zfill(N_azel_keys)}"
         #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id).zfill(N_digits)}_{sun_tag}"
+        stem = f"{str(frame_id).zfill(N_digits)}"
         
         self.scene.render.filepath = str(output_dir / f"frame_{stem}")
         self.scene.frame_set(frame_id)
@@ -283,6 +290,8 @@ class BlenderRenderer:
         # Restore exposure
         self.scene.view_settings.exposure = base_ev
 
+        return f"frame_{stem}.png"
+
     def render_frame_motion_blur_traj(self,cam: bpy.types.Object,
                      model: bpy.types.Object,sun:bpy.types.Object,
                      frame_dict1: Dict,  frame_dict2: Dict,
@@ -290,17 +299,14 @@ class BlenderRenderer:
                      shutter:float,
                      output_dir: Path,
                      exposure_time_s: float,
-                     azel: Dict,
-                    sun_key: str,
-                    N_azel_keys:int,
-                    N_digits:int) -> None:
+                    N_digits:int) -> str:
         clear_anim(cam)
         clear_anim(model)
         self.scene.frame_start = frame_id1
         self.scene.frame_end = frame_id1+1
         self.scene.frame_set(frame_id1)
-        sun_az = azel["sun_az_deg"]
-        sun_el = azel["sun_el_deg"]
+        sun_az = frame_dict1["sun_az"]
+        sun_el = frame_dict1["sun_el"]
         set_sun_direction(sun, sun_az, sun_el)
         bpy.context.view_layer.update()
         base_ev = self.scene.view_settings.exposure
@@ -339,8 +345,9 @@ class BlenderRenderer:
             cy.motion_blur_position = 'START'  
         self.scene.frame_set(frame_id1)
         bpy.context.view_layer.update()
-        sun_tag = f"sun_{str(sun_key).zfill(N_azel_keys)}"
         #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id1).zfill(N_digits)}_{sun_tag}_blurred"
+        stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
         self.scene.render.filepath = str(output_dir / f"frame_{stem}")
         bpy.ops.render.render(write_still=True)
+
+        return f"frame_{stem}.png"
