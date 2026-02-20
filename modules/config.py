@@ -78,10 +78,21 @@ class TrajectoryConfig(BaseModel):
     num_mc: int = 1
 
     r_AG_G: List[float] = Field(default_factory=lambda: [0.1, 0.05, 0.15])
-    # Sensor noise (ASTRO APS3 star tracker and Astrix NS IMU at 10 Hz)
-    sigma_Rxy_aps3: float = 0.8 * (np.pi / 180) / 3600  # rad (0.8 arcsec)
-    sigma_Rz_aps3: float = 7.0 * (np.pi / 180) / 3600   # rad (7.0 arcsec)
-    sigma_omega: float = np.deg2rad(0.0025 / 60.0) * np.sqrt(10.0 / 2.0)
+    
+    # Sensor noise
+    # ASTRO APS3 star tracker (Jena-Optronik)
+    # https://www.jena-optronik.de/products/star-sensors/astro-aps3.html
+    # Datasheet does not provide axis breakdown; we model
+    # lower cross-boresight noise and conservative roll degradation.
+    sigma_Rxy_aps3: float = 0.8 * (np.pi / 180) / 3600.0  # rad
+    sigma_Rz_aps3: float = 7.0 * (np.pi / 180) / 3600.0  # rad
+
+    # IMU Gyroscope ARW noise (Astrix NS IMU, Exail Astrix Series)
+    # https://www.exail.com/product-range/astrix-series
+    # Converted to rad/s and scaled for 10 Hz measurements:
+    sigma_omega: float = np.deg2rad(0.0025/60.0) * np.sqrt(10.0/2.0)
+    # Accelerometer noise is less often published in detail for space IMUs;
+    # using a nominal value based on typical performance.
     sigma_accel: float = 10.0 * 1e-6 * 9.80665 * np.sqrt(10.0 / 2.0)
     MEAN_DEFAULT: List[float] = [0.0, 0.0, 0.0]
     # Bias models
