@@ -71,7 +71,7 @@ class TrajectoryConfig(BaseModel):
     num_agents: int = 1
     num_mc: int = 1
 
-    r_AG_G: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    r_AG_G: List[float] = Field(default_factory=lambda: [0.1, 0.05, 0.15])
     # Sensor noise (ASTRO APS3 star tracker and Astrix NS IMU at 10 Hz)
     sigma_Rxy_aps3: float = 0.8 * (np.pi / 180) / 3600  # rad (0.8 arcsec)
     sigma_Rz_aps3: float = 7.0 * (np.pi / 180) / 3600   # rad (7.0 arcsec)

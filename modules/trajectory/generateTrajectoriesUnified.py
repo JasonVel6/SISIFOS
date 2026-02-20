@@ -121,7 +121,7 @@ def generate_trajectories_dynamical(
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
             rngs_mc=rngs_mc, focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=1.0, rho_max=0.95, R0_const=config.R0_const,
+            px_min=1.0 * config.IMAGE_MAX_DT_S, rho_max=0.95, R0_const=config.R0_const,
             omega_min_deg=3.0, omega_max_deg=5.0,
             J=config.J, min_asymmetry_component=0.4
         )
