@@ -106,7 +106,7 @@ Where:
 After activating the environment, run the simulator from the root of the repo:
 
 ```powershell
-$BLENDER -b -P main.py -- --sweep_config_path configs/examples/example_trajectory_generation.json
+blender -b -P main.py -- --sweep_config_path configs/examples/example_trajectory_generation.json
 ```
 
 Outputs, unless modified in the code, go to:
