@@ -191,12 +191,12 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 
     # Generate video from rendered frames
-    images_to_video_ffmpeg(
-        input_pattern = os.path.join(image_out_dir, "frame_%04d.png"),
-        output_path   = os.path.join(image_out_dir, "output_video.mp4"),
-        fps = 5,
-        crf = 20
-    )
+    # images_to_video_ffmpeg(
+    #     input_pattern = os.path.join(image_out_dir, "frame_%04d.png"),
+    #     output_path   = os.path.join(image_out_dir, "output_video.mp4"),
+    #     fps = 5,
+    #     crf = 20
+    # )
 
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
