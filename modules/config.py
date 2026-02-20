@@ -22,12 +22,18 @@ class ObjectConfig(BaseModel):
 
 class CameraConfig(BaseModel):
     """Camera properties"""
-    focal_length: float = 400.0
+    focal_length: float = 400.0  # TODO auto-compute from R0_const, target size, and desired fill fraction
+    sensor_width: float = 36.0  # mm (matches Blender default)
     clip_start: float = 0.00001
     clip_end: float = 5000000.0
     resolution: Tuple[int, int] = (480, 480)
-    lens_flare: float = 0.01 # TODO see if we really need this because it is only used in the trajectory generator
-    exposure_time_s: float = 1.0/60.0 # TODO resolve this exposure time being in multiple places and not being used in the renderer, should be unified and used in both places
+    lens_flare: float = 0.01
+    exposure_time_s: float = 1.0/60.0
+
+    @property
+    def focal_length_px(self) -> float:
+        """Pixel focal length derived from mm focal length, sensor width, and resolution."""
+        return self.focal_length / self.sensor_width * self.resolution[0]
 
 
 class RenderConfig(BaseModel):
@@ -71,7 +77,7 @@ class TrajectoryConfig(BaseModel):
     num_agents: int = 1
     num_mc: int = 1
 
-    r_AG_G: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    r_AG_G: List[float] = Field(default_factory=lambda: [0.1, 0.05, 0.15])
     # Sensor noise (ASTRO APS3 star tracker and Astrix NS IMU at 10 Hz)
     sigma_Rxy_aps3: float = 0.8 * (np.pi / 180) / 3600  # rad (0.8 arcsec)
     sigma_Rz_aps3: float = 7.0 * (np.pi / 180) / 3600   # rad (7.0 arcsec)
@@ -109,11 +115,6 @@ class TrajectoryConfig(BaseModel):
     w: float = 3.2
     h: float = 2.8
 
-    # Trajectory generation camera params
-    # TODO these should be unified with the CameraConfig for single source of truth
-    FOCAL_LENGTH_PX: float = 2500.0
-    CAMERA_RESOLUTION: int = 1024
-    LENS_FLARE: float = 0.01
 
     @property
     def a_ref(self) -> float:

@@ -50,7 +50,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import (TrajectoryConfig)
+from modules.config import (TrajectoryConfig, CameraConfig)
 from modules.trajectory.motion_cases import (
     init_inertial, init_hill, init_tumbling,
     validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
@@ -64,7 +64,7 @@ from modules.trajectory.trajectory_math import (
 )
 from modules.trajectory.plot_figure import plot_trial_trajectories, generate_scene_plots
 from modules.trajectory.trajectory_io import (write_camera_trajectory, 
-    write_gtvalues, write_json, write_config, write_sensormeasurements)
+    write_gtvalues, write_config, write_sensormeasurements)
 
 # ---------------- Paths ----------------
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -80,7 +80,11 @@ def generate_trajectories_dynamical(
     base_output_file: str,
     config_prefix: str = "Config_1",
     model_name: str = "",
+    camera_config: CameraConfig = None,
 ) -> list[str]:
+    if camera_config is None:
+        camera_config = CameraConfig()
+
     # Initialize random seeds for reproducibility
     if config.seed is not None:
         master_seed = config.seed
@@ -101,7 +105,7 @@ def generate_trajectories_dynamical(
         print("  Inertial mode (CRO trajectory)")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_inertial(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
+            focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED, rho_max=0.90, R0_const=config.R0_const,
             variant="cro", rngs_mc=rngs_mc
         )
@@ -109,7 +113,7 @@ def generate_trajectories_dynamical(
         print("  Hill mode")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_hill(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
+            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED, rho_max=0.90
         )
     elif config.rotMode_Gframe == "3":
@@ -120,8 +124,8 @@ def generate_trajectories_dynamical(
         # inertia poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0.
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=1.0, rho_max=0.95, R0_const=config.R0_const,
+            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
+            px_min=1.0 * config.IMAGE_MAX_DT_S, rho_max=0.95, R0_const=config.R0_const,
             omega_min_deg=3.0, omega_max_deg=5.0,
             J=config.J, min_asymmetry_component=0.4
         )
@@ -231,9 +235,9 @@ def generate_trajectories_dynamical(
     H_GI_I = np.zeros((config.num_mc, nbSteps, 3))
 
 
-    # Disturbances
-    eta = np.random.multivariate_normal(config.MEAN_DEFAULT, config.COV_R_ASTRO_APS3, (config.num_agents, nbSteps))
-    nu = np.random.multivariate_normal(config.MEAN_DEFAULT, config.COV_OMEGA_ASTRIX, (config.num_agents, nbSteps))
+    # Disturbances — generated per-trial inside MC loop for reproducibility
+    eta = np.zeros((config.num_mc, config.num_agents, nbSteps, 3))
+    nu = np.zeros((config.num_mc, config.num_agents, nbSteps, 3))
 
     # IMU bias
     g0 = 9.80665
@@ -252,6 +256,11 @@ def generate_trajectories_dynamical(
     # Outer loop: MC trials
     for mc_trial in range(config.num_mc):
         print(f"  MC trial {mc_trial+1}/{config.num_mc}...", end=" ", flush=True)
+
+        # Per-trial sensor disturbances (seeded for reproducibility)
+        rng_mc = rngs_mc[mc_trial]
+        eta[mc_trial] = rng_mc.multivariate_normal(config.MEAN_DEFAULT, config.COV_R_ASTRO_APS3, (config.num_agents, nbSteps))
+        nu[mc_trial] = rng_mc.multivariate_normal(config.MEAN_DEFAULT, config.COV_OMEGA_ASTRIX, (config.num_agents, nbSteps))
 
         # Target initial attitude
         Rz_arr[mc_trial] = au2R(yaw[mc_trial], np.array([0, 0, 1]))
@@ -348,7 +357,7 @@ def generate_trajectories_dynamical(
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
                 # Add small jitter if desired
                 if config.SUN_ALIGN_JITTER_D > 0:
-                    jitter_rad = np.deg2rad((np.random.rand() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
+                    jitter_rad = np.deg2rad((rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
                     up = np.array([0.0, 0.0, 1.0])
                     if abs(u_sun_I @ up) > 0.95:
                         up = np.array([0.0, 1.0, 0.0])
@@ -363,7 +372,7 @@ def generate_trajectories_dynamical(
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
-                cone_deg = config.SUN_ALIGN_CONE_DEG + (np.random.rand() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
+                cone_deg = config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
                 if abs(u_LOS_G @ up) > 0.95:
@@ -424,7 +433,7 @@ def generate_trajectories_dynamical(
                 R_GC[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ R_IC[mc_trial, agent_idx, j]
                 q_GC[mc_trial, agent_idx, j] = R2q(R_GC[mc_trial, agent_idx, j])
 
-                R_IC_m[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j] @ expm(sk(eta[agent_idx, j]))
+                R_IC_m[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j] @ expm(sk(eta[mc_trial, agent_idx, j]))
                 q_IC_m[mc_trial, agent_idx, j] = R2q(R_IC_m[mc_trial, agent_idx, j])
 
         # Enforce quaternion continuity
@@ -480,10 +489,10 @@ def generate_trajectories_dynamical(
 
             for j in range(nbSteps):
                 if j == 0:
-                    gyro_bias_state[mc_trial, agent_idx] = np.random.normal(0.0, sigma_bg, size=3)
+                    gyro_bias_state[mc_trial, agent_idx] = rng_mc.normal(0.0, sigma_bg, size=3)
                 else:
-                    gyro_bias_state[mc_trial, agent_idx] = phi_g * gyro_bias_state[mc_trial, agent_idx] + inc_std_g * np.random.normal(0.0, 1.0, size=3)
-                omega_CI_C_m[mc_trial, agent_idx, j] = omega_CI_C[mc_trial, agent_idx, j] + nu[agent_idx, j] + gyro_bias_state[mc_trial, agent_idx]
+                    gyro_bias_state[mc_trial, agent_idx] = phi_g * gyro_bias_state[mc_trial, agent_idx] + inc_std_g * rng_mc.normal(0.0, 1.0, size=3)
+                omega_CI_C_m[mc_trial, agent_idx, j] = omega_CI_C[mc_trial, agent_idx, j] + nu[mc_trial, agent_idx, j] + gyro_bias_state[mc_trial, agent_idx]
 
         # Specific force and torque
         for agent_idx in range(config.num_agents):
@@ -500,10 +509,10 @@ def generate_trajectories_dynamical(
                 f_specific_S[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j].T @ non_grav_accel_I
 
                 if j == 0:
-                    accel_bias_state[mc_trial, agent_idx] = np.random.normal(0.0, sigma_ba, size=3)
+                    accel_bias_state[mc_trial, agent_idx] = rng_mc.normal(0.0, sigma_ba, size=3)
                 else:
-                    accel_bias_state[mc_trial, agent_idx] = phi_a * accel_bias_state[mc_trial, agent_idx] + inc_std_a * np.random.normal(0.0, 1.0, size=3)
-                f_specific_S_m[mc_trial, agent_idx, j] = f_specific_S[mc_trial, agent_idx, j] + np.random.multivariate_normal(np.zeros(3), config.COV_ACCEL_ASTRIX) + accel_bias_state[mc_trial, agent_idx]
+                    accel_bias_state[mc_trial, agent_idx] = phi_a * accel_bias_state[mc_trial, agent_idx] + inc_std_a * rng_mc.normal(0.0, 1.0, size=3)
+                f_specific_S_m[mc_trial, agent_idx, j] = f_specific_S[mc_trial, agent_idx, j] + rng_mc.multivariate_normal(np.zeros(3), config.COV_ACCEL_ASTRIX) + accel_bias_state[mc_trial, agent_idx]
 
                 if j == 0:
                     omega_dot = (omega_CI_C[mc_trial, agent_idx, 1] - omega_CI_C[mc_trial, agent_idx, 0]) / tstep_eff
@@ -528,7 +537,10 @@ def generate_trajectories_dynamical(
 
     agent_folders = []
 
-    camera_obj = {"focal_length": config.FOCAL_LENGTH_PX, "resolution": config.CAMERA_RESOLUTION, "lens_flare": config.LENS_FLARE} # We prob dont need to do this and can just pass a config
+    camera_obj = {
+        "focal_length_px": camera_config.focal_length_px,
+        "resolution": camera_config.resolution,
+    }
 
     for mc_trial in range(config.num_mc):
         if config.num_mc > 1:
@@ -597,7 +609,7 @@ def generate_trajectories_dynamical(
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
-            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
+            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length_px']:.1f}px")
 
             write_camera_trajectory(
                 output_dir=agent_folder,
@@ -640,6 +652,7 @@ def generate_trajectories_dynamical(
                                         q_IC_m=q_IC_m_mc_ag,
                                         omega_CI_C_m=omega_CI_C_m_mc_ag,
                                         state_A_I=state_A_I_mc,
+                                        state_C_I=state_C_I_mc_ag,
                                         f_specific_S_m=f_specific_S_m_mc_ag,
                                         tau_specific_S=tau_specific_S_mc_ag
                                     )

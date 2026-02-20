@@ -5,7 +5,6 @@ from typing import Dict, List
 import numpy as np
 import os
 import csv
-import json
 from mathutils import Vector, Quaternion
 import subprocess
 
@@ -329,14 +328,6 @@ def write_gtvalues(output_dir: str,
     print(f"  [GTVAL]   {gtvalues_filepath}")
     return gtvalues_filepath
 
-def write_json(output_dir: str, gtvalues_filepath: str, camera_obj: dict, tstep_eff: float, tend: float):
-    # --- JSON file for UE5 simulator (read from gtValues.txt) ---
-    filename = "gtValues"
-    json_filename = os.path.join(output_dir, f"{filename}.json")
-    data_dict = read_gt_values(gtvalues_filepath)
-    create_json(camera_obj, data_dict, tstep_eff, tend, json_filename, earth=False, stars=False)
-    print(f"  [JSON]    {json_filename}")
-
 def write_config(output_dir: str,
                     nbSteps: int,
                     camera_obj: dict,
@@ -354,10 +345,10 @@ def write_config(output_dir: str,
     config_filepath = os.path.join(output_dir, "Config.yaml")
     with open(config_filepath, "w") as f:
         # Camera intrinsics from camera_obj
-        focal_length = camera_obj["focal_length"]
-        resolution = camera_obj["resolution"]
-        cx = resolution / 2.0
-        cy = resolution / 2.0
+        focal_length = camera_obj["focal_length_px"]
+        res_x, res_y = camera_obj["resolution"]
+        cx = res_x / 2.0
+        cy = res_y / 2.0
         fps = 1.0 / tstep_eff
 
         f.write("%YAML:1.0\n\n")
@@ -418,7 +409,7 @@ def write_config(output_dir: str,
         f.write("Camera.k3: 0.0\n")
         f.write(f"Camera.fps: {fps:.1f}\n")
         f.write("Camera.RGB: 0\n")
-        f.write(f"Camera.resolution: [{resolution}, {resolution}]\n")
+        f.write(f"Camera.resolution: [{res_x}, {res_y}]\n")
         f.write("Image.FITSValueScale: 22.849\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
@@ -434,6 +425,16 @@ def write_config(output_dir: str,
         f.write("FrontEnd.ransacReprojThreshold: 6.0\n")
         f.write("FrontEnd.ransacConfidence: 0.999\n")
         f.write("FrontEnd.minBaselinePx: 1e6\n\n")
+
+        f.write("# KF Selection: 0=FIXED_INTERVAL, 1=GEOMETRY_AWARE\n")
+        f.write("FrontEnd.kfMode: 1\n")
+        f.write("FrontEnd.geoMinGap: 5\n")
+        f.write("FrontEnd.geoMaxGap: 70\n")
+        f.write("FrontEnd.geoMinParallaxDeg: 0.30\n")
+        f.write("FrontEnd.geoParallaxHiMargin: 0.25\n")
+        f.write("FrontEnd.geoParallaxHiMax: 0.65\n")
+        f.write("FrontEnd.geoMaxRotationDominance: 0.40\n")
+        f.write("FrontEnd.geoMinAvgTrackLength: 3.0\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# ORB Parameters\n")
@@ -456,12 +457,13 @@ def write_config(output_dir: str,
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("BackEnd.useRelDyn: 1\n")
         f.write("Backend.minTriangulationAngleDeg: 0.5\n")
+        f.write("BackEnd.enableLandmarkFiltering: 1\n")
         f.write("BackEnd.iSAMRelinearizationThresh: 0.1\n")
         f.write("BackEnd.iSAMRelinearizationSkip: 1\n")
-        f.write("BackEnd.iSAMcacheLinearizedFactors: 1\n")
-        f.write("BackEnd.iSAMfindUnusedFactorSlots: 1\n")
-        f.write("BackEnd.iSAMfactorization: QR\n")
-        f.write("BackEnd.wildfire_threshold: 0.001\n")
+        f.write("BackEnd.iSAMcacheLinearizedFactors: 0\n")  # False for accuracy
+        f.write("BackEnd.iSAMfindUnusedFactorSlots: 1\n")  # True for memory efficiency
+        f.write("BackEnd.iSAMfactorization: QR\n")  # QR for numerical stability
+        f.write("BackEnd.wildfire_threshold: 0.01\n")
         f.write("BackEnd.numOptimize: 1\n")
         f.write("BackEnd.optimizationWindowSec: 60\n")
         f.write("BackEnd.iSAMevaluateNonlinearError: 0\n")
@@ -479,20 +481,15 @@ def write_config(output_dir: str,
         f.write("RelDynFactor.TU: 1.0\n")
         f.write(f"RelDynFactor.muEarth: {mu_ref}\n")
         f.write("RelDynFactor.usePreviousMeasurement: 1\n")
-        f.write("RelDynFactor.sigmasSpectralDensity: [ 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 0.3, 0.3, 0.3]\n")
-        f.write("RelDynFactor.omega_GI_G_noise: [0.01, 0.01, 0.01]\n")
-        f.write("RelDynFactor.I_A_noise: [1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1, 1.0e-1]\n")
-        f.write("RelDynFactor.r_AG_G_noise: [1.0, 1.0, 0.01]\n")
-        f.write("RelDynFactor.r_SA_I_noise: [1.0, 1.0, 1.0]\n")
-        f.write("RelDynFactor.v_SA_I_noise: [100.0, 100.0, 100.0]\n")
-        f.write("RelDynFactor.rTc_noise: [1e-06, 1e-06, 1e-06]\n")
-        f.write("RelDynFactor.angularMomentumNoise: [0.0001, 0.0001, 0.0001]\n")
-        f.write("RelDynFactor.sigmas_r_SG_G_meas: [0.01, 0.01, 0.01]\n")
-        f.write("RelDynFactor.mu0_noise: 20\n")
-        f.write("RelDynFactor.kinoRoto_noise: [0.002, 0.002, 0.002, 0.0005, 0.0005, 0.0005]\n")
-        f.write("RelDynFactor.Q0_sigmas: [1e-05, 1e-05, 1e-05]\n")
-        f.write("RelDynFactor.r0_sigmas: [5e-08, 5e-08, 5e-08]\n")
-        f.write("RelDynFactor.R_meas_noise: [0.0002774, 0.0002774, 0.0002774]\n\n")
+        # Noise parameters - names and values match validated test (convergence-test-body.h)
+        f.write("RelDynFactor.relDynProcessNoiseSigmas: [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.005, 0.005, 0.005]\n")
+        f.write("RelDynFactor.omegaPriorSigmas: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.inertiaPriorSigmas: [1.0, 1.0, 0.1, 0.1, 0.1]\n")
+        f.write("RelDynFactor.comPriorSigmas: [1.0, 1.0, 1.0]\n")
+        f.write("RelDynFactor.rSAIAnchorSigmas: [0.01, 0.01, 0.01]\n")
+        f.write("RelDynFactor.velocityPriorSigmas: [0.5, 0.5, 0.5]\n")
+        f.write("RelDynFactor.ipcFactorSigmas: [0.04, 0.04, 0.04]\n")
+        f.write("RelDynFactor.angMomFactorSigmas: [0.01, 0.01, 0.01]\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# Loop-Closure Parameters\n")
@@ -505,7 +502,8 @@ def write_config(output_dir: str,
         f.write("LoopClosure.commonWordsRatio: 0.8\n")
         f.write("LoopClosure.ransacReprojThreshold: 1.0\n")
         f.write("LoopClosure.ransacConfidence: 0.99\n")
-        f.write("LoopClosure.knnK: 1\n\n")
+        f.write("LoopClosure.knnK: 1\n")
+        f.write("LoopClosure.pgoTriggerPeriod: 50\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# Viewer Parameters\n")
@@ -541,8 +539,9 @@ def write_config(output_dir: str,
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# Trajectory Generation Metadata (for reference only)\n")
         f.write("#--------------------------------------------------------------------------------------------\n")
-        f.write(f"# trial_seed: {int(child_ss.entropy)}\n")
-        f.write(f"# path_mode: {path_mode}\n")
+        f.write(f"# master_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# mc_index: {child_ss.spawn_key[0]}\n")
+        f.write(f"# path_mode: {path_mode.title()}\n")
         f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
         f.write(f"# agent_id: {agent_idx}\n")
         f.write(f"# mu_ref: {mu_ref}\n")
@@ -560,6 +559,7 @@ def write_sensormeasurements(output_dir: str,
                                 q_IC_m: np.ndarray,
                                 omega_CI_C_m: np.ndarray,
                                 state_A_I: np.ndarray,
+                                state_C_I: np.ndarray,
                                 f_specific_S_m: np.ndarray,
                                 tau_specific_S: np.ndarray,):
     # --- sensormeasurements.txt ---
@@ -581,145 +581,12 @@ def write_sensormeasurements(output_dir: str,
         np.savetxt(f, f_specific_S_m, fmt="%f %f %f")
         f.write("tau_s_S = \n")
         np.savetxt(f, tau_specific_S, fmt="%f %f %f")
+        # Ephemeris-based r_SA_I measurement (S relative to A in inertial frame)
+        # r_SA = S - A (vector from target COM to chaser)
+        r_SA_I_meas = state_C_I[:, 0:3] - state_A_I[:, 0:3]
+        f.write("r_SA_I_meas = \n")
+        np.savetxt(f, r_SA_I_meas, fmt="%f %f %f")
     print(f"  [SENSOR]  {sensor_filepath}")
-
-def read_gt_values(file_path):
-    with open(file_path, 'r') as file:
-        lines = file.readlines()
-    
-    # Find section headers to locate the data
-    sections = {}
-    current_section = None
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if '=' in line:
-            current_section = line.split('=')[0].strip()  # Get the part before '='
-            sections[current_section] = i + 1  # Start of data is next line
-            
-    # Now extract data based on section positions
-    nSamples = int(lines[sections['nSamples']].strip())
-    
-     # helper: return None if the section isn't in the file
-    def read_block(name, width):
-        if name not in sections:
-            return None
-        start = sections[name]
-        return np.array(
-            [list(map(float, lines[start+i].split())) for i in range(nSamples)]
-        ).reshape(nSamples, width)
-    
-    timestamps = read_block("timestamps", 1).ravel()
-    q_GS   = read_block("q_GS",   4)
-    q_IG   = read_block("q_IG",   4)
-    q_IS   = read_block("q_IS",   4)
-    r_SG_G = read_block("r_SG_G", 3)
-    r_OG_G = read_block("r_OG_G", 3)
-
-    # Extract sun_az_el if it exists
-    if 'sun_az_el' in sections:
-        sun_az_el = read_block("sun_az_el", 2)
-    else:
-        sun_az = read_block("sun_az", 1)
-        sun_el = read_block("sun_el", 1)
-        sun_az_el = np.hstack([sun_el, sun_az]) if sun_az is not None else None
-
-    data_dict = {
-        "nSamples": nSamples,
-        "timestamps": timestamps,
-        "q_GS": q_GS,
-        "r_SG_G": r_SG_G,
-        "q_IG": q_IG,
-        "q_IS": q_IS,
-        "r_OG_G": r_OG_G,
-        "sun_az_el": sun_az_el
-    }
-    return data_dict
-
-def _to_native(obj):
-    """Recursively convert numpy types to Python native types."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, (np.float32, np.float64)):
-        return float(obj)
-    if isinstance(obj, (np.int32, np.int64)):
-        return int(obj)
-    if isinstance(obj, list):
-        return [_to_native(x) for x in obj]
-    if isinstance(obj, dict):
-        return {k: _to_native(v) for k, v in obj.items()}
-    return obj
-
-def create_json(camera, data_dict, tstep, tend, foutput, earth=False, stars=False):
-    # Format earth location data
-    earth_loc_data = [{"data": e_loc} for e_loc in data_dict['r_OG_G']]
-    
-    # Format sun rotation data 
-    # IMPORTANT: Note the order - first element is elevation, second is azimuth
-    sun_rot_data = []
-    for s_rot in data_dict['sun_az_el']:
-        # s_rot[0] is elevation, s_rot[1] is azimuth in the gtValues file
-        sun_rot_data.append({"data": [[s_rot[0]], [s_rot[1]]]})
-    
-    # Compute vertical FOV in radians & aspect ratio
-    yfov_rad = 2 * np.arctan((camera['resolution'] / 2) / camera['focal_length'])
-    aspect   = float(camera['resolution']) / float(camera['resolution'])
-
-    data = {
-        "post_process_params": {
-            "cam_shutter_speed": 200.0,
-            "cam_iso": 100.0,
-            "cam_aperture": 4.0,
-            "exposure_comp": 0.01,
-            "bloom_intensity": 0.1,
-            "chromatic_aberration_intensity": 0.0,
-            "chromatic_aberration_start_offset": 0.0,
-            "vignette_intensity": 0.1,
-            "lens_flare_intensity": 0.1,
-            "film_grain_intensity": 0.1
-        },
-        "custom_model_params": {
-            # Scale should be set to 1.0 for real-dimensioned models
-             "scale": 1.0,
-             "custom_model_path": "C:\\Users\\jdflo\\Documents\\UE5-SpaceImageSimulator\\models\\hst.fbx"
-            # "scale": 0.00028,
-            # "custom_model_path": "C:\\Users\\jdflo\\Documents\\UE5-SpaceImageSimulator\\models\\integral.fbx"
-        },
-        "timing_params": {
-          "tstep": tstep,
-          "tend": tend
-        },
-        "camera_params": { # Unused in simulator, but used to create config.yaml
-            "focal_length": camera['focal_length'],
-            "fov": np.rad2deg(2*np.arctan((camera['resolution']/2)/camera['focal_length'])),
-            "x_resolution": camera['resolution'],
-            "y_resolution": camera['resolution']
-        },
-        "cameras": [
-            {
-                "type":        "perspective",
-                "perspective": {
-                    "aspectRatio": aspect,
-                    "yfov":        float(yfov_rad)
-                }
-            }
-        ],
-        "environment_params": {
-            "light_brightness": 128000.0,
-            "star_vis": False if stars == "false" or not stars else True,
-            "earth_vis": False if earth == "false" or not earth else True,
-            "earth_loc": earth_loc_data,
-            "sun_rot": sun_rot_data
-        },
-        "nSamples": data_dict['nSamples'],
-        "timestamps": data_dict['timestamps'].tolist(),
-        "q_GS": [{"data": quat} for quat in data_dict['q_GS']],
-        "r_SG_G": [{"data": r} for r in data_dict['r_SG_G']]
-    }
-    
-    foutput = f'{foutput}'
-    with open(foutput, 'w') as json_file:
-        data = _to_native(data)
-        json.dump(data, json_file, indent=4)
 
 def rename_imgs_in_folder(folder):
 
