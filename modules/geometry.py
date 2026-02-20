@@ -149,7 +149,7 @@ def _mesh_from_scene(scene) -> trimesh.Trimesh:
 
 
 def _make_ray_intersector(mesh: trimesh.Trimesh):
-    from trimesh.ray.ray_triangle import RayMeshIntersector
+    from trimesh.ray.ray_pyembree import RayMeshIntersector
     return RayMeshIntersector(mesh)
 
 
@@ -181,7 +181,14 @@ def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
 
     locs_C = _transform_points(T_CW, locs_W)
     z = locs_C[:, 2]
-    max_dist = scene.camera.data.clip_end
+    earth_obj = scene.objects.get("Earth")
+    if earth_obj is not None:
+        earth_pos = np.array(earth_obj.matrix_world.translation[:], dtype=float)
+        cam_pos = T_WC[:3, 3]
+        earth_radius = 0.5 * float(max(earth_obj.dimensions))
+        max_dist = max(0.0, float(np.linalg.norm(cam_pos - earth_pos)) - earth_radius)
+    else:
+        max_dist = float(scene.camera.data.clip_end)
     valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
     ray_idx = ray_idx[valid]
     z = z[valid]
