@@ -95,11 +95,17 @@ class TrajectoryConfig(BaseModel):
     # using a nominal value based on typical performance.
     sigma_accel: float = 10.0 * 1e-6 * 9.80665 * np.sqrt(10.0 / 2.0)
     MEAN_DEFAULT: List[float] = [0.0, 0.0, 0.0]
+
     # Bias models
+    # Gyro bias stability < 0.005 deg/h (Astrix NS published spec).
+    # Modeled as first-order Gauss-Markov with 1-hour correlation time.
     GYRO_BIAS_SIGMA_DEGPHR: float = 0.005
     GYRO_BIAS_TAU_S: float = 3600.0
+    # Accelerometer bias modeled as 10 µg (typical navigation-grade
+    # IMU assumption). No explicit public Astrix NS accel bias spec available.
     ACCEL_BIAS_SIGMA_UG: float = 10.0
     ACCEL_BIAS_TAU_S: float = 3600.0
+
     # Distance to target
     R0_const: float = 30.0
     # Sun alignment
