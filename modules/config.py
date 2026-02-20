@@ -168,7 +168,7 @@ class SceneConfig(BaseModel):
     trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath"] = "trajectory_generator"
     trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
     trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig)
-    trajectory_filepath: Optional[str] = None
+    trajectory_filepath: Optional[str] = ""
     # Vision Blender addon settings
     save_depth: bool = True
     save_normals: bool = True
