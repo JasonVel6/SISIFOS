@@ -50,7 +50,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import (TrajectoryConfig)
+from modules.config import (TrajectoryConfig, CameraConfig)
 from modules.trajectory.motion_cases import (
     init_inertial, init_hill, init_tumbling,
     validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
@@ -80,7 +80,11 @@ def generate_trajectories_dynamical(
     base_output_file: str,
     config_prefix: str = "Config_1",
     model_name: str = "",
+    camera_config: CameraConfig = None,
 ) -> list[str]:
+    if camera_config is None:
+        camera_config = CameraConfig()
+
     # Initialize random seeds for reproducibility
     if config.seed is not None:
         master_seed = config.seed
@@ -101,7 +105,7 @@ def generate_trajectories_dynamical(
         print("  Inertial mode (CRO trajectory)")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_inertial(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
+            focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED, rho_max=0.90, R0_const=config.R0_const,
             variant="cro", rngs_mc=rngs_mc
         )
@@ -109,7 +113,7 @@ def generate_trajectories_dynamical(
         print("  Hill mode")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_hill(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
+            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED, rho_max=0.90
         )
     elif config.rotMode_Gframe == "3":
@@ -120,7 +124,7 @@ def generate_trajectories_dynamical(
         # inertia poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0.
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
             num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=config.FOCAL_LENGTH_PX, kf_dt=config.IMAGE_MAX_DT_S,
+            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=1.0 * config.IMAGE_MAX_DT_S, rho_max=0.95, R0_const=config.R0_const,
             omega_min_deg=3.0, omega_max_deg=5.0,
             J=config.J, min_asymmetry_component=0.4
@@ -533,7 +537,10 @@ def generate_trajectories_dynamical(
 
     agent_folders = []
 
-    camera_obj = {"focal_length": config.FOCAL_LENGTH_PX, "resolution": config.CAMERA_RESOLUTION, "lens_flare": config.LENS_FLARE} # We prob dont need to do this and can just pass a config
+    camera_obj = {
+        "focal_length_px": camera_config.focal_length_px,
+        "resolution": camera_config.resolution,
+    }
 
     for mc_trial in range(config.num_mc):
         if config.num_mc > 1:
@@ -602,7 +609,7 @@ def generate_trajectories_dynamical(
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
-            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length']}px")
+            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length_px']:.1f}px")
 
             write_camera_trajectory(
                 output_dir=agent_folder,

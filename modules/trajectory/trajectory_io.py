@@ -345,10 +345,10 @@ def write_config(output_dir: str,
     config_filepath = os.path.join(output_dir, "Config.yaml")
     with open(config_filepath, "w") as f:
         # Camera intrinsics from camera_obj
-        focal_length = camera_obj["focal_length"]
-        resolution = camera_obj["resolution"]
-        cx = resolution / 2.0
-        cy = resolution / 2.0
+        focal_length = camera_obj["focal_length_px"]
+        res_x, res_y = camera_obj["resolution"]
+        cx = res_x / 2.0
+        cy = res_y / 2.0
         fps = 1.0 / tstep_eff
 
         f.write("%YAML:1.0\n\n")
@@ -409,7 +409,7 @@ def write_config(output_dir: str,
         f.write("Camera.k3: 0.0\n")
         f.write(f"Camera.fps: {fps:.1f}\n")
         f.write("Camera.RGB: 0\n")
-        f.write(f"Camera.resolution: [{resolution}, {resolution}]\n")
+        f.write(f"Camera.resolution: [{res_x}, {res_y}]\n")
         f.write("Image.FITSValueScale: 22.849\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
@@ -425,6 +425,16 @@ def write_config(output_dir: str,
         f.write("FrontEnd.ransacReprojThreshold: 6.0\n")
         f.write("FrontEnd.ransacConfidence: 0.999\n")
         f.write("FrontEnd.minBaselinePx: 1e6\n\n")
+
+        f.write("# KF Selection: 0=FIXED_INTERVAL, 1=GEOMETRY_AWARE\n")
+        f.write("FrontEnd.kfMode: 1\n")
+        f.write("FrontEnd.geoMinGap: 5\n")
+        f.write("FrontEnd.geoMaxGap: 70\n")
+        f.write("FrontEnd.geoMinParallaxDeg: 0.30\n")
+        f.write("FrontEnd.geoParallaxHiMargin: 0.25\n")
+        f.write("FrontEnd.geoParallaxHiMax: 0.65\n")
+        f.write("FrontEnd.geoMaxRotationDominance: 0.40\n")
+        f.write("FrontEnd.geoMinAvgTrackLength: 3.0\n\n")
 
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# ORB Parameters\n")
@@ -529,8 +539,9 @@ def write_config(output_dir: str,
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write("# Trajectory Generation Metadata (for reference only)\n")
         f.write("#--------------------------------------------------------------------------------------------\n")
-        f.write(f"# trial_seed: {int(child_ss.entropy)}\n")
-        f.write(f"# path_mode: {path_mode}\n")
+        f.write(f"# master_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# mc_index: {child_ss.spawn_key[0]}\n")
+        f.write(f"# path_mode: {path_mode.title()}\n")
         f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
         f.write(f"# agent_id: {agent_idx}\n")
         f.write(f"# mu_ref: {mu_ref}\n")

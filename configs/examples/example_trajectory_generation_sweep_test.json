@@ -96,10 +96,7 @@
       "m": 4000.0,
       "l": 5.0,
       "w": 3.2,
-      "h": 2.8,
-      "FOCAL_LENGTH_PX": 2500.0,
-      "CAMERA_RESOLUTION": 1024,
-      "LENS_FLARE": 0.01
+      "h": 2.8
     },
     "save_depth": false,
     "save_normals": false,

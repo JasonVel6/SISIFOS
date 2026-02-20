@@ -126,6 +126,7 @@ class BlenderRenderer:
         cam = bpy.data.objects.get("Camera")
         cam.rotation_mode = 'QUATERNION'
         cam.data.lens = self.config.camera.focal_length
+        cam.data.sensor_width = self.config.camera.sensor_width
         cam.data.clip_start = self.config.camera.clip_start
         cam.data.clip_end = self.config.camera.clip_end
         
