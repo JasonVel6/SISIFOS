@@ -59,9 +59,9 @@
     },
     "trajectory_type": "sampling_trajectory",
     "trajectory_sampling": {
-      "num_frames": 200,
-      "R_RPO": 70.0,
-      "R_LEO": 10000000.0
+      "num_frames": 4,
+      "R_RPO": 36.0,
+      "R_LEO": 8000000.0
     },
     "save_depth": false,
     "save_normals": false,
