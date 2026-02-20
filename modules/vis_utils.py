@@ -39,10 +39,9 @@ def _depth_vis_and_mask_from_rrpo(
     """
     # TODO JD we should see if this is proper
     valid = np.isfinite(depth) & (depth > 0)
-    mask = valid & (depth <  target_dist*10) # heuristic: anything beyond 10x the target distance is considered "far" and masked out
 
-    dmin = 0.1
-    dmax = float(target_dist)+5
+    dmin = float(np.min(depth[valid]))
+    dmax = float(np.max(depth[valid]))
     denom = (dmax - dmin) if (dmax > dmin) else 1.0
 
     x = (depth - dmin) / denom
@@ -50,5 +49,5 @@ def _depth_vis_and_mask_from_rrpo(
 
     cmap = mpl.colormaps.get_cmap(cmap_name)   # or mpl.colormaps[cmap_name]
     rgb = cmap(x)[..., :3].astype(np.float32)    
-    rgb[~mask] = 0.0  # background black
-    return rgb, mask
+    rgb[~valid] = 0.0  # background black
+    return rgb, valid
