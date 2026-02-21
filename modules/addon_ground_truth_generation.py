@@ -57,8 +57,8 @@ def _recv_msg(stream):
 
 
 def _start_depth_worker(scene):
-    """Spawn the persistent depth worker and send INIT with camera intrinsics."""
-    global _worker_process
+    """Spawn the persistent depth worker and send INIT with camera intrinsics + mesh."""
+    global _worker_process, _cached_ref_obj_name
     if _worker_process is not None and _worker_process.poll() is None:
         return  # already running
 
@@ -67,16 +67,21 @@ def _start_depth_worker(scene):
     f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
     K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
 
+    local_verts, faces, ref_obj_name = _extract_local_mesh(scene)
+    _cached_ref_obj_name = ref_obj_name
+
     _worker_process = subprocess.Popen(
         [sys.executable, _DEPTH_WORKER],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
-    _send_msg(_worker_process.stdin, K=K, res_x=np.array(res_x), res_y=np.array(res_y))
+    _send_msg(_worker_process.stdin,
+              K=K, res_x=np.array(res_x), res_y=np.array(res_y),
+              vertices=local_verts, faces=faces)
 
 
 def _stop_depth_worker():
     """Shut down the persistent depth worker."""
-    global _worker_process
+    global _worker_process, _cached_ref_obj_name
     if _worker_process is None:
         return
     try:
@@ -85,36 +90,67 @@ def _stop_depth_worker():
     except Exception:
         _worker_process.kill()
     _worker_process = None
+    _cached_ref_obj_name = None
 
 
-def _extract_mesh_arrays(scene):
-    """Extract world-space vertices and triangulated faces from all visible mesh objects."""
+_ENVIRONMENT_OBJECTS = {"Earth", "Clouds", "Atmo"}
+_cached_ref_obj_name = None
+
+
+def _extract_local_mesh(scene):
+    """Extract local-space vertices and faces from target mesh objects.
+
+    Returns (local_verts, faces, ref_obj_name).  All vertices are expressed
+    in the first target object's local coordinate frame so the worker can
+    build one BVH that is reused every frame.
+    """
     depsgraph = bpy.context.evaluated_depsgraph_get()
     all_verts = []
     all_faces = []
     vert_offset = 0
+    ref_obj_name = None
+    ref_mat_inv = None
     for obj in scene.objects:
         if obj.type != "MESH" or obj.hide_render:
             continue
+        if obj.name in _ENVIRONMENT_OBJECTS:
+            continue
         obj_eval = obj.evaluated_get(depsgraph)
         mesh = obj_eval.to_mesh()
-        verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
-        if verts.size == 0:
+        n_verts = len(mesh.vertices)
+        if n_verts == 0:
             obj_eval.to_mesh_clear()
             continue
         mesh.calc_loop_triangles()
-        if len(mesh.loop_triangles) == 0:
+        n_tris = len(mesh.loop_triangles)
+        if n_tris == 0:
             obj_eval.to_mesh_clear()
             continue
-        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]]
-                          for lt in mesh.loop_triangles], dtype=int)
+        # Bulk-extract local coords
+        co = np.empty(n_verts * 3, dtype=float)
+        mesh.vertices.foreach_get("co", co)
+        local_verts = co.reshape(n_verts, 3)
+        if ref_obj_name is None:
+            # First target object becomes the reference frame
+            ref_obj_name = obj.name
+            ref_mat_inv = np.array(obj_eval.matrix_world.inverted(), dtype=float)
+            verts = local_verts
+        else:
+            # Transform into reference object's local space
+            mat = np.array(obj_eval.matrix_world, dtype=float)
+            rel = ref_mat_inv @ mat
+            verts = (rel[:3, :3] @ local_verts.T).T + rel[:3, 3]
+        # Bulk-extract triangle indices
+        tri = np.empty(n_tris * 3, dtype=int)
+        mesh.loop_triangles.foreach_get("vertices", tri)
+        faces = tri.reshape(n_tris, 3)
         all_verts.append(verts)
         all_faces.append(faces + vert_offset)
         vert_offset += verts.shape[0]
         obj_eval.to_mesh_clear()
     if not all_verts:
-        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=int)
-    return np.concatenate(all_verts, axis=0), np.concatenate(all_faces, axis=0)
+        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=int), None
+    return np.concatenate(all_verts, axis=0), np.concatenate(all_faces, axis=0), ref_obj_name
 
 
 def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
@@ -122,30 +158,18 @@ def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
     from modules.addon_ground_truth_generation import get_scene_resolution
     res_x, res_y = get_scene_resolution(scene)
 
-    vertices, faces = _extract_mesh_arrays(scene)
-    if vertices.shape[0] == 0:
-        return np.zeros((res_y, res_x), dtype=np.float32)
-
-    # Compute max_dist for Earth filtering
-    earth_obj = scene.objects.get("Earth")
-    if earth_obj is not None:
-        T = np.eye(4, dtype=float)
-        T[:3, :4] = extrinsic_mat
-        R = T[:3, :3]; t = T[:3, 3]
-        cam_pos = -R.T @ t
-        earth_pos = np.array(earth_obj.matrix_world.translation[:], dtype=float)
-        earth_radius = 0.5 * float(max(earth_obj.dimensions))
-        max_dist = max(0.0, float(np.linalg.norm(cam_pos - earth_pos)) - earth_radius)
-    else:
-        max_dist = float(scene.camera.data.clip_end)
-
-    # Ensure worker is running
     _start_depth_worker(scene)
 
-    # Send frame data, receive depth
+    if _cached_ref_obj_name is None:
+        return np.zeros((res_y, res_x), dtype=np.float32)
+
+    # Current object-to-world transform (changes each frame due to tumbling)
+    ref_obj = scene.objects.get(_cached_ref_obj_name)
+    T_WO = np.array(ref_obj.matrix_world, dtype=float)[:3, :4]
+    max_dist = float(scene.camera.data.clip_end)
+
     _send_msg(_worker_process.stdin,
-              vertices=vertices, faces=faces,
-              extrinsic_mat=extrinsic_mat, max_dist=np.array(max_dist))
+              T_CW=extrinsic_mat, T_WO=T_WO, max_dist=np.array(max_dist))
 
     result = _recv_msg(_worker_process.stdout)
     if result is None:

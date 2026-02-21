@@ -4,9 +4,10 @@ Runs in a separate process to avoid Embree symbol conflicts with Blender.
 Communicates via length-prefixed binary messages on stdin/stdout.
 
 Protocol:
-  1. INIT message: receives K, res_x, res_y → pre-computes camera ray directions
-  2. FRAME messages (loop): receives vertices, faces, extrinsic, max_dist →
-     builds mesh + BVH, raytraces, sends depth map back
+  1. INIT message: receives K, res_x, res_y, vertices, faces
+     → pre-computes camera ray directions, builds mesh + Embree BVH (cached)
+  2. FRAME messages (loop): receives T_CW, T_WO, max_dist
+     → transforms rays into object-local space, raytraces cached BVH, sends depth
   3. Shutdown: stdin closes → worker exits
 """
 import io
@@ -39,22 +40,23 @@ def _write_msg(stream, **arrays):
     stream.flush()
 
 
-def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
+def _make_T44(m34):
+    """Pad a 3x4 matrix to 4x4."""
     T = np.eye(4, dtype=float)
-    T[:3, :4] = extr
+    T[:3, :4] = m34
     return T
 
 
-def _invert_T(T: np.ndarray) -> np.ndarray:
+def _invert_T(T):
     R = T[:3, :3]
     t = T[:3, 3]
-    Ti = np.eye(4)
+    Ti = np.eye(4, dtype=float)
     Ti[:3, :3] = R.T
     Ti[:3, 3] = -R.T @ t
     return Ti
 
 
-def _camera_rays_in_camera_frame(W: int, H: int, K: np.ndarray) -> np.ndarray:
+def _camera_rays_in_camera_frame(W, H, K):
     fx, fy = K[0, 0], K[1, 1]
     cx, cy = K[0, 2], K[1, 2]
     us = np.arange(W)
@@ -68,26 +70,27 @@ def _camera_rays_in_camera_frame(W: int, H: int, K: np.ndarray) -> np.ndarray:
     return dirs / (norms + 1e-12)
 
 
-def _transform_points(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    if pts.shape[0] == 0:
-        return pts.copy()
-    pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=float)], axis=1)
-    out = (T @ pts_h.T).T
-    return out[:, :3]
-
-
 def main():
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
 
-    # --- INIT ---
+    # --- INIT: camera intrinsics + mesh ---
     init_data = _read_msg(stdin)
     if init_data is None:
         return
     K = init_data["K"]
     res_x = int(init_data["res_x"])
     res_y = int(init_data["res_y"])
+    vertices = init_data["vertices"]
+    faces = init_data["faces"]
+
+    n_rays = res_x * res_y
     dirs_C = _camera_rays_in_camera_frame(res_x, res_y, K)
+
+    # Build mesh + Embree BVH once
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    empty = mesh.is_empty
+    intersector = None if empty else RayMeshIntersector(mesh)
 
     # --- FRAME loop ---
     while True:
@@ -95,30 +98,34 @@ def main():
         if frame_data is None:
             break
 
-        vertices = frame_data["vertices"]
-        faces = frame_data["faces"]
-        extrinsic_mat = frame_data["extrinsic_mat"]
-        max_dist = float(frame_data["max_dist"])
-
-        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-        if mesh.is_empty:
+        if empty:
             _write_msg(stdout, depth=np.zeros((res_y, res_x), dtype=np.float32))
             continue
 
-        T_CW = _make_T_from_extrinsic(extrinsic_mat)
+        T_CW = _make_T44(frame_data["T_CW"])
+        T_WO = _make_T44(frame_data["T_WO"])
+        max_dist = float(frame_data["max_dist"])
+
+        # Camera → object-local space (for rays)
         T_WC = _invert_T(T_CW)
+        T_OW = _invert_T(T_WO)
+        T_OC = T_OW @ T_WC
 
-        origins_W = np.repeat(T_WC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
-        dirs_W = (T_WC[:3, :3] @ dirs_C.T).T
+        # Rays in object-local space
+        origins_O = np.repeat(T_OC[:3, 3].reshape(1, 3), n_rays, axis=0)
+        dirs_O = (T_OC[:3, :3] @ dirs_C.T).T
 
-        intersector = RayMeshIntersector(mesh)
-        locs_W, ray_idx, _tri_idx = intersector.intersects_location(
-            origins_W, dirs_W, multiple_hits=False
+        locs_O, ray_idx, _ = intersector.intersects_location(
+            origins_O, dirs_O, multiple_hits=False
         )
 
-        depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
-        if locs_W.shape[0] > 0:
-            locs_C = _transform_points(T_CW, locs_W)
+        depth_z = np.full(n_rays, -1.0, dtype=np.float32)
+        if locs_O.shape[0] > 0:
+            # Object-local hits → camera frame for z-depth
+            T_CO = T_CW @ T_WO
+            R_CO = T_CO[:3, :3]
+            t_CO = T_CO[:3, 3]
+            locs_C = (R_CO @ locs_O.T).T + t_CO
             z = locs_C[:, 2]
             valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
             depth_z[ray_idx[valid]] = z[valid].astype(np.float32)
