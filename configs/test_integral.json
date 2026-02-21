@@ -98,7 +98,7 @@
       "w": 3.2,
       "h": 2.8
     },
-    "save_depth": false,
+    "save_depth": true,
     "save_normals": false,
     "save_optical_flow": false,
     "save_segmentation": false,

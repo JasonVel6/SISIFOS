@@ -12,21 +12,15 @@ bl_info = {
     "category": "Render",
 }
 
+import io
 import json
 import os
 import shutil
+import struct
+import subprocess
 import numpy as np
 from pathlib import Path
 import sys
-
-
-if sys.platform != "win32":
-    _old_dl_flags = sys.getdlopenflags()
-    sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
-import trimesh
-if sys.platform != "win32":
-    sys.setdlopenflags(_old_dl_flags)
-    del _old_dl_flags
 
 import bpy
 from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
@@ -35,113 +29,131 @@ from bpy.app.handlers import persistent
 
 """ Defining fuctions to obtain ground truth data """
 
-# Trimesh depth pipeline helpers
-def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
-    T = np.eye(4, dtype=float)
-    T[:3, :4] = extr
-    return T
+# Persistent depth worker (avoids Embree symbol conflict with Blender)
+_DEPTH_WORKER = os.path.join(os.path.dirname(__file__), "depth_worker.py")
+_worker_process = None
 
 
-def _invert_T(T: np.ndarray) -> np.ndarray:
-    R = T[:3, :3]
-    t = T[:3, 3]
-    Ti = np.eye(4)
-    Ti[:3, :3] = R.T
-    Ti[:3, 3] = -R.T @ t
-    return Ti
+def _send_msg(stream, **arrays):
+    """Write a length-prefixed NPZ message to a pipe."""
+    buf = io.BytesIO()
+    np.savez(buf, **arrays)
+    payload = buf.getvalue()
+    stream.write(struct.pack(">I", len(payload)))
+    stream.write(payload)
+    stream.flush()
 
 
-def _camera_rays_in_camera_frame(W: int, H: int, K: np.ndarray) -> np.ndarray:
-    fx, fy = K[0, 0], K[1, 1]
-    cx, cy = K[0, 2], K[1, 2]
-    us = np.arange(W)
-    vs = np.arange(H)
-    uu, vv = np.meshgrid(us, vs)
-    x = (uu - cx) / fx
-    y = (vv - cy) / fy
-    z = np.ones_like(x)
-    dirs = np.stack([x, y, z], axis=-1).reshape(-1, 3).astype(float)
-    norms = np.linalg.norm(dirs, axis=-1, keepdims=True)
-    return dirs / (norms + 1e-12)
+def _recv_msg(stream):
+    """Read a length-prefixed NPZ message from a pipe. Returns None on EOF."""
+    header = stream.read(4)
+    if len(header) < 4:
+        return None
+    length = struct.unpack(">I", header)[0]
+    data = stream.read(length)
+    if len(data) < length:
+        return None
+    return np.load(io.BytesIO(data), allow_pickle=False)
 
 
-def _transform_points(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
-    if pts.shape[0] == 0:
-        return pts.copy()
-    pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=float)], axis=1)
-    out = (T @ pts_h.T).T
-    return out[:, :3]
+def _start_depth_worker(scene):
+    """Spawn the persistent depth worker and send INIT with camera intrinsics."""
+    global _worker_process
+    if _worker_process is not None and _worker_process.poll() is None:
+        return  # already running
+
+    from modules.addon_ground_truth_generation import get_scene_resolution, get_camera_parameters_intrinsic
+    res_x, res_y = get_scene_resolution(scene)
+    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+    K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
+
+    _worker_process = subprocess.Popen(
+        [sys.executable, _DEPTH_WORKER],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    _send_msg(_worker_process.stdin, K=K, res_x=np.array(res_x), res_y=np.array(res_y))
 
 
-def _mesh_from_scene(scene) -> trimesh.Trimesh:
+def _stop_depth_worker():
+    """Shut down the persistent depth worker."""
+    global _worker_process
+    if _worker_process is None:
+        return
+    try:
+        _worker_process.stdin.close()
+        _worker_process.wait(timeout=5)
+    except Exception:
+        _worker_process.kill()
+    _worker_process = None
+
+
+def _extract_mesh_arrays(scene):
+    """Extract world-space vertices and triangulated faces from all visible mesh objects."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    meshes = []
+    all_verts = []
+    all_faces = []
+    vert_offset = 0
     for obj in scene.objects:
         if obj.type != "MESH" or obj.hide_render:
             continue
         obj_eval = obj.evaluated_get(depsgraph)
         mesh = obj_eval.to_mesh()
         verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
-        faces = np.array([p.vertices[:] for p in mesh.polygons], dtype=int)
-        if verts.size == 0 or faces.size == 0:
+        if verts.size == 0:
             obj_eval.to_mesh_clear()
             continue
-        meshes.append(trimesh.Trimesh(vertices=verts, faces=faces, process=False))
+        mesh.calc_loop_triangles()
+        if len(mesh.loop_triangles) == 0:
+            obj_eval.to_mesh_clear()
+            continue
+        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]]
+                          for lt in mesh.loop_triangles], dtype=int)
+        all_verts.append(verts)
+        all_faces.append(faces + vert_offset)
+        vert_offset += verts.shape[0]
         obj_eval.to_mesh_clear()
-
-    if not meshes:
-        return trimesh.Trimesh()
-    if len(meshes) == 1:
-        return meshes[0]
-    return trimesh.util.concatenate(meshes)
-
-
-def _make_ray_intersector(mesh: trimesh.Trimesh):
-    from trimesh.ray.ray_pyembree import RayMeshIntersector
-    return RayMeshIntersector(mesh)
+    if not all_verts:
+        return np.zeros((0, 3), dtype=float), np.zeros((0, 3), dtype=int)
+    return np.concatenate(all_verts, axis=0), np.concatenate(all_faces, axis=0)
 
 
 def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
-    from modules.addon_ground_truth_generation import get_scene_resolution, get_camera_parameters_intrinsic
+    global _worker_process
+    from modules.addon_ground_truth_generation import get_scene_resolution
     res_x, res_y = get_scene_resolution(scene)
-    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
-    K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
 
-    T_CW = _make_T_from_extrinsic(extrinsic_mat)
-    T_WC = _invert_T(T_CW)
-
-    dirs_C = _camera_rays_in_camera_frame(res_x, res_y, K)
-    origins_W = np.repeat(T_WC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
-    dirs_W = (T_WC[:3, :3] @ dirs_C.T).T
-
-    mesh = _mesh_from_scene(scene)
-    if mesh.is_empty:
+    vertices, faces = _extract_mesh_arrays(scene)
+    if vertices.shape[0] == 0:
         return np.zeros((res_y, res_x), dtype=np.float32)
 
-    intersector = _make_ray_intersector(mesh)
-    locs_W, ray_idx, _tri_idx = intersector.intersects_location(
-        origins_W, dirs_W, multiple_hits=False
-    )
-
-    depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
-    if locs_W.shape[0] == 0:
-        return depth_z.reshape(res_y, res_x)
-
-    locs_C = _transform_points(T_CW, locs_W)
-    z = locs_C[:, 2]
+    # Compute max_dist for Earth filtering
     earth_obj = scene.objects.get("Earth")
     if earth_obj is not None:
+        T = np.eye(4, dtype=float)
+        T[:3, :4] = extrinsic_mat
+        R = T[:3, :3]; t = T[:3, 3]
+        cam_pos = -R.T @ t
         earth_pos = np.array(earth_obj.matrix_world.translation[:], dtype=float)
-        cam_pos = T_WC[:3, 3]
         earth_radius = 0.5 * float(max(earth_obj.dimensions))
         max_dist = max(0.0, float(np.linalg.norm(cam_pos - earth_pos)) - earth_radius)
     else:
         max_dist = float(scene.camera.data.clip_end)
-    valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
-    ray_idx = ray_idx[valid]
-    z = z[valid]
-    depth_z[ray_idx] = z.astype(np.float32)
-    return depth_z.reshape(res_y, res_x)
+
+    # Ensure worker is running
+    _start_depth_worker(scene)
+
+    # Send frame data, receive depth
+    _send_msg(_worker_process.stdin,
+              vertices=vertices, faces=faces,
+              extrinsic_mat=extrinsic_mat, max_dist=np.array(max_dist))
+
+    result = _recv_msg(_worker_process.stdout)
+    if result is None:
+        stderr = _worker_process.stderr.read().decode(errors="replace")
+        _worker_process = None
+        raise RuntimeError(f"depth_worker died unexpectedly: {stderr[:500]}")
+
+    return result["depth"]
 
 def get_scene_resolution(scene):
     resolution_scale = scene.render.resolution_percentage / 100.0
@@ -755,6 +767,7 @@ def load_handler_after_rend_frame(
 
 @persistent
 def load_handler_after_rend_finish(scene):
+    _stop_depth_worker()
     if check_if_node_exists(scene.node_tree, "output_vision_blender"):
         node_output = scene.node_tree.nodes["output_vision_blender"]
         TMP_FILES_PATH = node_output.base_path
