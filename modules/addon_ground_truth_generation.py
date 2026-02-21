@@ -482,7 +482,7 @@ def load_handler_render_init(scene):
 @persistent
 def load_handler_after_rend_frame(
     scene,
-):
+):  # TODO: not sure if this is the best place to put this function, should it be above the classes?
     """This script runs after rendering each frame"""
     # ref: https://blenderartists.org/t/how-to-run-script-on-every-frame-in-blender-render/699404/2
     # check if user wants to generate the ground truth data

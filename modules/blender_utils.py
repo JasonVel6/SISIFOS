@@ -61,11 +61,7 @@ def set_sun_direction(sun_obj, sun_az_deg: float, sun_el_deg: float):
         ))
         d.normalize()
 
-        # In Blender, Sun lamp emits along its local -Z axis.
-        # CSV positions are negated, so d (= u_sun_I in the true frame) already
-        # points in the correct light-travel direction in the negated Blender world.
-        # Aligning -Z with d makes light go from -scene-side toward +Earth-side,
-        # illuminating the scene without Earth shadow.
+        # Point sun's -Z axis along direction d
         sun_obj.rotation_mode = 'QUATERNION'
         sun_obj.rotation_quaternion = d.to_track_quat('-Z', 'Y')
 

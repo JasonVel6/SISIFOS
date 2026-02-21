@@ -20,9 +20,6 @@ __pycache__/
 !assets/Earth.blend
 renders/
 
-# Trajectory outputs
-output/
-
 # Environment
 env/Blender_*/
 *.egg-info/
