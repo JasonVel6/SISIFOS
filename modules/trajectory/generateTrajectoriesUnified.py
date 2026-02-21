@@ -98,6 +98,15 @@ def generate_trajectories_dynamical(
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
+    # Separate illumination RNG (decouples sun angles from trajectory)
+    if config.illumination_seed is not None:
+        ss_illum = np.random.SeedSequence(config.illumination_seed)
+        child_ss_illum = ss_illum.spawn(config.num_mc)
+        rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
+        print(f"[INITIALIZATION]: illumination seed: {config.illumination_seed}")
+    else:
+        rngs_illum = None
+
     # ---------- Generate initial conditions ----------
     print("\n[STEP 1] Generating initial conditions...")
 
@@ -158,11 +167,19 @@ def generate_trajectories_dynamical(
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
         ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
+        # Always draw from main RNG to preserve state for yaw/pitch/roll
         el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
         az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
         roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
+
+        # Overwrite sun angles from illumination RNG if available
+        if rngs_illum is not None:
+            rng_il = rngs_illum[mc_trial]
+            # Uniform on the sphere: el = arcsin(U(-1,1)), az = U(0,2π)
+            el_I[mc_trial] = float(np.arcsin(rng_il.uniform(-1.0, 1.0)))
+            az_I[mc_trial] = float(rng_il.uniform(0.0, 2.0 * np.pi))
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, config.tend, config.tstep, dtype=float)
@@ -344,6 +361,9 @@ def generate_trajectories_dynamical(
                 omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
 
         # Sun alignment
+        # Use illumination RNG for sun jitter if available, otherwise main RNG
+        rng_sun = rngs_illum[mc_trial] if rngs_illum is not None else rngs_mc[mc_trial]
+
         if config.EARTH_BACKGROUND_ENABLE:
             # Earth-in-background alignment: Sun -> Camera -> Target -> Earth
             # Sun direction should be opposite to Earth direction from camera
@@ -357,7 +377,7 @@ def generate_trajectories_dynamical(
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
                 # Add small jitter if desired
                 if config.SUN_ALIGN_JITTER_D > 0:
-                    jitter_rad = np.deg2rad((rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
+                    jitter_rad = np.deg2rad((rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
                     up = np.array([0.0, 0.0, 1.0])
                     if abs(u_sun_I @ up) > 0.95:
                         up = np.array([0.0, 1.0, 0.0])
@@ -372,7 +392,7 @@ def generate_trajectories_dynamical(
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
-                cone_deg = config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
+                cone_deg = config.SUN_ALIGN_CONE_DEG + (rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
                 if abs(u_LOS_G @ up) > 0.95:
@@ -380,6 +400,30 @@ def generate_trajectories_dynamical(
                 u_sun_G = rodrigues(u_LOS_G, up, cone_rad)
                 u_sun_I = R_IG[mc_trial, j0] @ u_sun_G
                 az_I[mc_trial], el_I[mc_trial] = _vecI_to_azel(u_sun_I)
+        else:
+            # Both flags off: sun angles from seed (lines 162-172).
+            # Reject eclipse: resample until target is sunlit at frame 0.
+            r_t = state_A_I[mc_trial, 0, 0:3]
+            MAX_ILLUM_RETRIES = 50
+            for illum_retry in range(MAX_ILLUM_RETRIES):
+                u_sun = np.array([
+                    np.cos(el_I[mc_trial]) * np.cos(az_I[mc_trial]),
+                    np.cos(el_I[mc_trial]) * np.sin(az_I[mc_trial]),
+                    np.sin(el_I[mc_trial]),
+                ])
+                # Cylindrical shadow: eclipse if target is on anti-sun side
+                # of Earth AND within R_earth of the Earth-Sun line
+                along = float(np.dot(r_t, u_sun))
+                if along >= 0:
+                    break  # target is on sun-side of Earth, no eclipse
+                perp = r_t - along * u_sun
+                if np.linalg.norm(perp) >= config.R_earth:
+                    break  # outside Earth's shadow cylinder
+                # In eclipse — resample (uniform on sphere)
+                el_I[mc_trial] = float(np.arcsin(rng_sun.uniform(-1.0, 1.0)))
+                az_I[mc_trial] = float(rng_sun.uniform(0.0, 2.0 * np.pi))
+            else:
+                print(f"  WARNING: MC trial {mc_trial} eclipse rejection failed after {MAX_ILLUM_RETRIES} retries")
 
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents

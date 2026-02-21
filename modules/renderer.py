@@ -33,6 +33,28 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
+        # Enable GPU rendering if available (CUDA for GTX/RTX cards)
+        if self.config.render.engine == "CYCLES":
+            try:
+                prefs = bpy.context.preferences.addons["cycles"].preferences
+                prefs.compute_device_type = 'CUDA'
+                prefs.get_devices()  # refresh device list
+                gpu_found = False
+                for device in prefs.devices:
+                    if device.type == 'CUDA':
+                        device.use = True
+                        gpu_found = True
+                        vprint(f"  GPU enabled: {device.name}", self.verbose)
+                    else:
+                        device.use = False  # disable CPU compute when GPU available
+                if gpu_found:
+                    self.scene.cycles.device = 'GPU'
+                    vprint("Cycles rendering on GPU (CUDA)", self.verbose)
+                else:
+                    vprint("No CUDA GPU found, using CPU rendering", self.verbose)
+            except Exception as e:
+                vprint(f"GPU setup failed ({e}), using CPU rendering", self.verbose)
+
 
         new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
         new_objects2 = append_blend_objects(self.config.objects["Target"].blend_path)
