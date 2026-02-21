@@ -8,11 +8,14 @@ version = "0.1.0"
 description = "Specialized Illumination Simulator For Orbiting Spacecraft"
 requires-python = ">=3.10"
 dependencies = [
+    "embreex>=2.17.7.post7",
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
+    "rtree>=1.4.1",
     "pydantic>=2.12.5",
     "scipy>=1.15.3",
     "tqdm>=4.67.1",
+    "trimesh>=4.11.1",
 ]
 
 [project.optional-dependencies]

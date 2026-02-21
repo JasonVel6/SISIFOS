@@ -16,6 +16,17 @@ import json
 import os
 import shutil
 import numpy as np
+from pathlib import Path
+import sys
+
+
+if sys.platform != "win32":
+    _old_dl_flags = sys.getdlopenflags()
+    sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
+import trimesh
+if sys.platform != "win32":
+    sys.setdlopenflags(_old_dl_flags)
+    del _old_dl_flags
 
 import bpy
 from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
@@ -24,6 +35,113 @@ from bpy.app.handlers import persistent
 
 """ Defining fuctions to obtain ground truth data """
 
+# Trimesh depth pipeline helpers
+def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
+    T = np.eye(4, dtype=float)
+    T[:3, :4] = extr
+    return T
+
+
+def _invert_T(T: np.ndarray) -> np.ndarray:
+    R = T[:3, :3]
+    t = T[:3, 3]
+    Ti = np.eye(4)
+    Ti[:3, :3] = R.T
+    Ti[:3, 3] = -R.T @ t
+    return Ti
+
+
+def _camera_rays_in_camera_frame(W: int, H: int, K: np.ndarray) -> np.ndarray:
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    us = np.arange(W)
+    vs = np.arange(H)
+    uu, vv = np.meshgrid(us, vs)
+    x = (uu - cx) / fx
+    y = (vv - cy) / fy
+    z = np.ones_like(x)
+    dirs = np.stack([x, y, z], axis=-1).reshape(-1, 3).astype(float)
+    norms = np.linalg.norm(dirs, axis=-1, keepdims=True)
+    return dirs / (norms + 1e-12)
+
+
+def _transform_points(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    if pts.shape[0] == 0:
+        return pts.copy()
+    pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=float)], axis=1)
+    out = (T @ pts_h.T).T
+    return out[:, :3]
+
+
+def _mesh_from_scene(scene) -> trimesh.Trimesh:
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    meshes = []
+    for obj in scene.objects:
+        if obj.type != "MESH" or obj.hide_render:
+            continue
+        obj_eval = obj.evaluated_get(depsgraph)
+        mesh = obj_eval.to_mesh()
+        verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
+        faces = np.array([p.vertices[:] for p in mesh.polygons], dtype=int)
+        if verts.size == 0 or faces.size == 0:
+            obj_eval.to_mesh_clear()
+            continue
+        meshes.append(trimesh.Trimesh(vertices=verts, faces=faces, process=False))
+        obj_eval.to_mesh_clear()
+
+    if not meshes:
+        return trimesh.Trimesh()
+    if len(meshes) == 1:
+        return meshes[0]
+    return trimesh.util.concatenate(meshes)
+
+
+def _make_ray_intersector(mesh: trimesh.Trimesh):
+    from trimesh.ray.ray_pyembree import RayMeshIntersector
+    return RayMeshIntersector(mesh)
+
+
+def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
+    from modules.addon_ground_truth_generation import get_scene_resolution, get_camera_parameters_intrinsic
+    res_x, res_y = get_scene_resolution(scene)
+    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+    K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
+
+    T_CW = _make_T_from_extrinsic(extrinsic_mat)
+    T_WC = _invert_T(T_CW)
+
+    dirs_C = _camera_rays_in_camera_frame(res_x, res_y, K)
+    origins_W = np.repeat(T_WC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
+    dirs_W = (T_WC[:3, :3] @ dirs_C.T).T
+
+    mesh = _mesh_from_scene(scene)
+    if mesh.is_empty:
+        return np.zeros((res_y, res_x), dtype=np.float32)
+
+    intersector = _make_ray_intersector(mesh)
+    locs_W, ray_idx, _tri_idx = intersector.intersects_location(
+        origins_W, dirs_W, multiple_hits=False
+    )
+
+    depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
+    if locs_W.shape[0] == 0:
+        return depth_z.reshape(res_y, res_x)
+
+    locs_C = _transform_points(T_CW, locs_W)
+    z = locs_C[:, 2]
+    earth_obj = scene.objects.get("Earth")
+    if earth_obj is not None:
+        earth_pos = np.array(earth_obj.matrix_world.translation[:], dtype=float)
+        cam_pos = T_WC[:3, 3]
+        earth_radius = 0.5 * float(max(earth_obj.dimensions))
+        max_dist = max(0.0, float(np.linalg.norm(cam_pos - earth_pos)) - earth_radius)
+    else:
+        max_dist = float(scene.camera.data.clip_end)
+    valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
+    ray_idx = ray_idx[valid]
+    z = z[valid]
+    depth_z[ray_idx] = z.astype(np.float32)
+    return depth_z.reshape(res_y, res_x)
 
 def get_scene_resolution(scene):
     resolution_scale = scene.render.resolution_percentage / 100.0
@@ -551,21 +669,11 @@ def load_handler_after_rend_frame(
                 normal0 = load_file_data_to_numpy(scene, tmp_file_path0, "Normal")
             """ Depth + Disparity """
             if vision_blender.bool_save_depth:
-                if is_stereo_activated:
-                    tmp_file_path1 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix1),
-                    )
-                    z1, disp1 = load_file_data_to_numpy(scene, tmp_file_path1, "Depth")
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix0),
-                    )
-                else:
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH, "{:04d}_Depth.exr".format(scene.frame_current)
-                    )
-                z0, disp0 = load_file_data_to_numpy(scene, tmp_file_path0, "Depth")
+                z0 = depth_from_trimesh(scene, extrinsic_mat0)
+                disp0 = None
+                if is_stereo_activated and extrinsic_mat1 is not None:
+                    z1 = depth_from_trimesh(scene, extrinsic_mat1)
+                    disp1 = None
             if scene.render.engine == "CYCLES":
                 """Segmentation masks"""
                 if (
