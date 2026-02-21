@@ -29,7 +29,7 @@ def _id_to_color(ids: np.ndarray) -> np.ndarray:
 
 def _depth_vis_and_mask_from_rrpo(
     depth: np.ndarray,
-    R_RPO: float,  
+    target_dist: float,
     cmap_name: str = "magma",
 ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -37,6 +37,7 @@ def _depth_vis_and_mask_from_rrpo(
       rgb: HxWx3 float32 in [0,1]
       mask: HxW bool (True = near object)
     """
+    # TODO JD we should see if this is proper
     valid = np.isfinite(depth) & (depth > 0)
 
     dmin = float(np.min(depth[valid]))

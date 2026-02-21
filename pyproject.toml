@@ -12,6 +12,8 @@ dependencies = [
     "matplotlib>=3.10.8",
     "numpy>=2.2.6",
     "rtree>=1.4.1",
+    "pydantic>=2.12.5",
+    "scipy>=1.15.3",
     "tqdm>=4.67.1",
     "trimesh>=4.11.1",
 ]

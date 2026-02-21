@@ -147,6 +147,7 @@ fi
 # 4. Generate lock file
 update_progress "Generating lock file..."
 cd "$PROJECT_ROOT" || cleanup_and_exit "Failed to change to $PROJECT_ROOT"
+export UV_PROJECT_ENVIRONMENT="$(dirname "$BLENDER_PYTHON_BIN_DIR")"
 if ! "$BLENDER_PYTHON" -m uv lock -q >/dev/null 2>&1; then
     cleanup_and_exit "uv lock failed"
     return
@@ -175,6 +176,7 @@ if ! "$BLENDER_PYTHON" -m uv pip install --no-deps --editable . -q >/dev/null 2>
 fi
 
 # Success
+unset UV_PROJECT_ENVIRONMENT
 printf "\r%-60s\r" " "
 echo -e "${GREEN}SISIFOS Setup complete.${NC}"
 echo "Run 'source ./env/activate.sh' to start."

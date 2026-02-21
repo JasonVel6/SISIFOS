@@ -83,6 +83,7 @@ export SISIFOS_OLD_PS1="$PS1"
 export PATH="$BLENDER_PYTHON_BIN_DIR:$BLENDER_DIR:$PATH"
 export BLENDER="$BLENDER_EXE"
 export PYTHON="$BLENDER_PYTHON"
+export UV_PROJECT_ENVIRONMENT="$(dirname "$BLENDER_PYTHON_BIN_DIR")"
 
 # Update Prompt
 PS1="[SISIFOS] $PS1"
@@ -97,6 +98,7 @@ deactivate() {
         unset SISIFOS_OLD_PS1
         unset BLENDER
         unset PYTHON
+        unset UV_PROJECT_ENVIRONMENT
         unset -f deactivate
         
         echo -e "\033[0;33m[SISIFOS] Environment deactivated.\033[0m"
