@@ -23,10 +23,10 @@ import sys
 if sys.platform != "win32":
     _old_dl_flags = sys.getdlopenflags()
     sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
-import trimesh
-if sys.platform != "win32":
+    import embreex.rtcore_scene
     sys.setdlopenflags(_old_dl_flags)
     del _old_dl_flags
+import trimesh
 
 import bpy
 from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
