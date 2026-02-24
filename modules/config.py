@@ -22,13 +22,14 @@ class ObjectConfig(BaseModel):
 
 class CameraConfig(BaseModel):
     """Camera properties"""
-    focal_length: float = 400.0  # TODO auto-compute from R0_const, target size, and desired fill fraction
+    # TODO auto-compute from R0_const, target size, and desired fill fraction
+    focal_length: float = 400.0  # mm (matches Blender default)
     sensor_width: float = 36.0  # mm (matches Blender default)
-    clip_start: float = 0.00001
-    clip_end: float = 5000000.0
+    clip_start: float = 0.00001 #m
+    clip_end: float = 5000000.0 #m
     resolution: Tuple[int, int] = (480, 480)
     lens_flare: float = 0.01
-    exposure_time_s: float = 1.0/60.0
+    exposure_time_s: float = 1.0/60.0 #s
 
     @property
     def focal_length_px(self) -> float:
@@ -40,9 +41,6 @@ class RenderConfig(BaseModel):
     """Render settings"""
     engine: str = "CYCLES"
     samples: int = 32
-    bg_color: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
-    motion_blur: float = 0.0
-    noise_strength: float = 0.0
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
 
@@ -176,8 +174,8 @@ class TrajectoryConfig(BaseModel):
 
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
-    scene_blend_path: str
-    hdri_path: str
+    scene_blend_path: str = "assets/scene.blend"
+    hdri_path: str = "assets/starmap_2020_16k.exr"
     objects: Dict[str, ObjectConfig] = Field(default_factory=dict)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
