@@ -186,7 +186,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                 )
 
     # End of frames loop
-    timestamps = trajectory["t"].tolist()
+    timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 
@@ -275,3 +275,4 @@ if __name__ == "__main__":
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 
     run_sweep(sweep_config)
+    
