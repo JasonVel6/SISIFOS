@@ -1,0 +1,62 @@
+{
+    "base_config": {
+        "scene_blend_path": "assets/minimal_scene.blend",
+        "hdri_path": null,
+        "objects": {
+            "Target": {
+                "name": "Target",
+                "blend_path": "assets/minimal_cube.blend",
+                "scale_factor": 1.0
+            },
+            "Earth": {
+                "name": "Earth",
+                "blend_path": "assets/minimal_sphere.blend",
+                "scale_factor": 10.0
+            }
+        },
+        "camera": {
+            "focal_length": 190.0,
+            "clip_start": 0.1,
+            "clip_end": 5000.0,
+            "resolution": [
+                64,
+                64
+            ],
+            "exposure_time_s": 0.016
+        },
+        "render": {
+            "engine": "CYCLES",
+            "samples": 1,
+            "bg_color": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ]
+        },
+        "setup": {
+            "earth_mode": "on",
+            "stars_mode": "off",
+            "enable_blur": "off",
+            "enable_glare": "off"
+        },
+        "trajectory_type": "trajectory_generator",
+        "trajectory": {
+            "path_mode": "tumbling",
+            "seed": 42,
+            "num_agents": 1,
+            "num_mc": 1,
+            "tend": 2.0,
+            "tstep": 1.0,
+            "MIN_F2F_PX_MED": 1.0,
+            "R0_const": 30.0
+        },
+        "save_depth": true,
+        "save_normals": true,
+        "save_optical_flow": true,
+        "save_segmentation": true,
+        "save_obj_poses": true,
+        "selected_model": "RF_Target"
+    },
+    "sweep_parameters": {}
+}
