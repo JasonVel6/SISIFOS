@@ -1,70 +1,60 @@
 import bpy
 import os
 
-
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
 
+def add_emission_material(obj, color, name):
+    mat = bpy.data.materials.new(name=name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = color
+        bsdf.inputs["Emission Color"].default_value = color[:3] + (1.0,)
+        bsdf.inputs["Emission Strength"].default_value = 1.0
+    obj.data.materials.append(mat)
 
-def create_mesh(name, primitive_type, filepath):
-    """Create a simple .blend containing a single primitive (used for Target/Earth).
-
-    For `Target` we also create an `RF_Target` parent object to match renderer expectations.
-    """
+def create_mesh(name, primitive_type, filepath, radius=1.0, color=(1,1,1,1)):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     if primitive_type == 'CUBE':
-        bpy.ops.mesh.primitive_cube_add(size=2.0)
+        bpy.ops.mesh.primitive_cube_add(size=radius*2.0)
     elif primitive_type == 'SPHERE':
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0)
-
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, segments=32, ring_count=16)
+    
     obj = bpy.context.active_object
     obj.name = name
+    add_emission_material(obj, color, f"{name}_Mat")
 
-    # Wrap in RF_ target nomenclature expected by the renderer
     if name == "Target":
+        obj.pass_index = 1
         rf = bpy.data.objects.new("RF_Target", None)
         bpy.context.scene.collection.objects.link(rf)
         obj.parent = rf
+    elif name == "Earth":
+        obj.pass_index = 2
 
     ensure_dir(os.path.dirname(filepath))
     bpy.ops.wm.save_as_mainfile(filepath=filepath)
 
-
 def create_minimal_scene(filepath):
-    """Create a minimal scene .blend suitable for CI runs.
-
-    Ensures a World, a Camera named "Camera", and a Sun light named "Sun" exist.
-    Also places placeholder empties for Clouds and Atmo so renderer finds the names.
-    """
     bpy.ops.wm.read_factory_settings(use_empty=True)
-
-    # Ensure a World exists
     if not bpy.context.scene.world:
-        w = bpy.data.worlds.new(name="SISIFOS_World")
-        bpy.context.scene.world = w
+        bpy.context.scene.world = bpy.data.worlds.new(name="SISIFOS_World")
 
-    # Create Camera named "Camera"
-    cam_data = bpy.data.cameras.new(name="Camera")
-    cam_obj = bpy.data.objects.new("Camera", cam_data)
+    cam_obj = bpy.data.objects.new("Camera", bpy.data.cameras.new(name="Camera"))
     bpy.context.scene.collection.objects.link(cam_obj)
     bpy.context.scene.camera = cam_obj
 
-    # Create Sun light named "Sun"
-    light_data = bpy.data.lights.new(name="Sun", type='SUN')
-    sun_obj = bpy.data.objects.new("Sun", light_data)
+    sun_obj = bpy.data.objects.new("Sun", bpy.data.lights.new(name="Sun", type='SUN'))
     bpy.context.scene.collection.objects.link(sun_obj)
-    sun_obj.location = (10.0, -10.0, 10.0)
 
-    # Create placeholders for Clouds and Atmo so renderer scaling won't KeyError
-    clouds = bpy.data.objects.new("Clouds", None)
-    atmo = bpy.data.objects.new("Atmo", None)
-    bpy.context.scene.collection.objects.link(clouds)
-    bpy.context.scene.collection.objects.link(atmo)
+    for placeholder in ["Clouds", "Atmo"]:
+        bpy.context.scene.collection.objects.link(bpy.data.objects.new(placeholder, None))
 
     ensure_dir(os.path.dirname(filepath))
     bpy.ops.wm.save_as_mainfile(filepath=filepath)
 
 if __name__ == '__main__':
-    create_mesh("Target", 'CUBE', "assets/minimal_cube.blend")
-    create_mesh("Earth", 'SPHERE', "assets/minimal_sphere.blend")
+    create_mesh("Target", 'CUBE', "assets/minimal_cube.blend", radius=2.5, color=(1.0, 0.0, 0.0, 1.0))
+    create_mesh("Earth", 'SPHERE', "assets/minimal_sphere.blend", radius=637.1, color=(0.0, 0.0, 1.0, 1.0))
     create_minimal_scene("assets/minimal_scene.blend")

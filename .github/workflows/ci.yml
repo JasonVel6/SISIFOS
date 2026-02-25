@@ -41,17 +41,17 @@ jobs:
           source ./env/activate.sh
           $BLENDER -b -P tests/create_ci_assets.py
 
-      - name: Execute Native Blender Tests
+      - name: Execute Test Suite
+        env:
+          CI: 1
         run: |
           source ./env/activate.sh
           $BLENDER -b -P tests/run_in_blender.py
 
-      - name: Execute End-to-End Pipeline
-        run: |
-          source ./env/activate.sh
-          CI=1 $BLENDER -b -P main.py -- --sweep_config_path configs/ci_test.json
-
-      - name: Verify Output Artifacts
-        run: |
-          ls -la renders/*/GTAnnotations/NPZ/*.npz
-          ls -la renders/*/images_raw/*.png
+      - name: Upload Render Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-render-artifacts
+          path: renders/
+          retention-days: 14
