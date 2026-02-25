@@ -41,6 +41,11 @@ jobs:
         run: |
           source ./env/activate.sh
           $BLENDER -b -P tests/create_ci_assets.py
+          BLENDER_EXIT=$?
+          if [ $BLENDER_EXIT -ne 0 ]; then
+            echo "::error::Blender exited with code $BLENDER_EXIT while generating CI assets."
+            exit $BLENDER_EXIT
+          fi
 
       - name: Execute Test Suite
         env:
@@ -48,6 +53,11 @@ jobs:
         run: |
           source ./env/activate.sh
           $BLENDER -b -P tests/run_in_blender.py
+          BLENDER_EXIT=$?
+          if [ $BLENDER_EXIT -ne 0 ]; then
+            echo "::error::Blender test runner exited with code $BLENDER_EXIT."
+            exit $BLENDER_EXIT
+          fi
 
       - name: Upload Render Artifacts
         if: always()
@@ -56,3 +66,4 @@ jobs:
           name: ci-render-artifacts
           path: renders/
           retention-days: 14
+          if-no-files-found: error
