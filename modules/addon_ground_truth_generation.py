@@ -19,7 +19,7 @@ import numpy as np
 
 import bpy
 from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
-from bpy.types import Panel, Operator, PropertyGroup
+from bpy.types import Panel, PropertyGroup
 from bpy.app.handlers import persistent
 
 """ Defining fuctions to obtain ground truth data """
@@ -466,9 +466,9 @@ def load_handler_render_init(scene):
             ### stereo mode
             stereo_info["stereo_mode"] = cam.data.stereo.convergence_mode
             ### stereo interocular distance
-            stereo_info[
-                "stereo_interocular_distance [m]"
-            ] = cam.data.stereo.interocular_distance
+            stereo_info["stereo_interocular_distance [m]"] = (
+                cam.data.stereo.interocular_distance
+            )
             ### stereo pivot
             stereo_info["stereo_pivot"] = cam.data.stereo.pivot
             dict_cam_info["stereo_info"] = stereo_info
@@ -486,7 +486,7 @@ def load_handler_after_rend_frame(
     """This script runs after rendering each frame"""
     # ref: https://blenderartists.org/t/how-to-run-script-on-every-frame-in-blender-render/699404/2
     # check if user wants to generate the ground truth data
-    #print("Entered load_handler")
+    # print("Entered load_handler")
     if scene.vision_blender.bool_save_gt_data:
         vision_blender = scene.vision_blender
         is_stereo_activated = scene.render.use_multiview
@@ -727,7 +727,6 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
 
     def draw(self, context):
         scene = context.scene
-        rd = scene.render
         layout = self.layout
 
         vision_blender = scene.vision_blender

@@ -1,6 +1,7 @@
 import numpy as np
 from modules.trajectory.motion_cases import detect_degeneracy, repair_hill
 
+
 class TestDegeneracyAndRepair:
     def test_radial_velocity_is_degenerate(self):
         r0, v0 = np.array([30.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0])

@@ -2,20 +2,27 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from datetime import datetime
-from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb, _id_to_color
+from .vis_utils import (
+    _depth_vis_and_mask_from_rrpo,
+    _norm_to_rgb,
+    _flow_to_rgb,
+    _id_to_color,
+)
 import os
-import shutil
 import bpy
 import subprocess
+
 
 def vprint(msg: str, verbose: bool = True):
     if verbose:
         print(msg)
 
+
 def ensure_dir(path: Path) -> Path:
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
 
 def format_R_RPO(value: float) -> str:
     if abs(value - round(value)) < 1e-6:
@@ -23,8 +30,10 @@ def format_R_RPO(value: float) -> str:
     # one decimal place, replace '.' with 'p'
     return f"R{str(round(value, 1)).replace('.', 'p')}"
 
+
 def get_timestamp_folder():
     return datetime.now().strftime("%Y-%m-%d_%H%M")
+
 
 def handle_gt_from_npz(
     npz_src: Path,
@@ -36,9 +45,9 @@ def handle_gt_from_npz(
     target_dist: float,
     raw_image_filename: str,
     raw_images_dir: str,
-    masked_images_dir: str
+    masked_images_dir: str,
 ):
-    
+
     npz_src = Path(npz_src)
     gt_npz_dir = Path(gt_npz_dir)
     gt_depth_dir = Path(gt_depth_dir)
@@ -56,10 +65,11 @@ def handle_gt_from_npz(
     npz_dst = gt_npz_dir / npz_src.name
     if npz_dst.resolve() != npz_src.resolve():
         try:
-            npz_src.replace(npz_dst)   # atomic move if possible
+            npz_src.replace(npz_dst)  # atomic move if possible
         except Exception:
             # fallback: copy then remove
             import shutil
+
             shutil.copy2(npz_src, npz_dst)
             npz_src.unlink(missing_ok=True)
 
@@ -67,16 +77,20 @@ def handle_gt_from_npz(
 
     data = np.load(npz_dst, allow_pickle=True)
 
-    
-   
     # --------- DEPTH (masked + colormap) ---------
     if "depth_map" in data:
         d = data["depth_map"].astype(np.float32)
-        depth_rgb, near_mask = _depth_vis_and_mask_from_rrpo(d, target_dist=target_dist, cmap_name="viridis")
+        depth_rgb, near_mask = _depth_vis_and_mask_from_rrpo(
+            d, target_dist=target_dist, cmap_name="viridis"
+        )
         plt.imsave(str(gt_depth_dir / f"{base}_Depth.png"), depth_rgb)
 
         # Save the near-mask too (handy for debugging / training)
-        plt.imsave(str(gt_seg_dir / f"{base}_SegDepthGate.png"), near_mask.astype(np.float32), cmap="gray")
+        plt.imsave(
+            str(gt_seg_dir / f"{base}_SegDepthGate.png"),
+            near_mask.astype(np.float32),
+            cmap="gray",
+        )
 
     # --------- NORMALS ---------
     if "normal_map" in data:
@@ -102,6 +116,7 @@ def handle_gt_from_npz(
     masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
     plt.imsave(masked_img_path, masked_img)
 
+
 def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     """
     Create imgList.txt with timestamp-image pairs.
@@ -114,13 +129,8 @@ def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     print(f"  Created: {imglist_path}")
     return imglist_path
 
-def images_to_video_ffmpeg(
-    input_pattern,
-    output_path,
-    fps=24,
-    crf=18,
-    overwrite=True
-):
+
+def images_to_video_ffmpeg(input_pattern, output_path, fps=24, crf=18, overwrite=True):
     """
     Convert rendered images to a video using FFmpeg.
 
@@ -144,12 +154,17 @@ def images_to_video_ffmpeg(
     cmd = [
         "ffmpeg",
         overwrite_flag,
-        "-framerate", str(fps),
-        "-i", abs_input,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",   # safest for compatibility
-        "-crf", str(crf),
-        abs_output
+        "-framerate",
+        str(fps),
+        "-i",
+        abs_input,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",  # safest for compatibility
+        "-crf",
+        str(crf),
+        abs_output,
     ]
 
     print("Running FFmpeg command:\n", " ".join(cmd))
