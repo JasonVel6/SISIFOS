@@ -127,12 +127,12 @@ fi
 
 # 3. Bootstrap Python environment
 update_progress "Bootstrapping pip..."
-if ! "$BLENDER_PYTHON" -m ensurepip --upgrade >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m ensurepip --upgrade; then
     cleanup_and_exit "Failed to bootstrap pip"
 fi
 
 update_progress "Upgrading build tools..."
-if ! "$BLENDER_PYTHON" -m pip install --upgrade pip setuptools wheel uv -q >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m pip install --upgrade pip setuptools wheel uv; then
     cleanup_and_exit "Failed to install build tools"
 fi
 
@@ -140,7 +140,7 @@ fi
 update_progress "Generating lock file..."
 cd "$PROJECT_ROOT" || cleanup_and_exit "Failed to change to $PROJECT_ROOT"
 export UV_PROJECT_ENVIRONMENT="$(dirname "$BLENDER_PYTHON_BIN_DIR")"
-if ! "$BLENDER_PYTHON" -m uv lock -q >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m uv lock; then
     cleanup_and_exit "uv lock failed"
 fi
 
@@ -149,17 +149,17 @@ UV_REQ_FILE="/tmp/sisifos-uv-req.txt"
 [ -f "$UV_REQ_FILE" ] && rm "$UV_REQ_FILE"
 
 update_progress "Exporting dependencies..."
-if ! "$BLENDER_PYTHON" -m uv export --format requirements.txt --locked --no-emit-project --output-file "$UV_REQ_FILE" -q >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m uv export --format requirements.txt --locked --no-emit-project --output-file "$UV_REQ_FILE"; then
     cleanup_and_exit "uv export failed"
 fi
 
 update_progress "Installing dependencies..."
-if ! "$BLENDER_PYTHON" -m uv pip install --require-hashes --requirements "$UV_REQ_FILE" -q >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m uv pip install --require-hashes --requirements "$UV_REQ_FILE"; then
     cleanup_and_exit "uv pip install failed"
 fi
 
 update_progress "Installing project in editable mode..."
-if ! "$BLENDER_PYTHON" -m uv pip install --no-deps --editable . -q >/dev/null 2>&1; then
+if ! "$BLENDER_PYTHON" -m uv pip install --no-deps --editable .; then
     cleanup_and_exit "editable install failed"
 fi
 
