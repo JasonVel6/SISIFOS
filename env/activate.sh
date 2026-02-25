@@ -14,7 +14,7 @@ fi
 if [ -n "$BASH_SOURCE" ]; then
     # Bash (Linux/Mac) uses BASH_SOURCE
     SCRIPT_PATH="${BASH_SOURCE[0]}"
-elif [ -n "$ZSH_VERSION" ]; then
+elif [ -n "${ZSH_VERSION:-}" ]; then
     # Zsh (Mac default) uses %x prompt expansion
     SCRIPT_PATH="${(%):-%x}"
 else
@@ -65,19 +65,22 @@ PYPROJECT_FILE="$PROJECT_ROOT/pyproject.toml"
 echo -ne "\033[0;36m[SISIFOS] Syncing dependencies...\033[0m"
 
 if [[ -f "$LOCK_FILE" && -f "$PYPROJECT_FILE" ]]; then
+    export UV_PROJECT_ENVIRONMENT="$(dirname "$BLENDER_PYTHON_BIN_DIR")"
+
     if "$BLENDER_PYTHON" -m uv sync --no-editable -q >/dev/null 2>&1; then
         echo -ne "\r\033[0;32m[SISIFOS] Environment activated.\t\t\t\t\t\t\033[0m\n"
     else
-        echo -ne "\r\033[0;33m[SISIFOS] Warning: Failed to sync. Run 'source ./env/setup.sh' to fix.\t\t\033[0m\n"
+        echo -ne "\r\033[0;31m[SISIFOS] Error: Failed to sync dependencies. Run 'source ./env/setup.sh' to fix.\t\033[0m\n"
         return 1 2>/dev/null || return 1
     fi
 else
-    echo -ne "\r\033[0;32m[SISIFOS] Environment activated.\t\t\t\t\t\t\033[0m\n"
+    echo -ne "\r\033[0;31m[SISIFOS] Error: Lock file not found. Run 'source ./env/setup.sh' first.\t\t\033[0m\n"
+    return 1 2>/dev/null || return 1
 fi
 
 # Save old state
 export SISIFOS_OLD_PATH="$PATH"
-export SISIFOS_OLD_PS1="$PS1"
+export SISIFOS_OLD_PS1="${PS1:-}"
 
 # Set environment variables
 export PATH="$BLENDER_PYTHON_BIN_DIR:$BLENDER_DIR:$PATH"
@@ -86,14 +89,14 @@ export PYTHON="$BLENDER_PYTHON"
 export UV_PROJECT_ENVIRONMENT="$(dirname "$BLENDER_PYTHON_BIN_DIR")"
 
 # Update Prompt
-PS1="[SISIFOS] $PS1"
+PS1="[SISIFOS] ${PS1:-}"
 
 # Define Deactivate Function
 deactivate() {
-    if [ -n "$SISIFOS_OLD_PATH" ]; then
+    if [ -n "${SISIFOS_OLD_PATH:-}" ]; then
         export PATH="$SISIFOS_OLD_PATH"
         export PS1="$SISIFOS_OLD_PS1"
-        
+
         unset SISIFOS_OLD_PATH
         unset SISIFOS_OLD_PS1
         unset BLENDER
