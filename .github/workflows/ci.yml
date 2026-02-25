@@ -1,8 +1,6 @@
 name: CI Pipeline
 
 on:
-  push:
-    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
   pull_request:
     paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
   workflow_dispatch:
