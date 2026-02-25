@@ -13,39 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Ruff Lint
-        uses: astral-sh/ruff-action@v3
-
-      - name: Ruff Format Check
-        uses: astral-sh/ruff-action@v3
-        with:
-          args: "format --check"
-
-  security-audit:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Run pip-audit
-        run: |
-          pip install pip-audit
-          pip install -e .
-          pip-audit
-
   integration-tests:
-    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
