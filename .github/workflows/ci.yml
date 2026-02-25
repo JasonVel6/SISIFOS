@@ -2,9 +2,10 @@ name: CI Pipeline
 
 on:
   push:
-    paths: ['**.py', '**.json', '**.sh', '.github/workflows/ci.yml']
+    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['**.py', '**.json', '**.sh', '.github/workflows/ci.yml']
+    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
