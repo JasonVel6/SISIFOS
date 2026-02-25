@@ -44,12 +44,12 @@ jobs:
       - name: Execute Native Blender Tests
         run: |
           source ./env/activate.sh
-          python -m pytest tests/ -v
+          $BLENDER -b -P tests/run_in_blender.py
 
       - name: Execute End-to-End Pipeline
         run: |
           source ./env/activate.sh
-          CI=1 $BLENDER -b -P main.py -- --config_path configs/ci_test.json
+          CI=1 $BLENDER -b -P main.py -- --sweep_config_path configs/ci_test.json
 
       - name: Verify Output Artifacts
         run: |
