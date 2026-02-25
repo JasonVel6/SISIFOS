@@ -250,7 +250,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
 
-    output_dir = Path("./renders") / get_timestamp_folder()
+    output_dir = (Path("./renders") / get_timestamp_folder()).resolve()
     ensure_dir(output_dir)
     print(
         f"Running sweep with {len(configs)} configurations. Output base dir: {output_dir}"

@@ -1,9 +1,11 @@
+import os
 import subprocess
 import sys
 
 
 class TestImportSafety:
     def test_config_import_does_not_load_native_binaries(self):
+        env = {**os.environ, "PYTHONNOUSERSITE": "1"}
         result = subprocess.run(
             [
                 sys.executable,
@@ -14,5 +16,6 @@ class TestImportSafety:
             ],
             capture_output=True,
             text=True,
+            env=env,
         )
-        assert result.returncode == 0
+        assert result.returncode == 0, result.stderr
