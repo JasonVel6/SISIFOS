@@ -22,7 +22,15 @@ import numpy as np
 sys.path.append(os.getcwd())
 from modules.config import SceneConfig, SweepConfig
 from modules.renderer import BlenderRenderer
-from modules.io_utils import ensure_dir, get_timestamp_folder, format_R_RPO, handle_gt_from_npz, images_to_video_ffmpeg, vprint, create_image_list
+from modules.io_utils import (
+    ensure_dir,
+    get_timestamp_folder,
+    format_R_RPO,
+    handle_gt_from_npz,
+    images_to_video_blender_sequence,
+    vprint,
+    create_image_list,
+)
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib, 
     make_fake_frame_from_frame0
@@ -190,13 +198,15 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 
-    # Generate video from rendered frames
-    # images_to_video_ffmpeg(
-    #     input_pattern = os.path.join(image_out_dir, "frame_%04d.png"),
-    #     output_path   = os.path.join(image_out_dir, "output_video.mp4"),
-    #     fps = 5,
-    #     crf = 20
-    # )
+    print(f"Finished rendering frames for {model.name}. Output directory: {renders_base_dir}")
+    if config.setup.generate_video:
+        print(f"Saving video")
+        images_to_video_blender_sequence(
+            image_dir=image_out_dir,
+            image_filenames=image_filenames,
+            output_path=renders_base_dir / "frames.mp4",
+            fps=config.setup.video_fps,
+        )
 
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
