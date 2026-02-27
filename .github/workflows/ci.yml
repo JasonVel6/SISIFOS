@@ -1,0 +1,70 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
+  pull_request:
+    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Cache Blender Binary
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: env/Blender_4.5
+          key: ${{ runner.os }}-blender-4.5.6
+
+      - name: Bypass Large Asset Downloads
+        run: |
+          mkdir -p assets
+          touch assets/starmap_2020_16k.exr
+
+      - name: Setup Environment
+        run: |
+          chmod +x ./env/setup.sh
+          ./env/setup.sh
+
+      - name: Generate Minimal CI Assets
+        run: |
+          source ./env/activate.sh
+          $BLENDER -b -P tests/create_ci_assets.py
+          BLENDER_EXIT=$?
+          if [ $BLENDER_EXIT -ne 0 ]; then
+            echo "::error::Blender exited with code $BLENDER_EXIT while generating CI assets."
+            exit $BLENDER_EXIT
+          fi
+
+      - name: Execute Test Suite
+        env:
+          CI: 1
+        run: |
+          source ./env/activate.sh
+          $BLENDER -b -P tests/run_in_blender.py
+          BLENDER_EXIT=$?
+          if [ $BLENDER_EXIT -ne 0 ]; then
+            echo "::error::Blender test runner exited with code $BLENDER_EXIT."
+            exit $BLENDER_EXIT
+          fi
+
+      - name: Upload Render Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-render-artifacts
+          path: renders/
+          retention-days: 14
+          if-no-files-found: error

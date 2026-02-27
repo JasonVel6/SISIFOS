@@ -25,7 +25,13 @@ def sk(u):
     Returns:
     U_x -- the 3x3 skew-symmetric matrix
     """
-    U_x = np.array([[0, -u[2], u[1]], [u[2], 0, -u[0]], [-u[1], u[0], 0]])
+    
+    u = np.asarray(u).flatten()
+    U_x = np.array([
+        [0.0, -float(u[2]), float(u[1])],
+        [float(u[2]), 0.0, -float(u[0])],
+        [-float(u[1]), float(u[0]), 0.0],
+    ])
     return U_x
 
 
