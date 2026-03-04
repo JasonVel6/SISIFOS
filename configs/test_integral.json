@@ -1,0 +1,111 @@
+{
+  "base_config": {
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
+    "objects": {
+      "Target": {
+        "name": "Target",
+        "blend_path": "assets/spacecraft_models_0_5.blend"
+      },
+      "Earth": {
+        "name": "Earth",
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
+      },
+      "Clouds": {
+        "name": "Clouds",
+        "blend_path": null,
+        "scale_factor": 10.0
+      },
+      "Atmo": {
+        "name": "Atmo",
+        "blend_path": null,
+        "scale_factor": 10.0
+      }
+    },
+    "camera": {
+      "focal_length": 190.0,
+      "clip_start": 1e-05,
+      "clip_end": 5000000.0,
+      "resolution": [
+        2048,
+        2048
+      ],
+      "lens_flare": 0.01,
+      "exposure_time_s": 0.016666666666666666
+    },
+    "render": {
+      "engine": "CYCLES",
+      "samples": 4,
+      "bg_color": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "motion_blur": 0.0,
+      "noise_strength": 0.0
+    },
+    "setup": {
+      "earth_mode": "on",
+      "stars_mode": "on",
+      "enable_blur": "off",
+      "enable_glare": "off",
+      "t_ref_s": 0.01666667,
+      "blur_shutter_factor": 8.8,
+      "blur_motion_factor": 8.8,
+      "glare_threshold": 0.95,
+      "glare_size": 6
+    },
+    "trajectory_type": "trajectory_generator",
+    "trajectory": {
+      "path_mode": "tumbling",
+      "seed": null,
+      "num_agents": 1,
+      "num_mc": 1,
+      "r_AG_G": [
+        0.1,
+        0.05,
+        0.15
+      ],
+      "sigma_Rxy_aps3": 3.878509448876288e-06,
+      "sigma_Rz_aps3": 3.393695767766752e-05,
+      "sigma_omega": 1.626114521074242e-06,
+      "sigma_accel": 0.00021928336031548312,
+      "MEAN_DEFAULT": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "GYRO_BIAS_SIGMA_DEGPHR": 0.005,
+      "GYRO_BIAS_TAU_S": 3600.0,
+      "ACCEL_BIAS_SIGMA_UG": 10.0,
+      "ACCEL_BIAS_TAU_S": 3600.0,
+      "R0_const": 30.0,
+      "SUN_ALIGN_ENABLE": true,
+      "SUN_ALIGN_CONE_DEG": 12.0,
+      "SUN_ALIGN_JITTER_D": 4.0,
+      "EARTH_BACKGROUND_ENABLE": true,
+      "mu_ref": 398600441800000.0,
+      "h_orbit": 550000.0,
+      "R_earth": 6371000.0,
+      "IMAGE_MAX_DT_S": 1.0,
+      "tend": 10.0,
+      "tstep": 1.0,
+      "MIN_F2F_PX_MED": 3.0,
+      "m": 4000.0,
+      "l": 5.0,
+      "w": 3.2,
+      "h": 2.8
+    },
+    "save_depth": false,
+    "save_normals": false,
+    "save_optical_flow": false,
+    "save_segmentation": false,
+    "save_obj_poses": false,
+    "frame_ids": null,
+    "selected_model": "RF_Integral",
+    "model_rotation_z_deg": 45.0
+  },
+  "sweep_parameters": {}
+}

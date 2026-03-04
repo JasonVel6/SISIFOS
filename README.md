@@ -86,10 +86,10 @@ Edit the config file `configs/examples/config_example_basic.json` to match your 
 
 SISIFOS expects a reference trajectory text file containing the target pose, camera pose, and sun angles per frame.
 
-File format (one row per frame):
+File format (CSV):
 
 ```
-p_G_I(x) p_G_I(y) p_G_I(z)   q_I_G(w) q_I_G(x) q_I_G(y) q_I_G(z)   p_C_I(x) p_C_I(y) p_C_I(z)   q_I_C(w) q_I_C(x) q_I_C(y) q_I_C(z)   sun_az  sun_el
+timestamp, p_G_I_x, p_G_I_y, p_G_I_z, q_I_G_w, q_I_G_x, q_I_G_y, q_I_G_z, p_C_I_x,p_C_I_y, p_C_I_z, q_I_C_w, q_I_C_x, q_I_C_y, q_I_C_z, sun_az, sun_el
 ```
 
 Where:
@@ -106,7 +106,7 @@ Where:
 After activating the environment, run the simulator from the root of the repo:
 
 ```powershell
-blender -b -P main.py -- configs/examples/config_example_basic.json
+blender -b -P main.py -- --sweep_config_path configs/examples/example_trajectory_generation.json
 ```
 
 Outputs, unless modified in the code, go to:
