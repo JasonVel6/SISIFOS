@@ -50,6 +50,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             config_prefix=config_prefix,
             model_name=model_token,
             camera_config=config.camera,
+            save_scene_plots=config.save_scene_plots,
         )
         
     elif config.trajectory_type == "sampling_trajectory":
@@ -186,7 +187,8 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                 )
 
     # End of frames loop
-    timestamps = trajectory["t"].tolist()
+    all_timestamps = trajectory["t"].tolist()
+    timestamps = [all_timestamps[i] for i in frame_ids]
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 

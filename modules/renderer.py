@@ -37,23 +37,35 @@ class BlenderRenderer:
         if self.config.render.engine == "CYCLES":
             try:
                 prefs = bpy.context.preferences.addons["cycles"].preferences
+                # Set device type and refresh twice — Blender 4.x sometimes
+                # needs a second get_devices() after open_mainfile to populate
+                # the device list correctly.
                 prefs.compute_device_type = 'CUDA'
-                prefs.get_devices()  # refresh device list
+                prefs.get_devices()
+                prefs.compute_device_type = 'CUDA'
+                prefs.get_devices()
                 gpu_found = False
                 for device in prefs.devices:
+                    vprint(f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}", self.verbose)
                     if device.type == 'CUDA':
                         device.use = True
                         gpu_found = True
-                        vprint(f"  GPU enabled: {device.name}", self.verbose)
                     else:
                         device.use = False  # disable CPU compute when GPU available
                 if gpu_found:
                     self.scene.cycles.device = 'GPU'
-                    vprint("Cycles rendering on GPU (CUDA)", self.verbose)
+                    vprint(f"Cycles rendering on GPU (CUDA)", self.verbose)
                 else:
                     vprint("No CUDA GPU found, using CPU rendering", self.verbose)
+                # Confirm final state
+                vprint(f"  [GPU confirm] scene.cycles.device = {self.scene.cycles.device}", self.verbose)
+                vprint(f"  [GPU confirm] compute_device_type = {prefs.compute_device_type}", self.verbose)
+                for device in prefs.devices:
+                    vprint(f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}", self.verbose)
             except Exception as e:
-                vprint(f"GPU setup failed ({e}), using CPU rendering", self.verbose)
+                import traceback
+                vprint(f"GPU setup failed: {e}", self.verbose)
+                traceback.print_exc()
 
 
         new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
@@ -136,13 +148,16 @@ class BlenderRenderer:
         else:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
         vb = self.scene.vision_blender
-        vb.bool_save_gt_data = True
-        vb.bool_save_depth = True
-        vb.bool_save_normals = True
+        vb.bool_save_depth = self.config.save_depth
+        vb.bool_save_normals = self.config.save_normals
         vb.bool_save_cam_param = True
-        vb.bool_save_opt_flow = True               # needs Cycles' Vector pass
-        vb.bool_save_segmentation_masks = True     # needs object pass_index > 0
-        vb.bool_save_obj_poses = True
+        vb.bool_save_opt_flow = self.config.save_optical_flow
+        vb.bool_save_segmentation_masks = self.config.save_segmentation
+        vb.bool_save_obj_poses = self.config.save_obj_poses
+        vb.bool_save_gt_data = any([
+            vb.bool_save_depth, vb.bool_save_normals, vb.bool_save_cam_param,
+            vb.bool_save_opt_flow, vb.bool_save_segmentation_masks, vb.bool_save_obj_poses
+        ])
             
         vprint("Vision Blender addon configured", self.verbose)
         cam = bpy.data.objects.get("Camera")
@@ -257,43 +272,6 @@ class BlenderRenderer:
         # print("\n" + "="*80)
         # print(f"[Frame {str(frame_id).zfill(N_digits)}] Rendering with exposure {exposure_time_s*1e6:.1f}µs")
         # print("="*80)
-        
-        # Model pose
-        model_euler_deg = tuple(math.degrees(a) for a in model.rotation_euler)
-        # print(f"\n[Model] {model.name} (in inertial frame)")
-        # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
-        # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  Rotation E:  ({model_euler_deg[0]:8.3f}°, {model_euler_deg[1]:8.3f}°, {model_euler_deg[2]:8.3f}°)")
-        # print(f"  Distance from origin: {p_G_I.length:.6f} m")
-        
-        # Camera pose
-        cam_euler_deg = tuple(math.degrees(a) for a in cam.rotation_euler)
-        cam_to_model = (model.location - cam.location).normalized()
-        distance_cam_model = (model.location - cam.location).length
-        # print(f"\n[Camera] {cam.name} (in inertial frame)")
-        # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
-        # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Rotation E:  ({cam_euler_deg[0]:8.3f}°, {cam_euler_deg[1]:8.3f}°, {cam_euler_deg[2]:8.3f}°)")
-        # print(f"  Look dir:    ({cam_to_model.x:8.6f}, {cam_to_model.y:8.6f}, {cam_to_model.z:8.6f})")
-        # print(f"  Distance to model: {distance_cam_model:.6f} m")
-        # print(f"  Focal length: {cam.data.lens:.2f} mm")
-        
-        # Trajectory info
-        # print(f"\n[Trajectory Frame {frame_id}] (Inertial Frame Reference)")
-        # print(f"  p_G_I (target pos in I):  ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
-        # print(f"  q_I_G (target orient):    ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  p_C_I (camera pos in I):  ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
-        # print(f"  q_I_C (camera orient):    ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Sun azimuth: {sun_az:7.2f}°, elevation: {sun_el:7.2f}°")
-        
-        # Render settings
-        # print(f"\n[Render Settings]")
-        # print(f"  Output:      {self.scene.render.filepath}")
-        # print(f"  Resolution:  {self.scene.render.resolution_x}x{self.scene.render.resolution_y}")
-        # print(f"  Engine:      {self.scene.render.engine}")
-        # if self.scene.render.engine == 'CYCLES':
-        #     print(f"  Samples:     {self.scene.cycles.samples}")
-        # print("="*80 + "\n")
         
         # Set exposure
         base_ev = self.scene.view_settings.exposure
