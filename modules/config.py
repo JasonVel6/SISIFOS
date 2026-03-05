@@ -109,6 +109,10 @@ class TrajectoryConfig(BaseModel):
 
     # Distance to target
     R0_const: float = 30.0
+    # CRO out-of-plane amplitude for tumbling mode.
+    # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
+    # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
+    tumbling_span_frac: float = 0.20
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
     SUN_ALIGN_CONE_DEG: float = 12.0

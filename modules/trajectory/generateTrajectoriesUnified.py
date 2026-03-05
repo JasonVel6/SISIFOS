@@ -137,7 +137,8 @@ def generate_trajectories_dynamical(
             rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=1.0 * config.IMAGE_MAX_DT_S, rho_max=0.95, R0_const=config.R0_const,
             omega_min_deg=3.0, omega_max_deg=5.0,
-            J=config.J, min_asymmetry_component=0.4
+            J=config.J, min_asymmetry_component=0.4,
+            span_frac=config.tumbling_span_frac
         )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])

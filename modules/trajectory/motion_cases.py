@@ -704,7 +704,8 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
                   px_min=6.0, rho_max=0.90, n_scalar=None, R0_const=100.0,
                   omega_min_deg=0.5, omega_max_deg=2.0,
                   off_axis_min=0.3, max_omega_retries=100,
-                  J=None, min_asymmetry_component=0.4):
+                  J=None, min_asymmetry_component=0.4,
+                  span_frac=0.20):
     """Initialize tumbling case with CRO trajectory.
 
     Uses CRO (Cross-Range Oscillation) bounded HCW trajectory for the chaser,
@@ -764,8 +765,6 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
     # A sets in-plane amplitude, B sets out-of-plane amplitude
     # r_min = 2A = R0_const, r_max = sqrt((2A)^2 + B^2)
     # Therefore: B = sqrt(r_max^2 - (2A)^2) = sqrt(r_max^2 - R0_const^2)
-    # Use span_frac=0.20 (20% range variation) as baseline - repair will boost B if needed
-    span_frac = 0.20
     A_base = 0.5 * float(R0_const)  # so 2*A_base = R0_const
     r_max_in = (1.0 + span_frac) * float(R0_const)
     B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base)**2, 0.0)))
