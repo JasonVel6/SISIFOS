@@ -86,6 +86,7 @@
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
       "R0_const": 30.0,
+      "tumbling_span_frac": 2.0,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
