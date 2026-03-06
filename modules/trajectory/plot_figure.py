@@ -649,8 +649,7 @@ def generate_scene_plots(output_dir: str,
                             r_CG_arr: np.ndarray,
                             q_IG_arr: np.ndarray,
                             q_IC_arr: np.ndarray,
-                            every_n_frames=1,
-                            max_frames=None):
+                            max_frames=500):
     """
     Generate two plot sets for multiple frames in the INERTIAL FRAME:
     1) Existing world/lighting scene plots.
@@ -683,8 +682,6 @@ def generate_scene_plots(output_dir: str,
         Quaternion [w, x, y, z] from Inertial to Body (G) frame per frame
     q_IC_arr : array-like (N, 4)
         Quaternion [w, x, y, z] from Inertial to Camera (C) frame per frame
-    every_n_frames : int
-        Generate plot every N frames (1 = every frame)
     max_frames : int or None
         Maximum number of frames to process
     """
@@ -699,12 +696,16 @@ def generate_scene_plots(output_dir: str,
         len(q_IC_arr),
     )
 
-    if max_frames is not None:
-        n_frames = min(n_frames, max_frames)
     if n_frames <= 0:
         raise ValueError("No frames available to plot scene figures.")
-    if every_n_frames <= 0:
-        raise ValueError("every_n_frames must be >= 1.")
+    
+    if max_frames is not None and n_frames > max_frames:
+        frame_step = max(1, n_frames // max_frames)
+        frames_to_process = list(range(0, n_frames, frame_step))
+        print(f"Processing {len(frames_to_process)} frames (every {frame_step} frames) out of {n_frames} total.")
+    else:
+        frames_to_process = list(range(n_frames))
+        print(f"Processing all {n_frames} frames.")
 
     # Compute STATIC sun direction in inertial frame from frame 0
     az0_rad = np.radians(sun_az_I[0])
@@ -736,7 +737,7 @@ def generate_scene_plots(output_dir: str,
     rendered_scene_frames = []
     rendered_pose_frames = []
     rendered_indices = []
-    for i in range(0, n_frames, every_n_frames):
+    for i in frames_to_process:
         # Get rotation from Inertial to Body frame at this timestep
         qw, qx, qy, qz = q_IG_arr[i]
         rot_IG = Rotation.from_quat([qx, qy, qz, qw])
