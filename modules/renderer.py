@@ -11,6 +11,10 @@ from .blender_utils import append_blend_objects, clear_anim, keyframe_pose, scal
 from .config import SceneConfig
 from .io_utils import vprint
 
+from .blender_utils import (
+    append_blend_objects, append_blend_objects_filtered, list_blend_object_names,
+    remove_objects_from_scene, scale_object_by_factor, set_sun_direction, 
+)
 
 class BlenderRenderer:
     """Main renderer class for image generation."""
@@ -31,8 +35,41 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
-        append_blend_objects(self.config.objects["Earth"].blend_path)
-        append_blend_objects(self.config.objects["Target"].blend_path)
+        # Enable GPU rendering if available (CUDA for GTX/RTX cards)
+        if self.config.render.engine == "CYCLES":
+            try:
+                prefs = bpy.context.preferences.addons["cycles"].preferences
+                # Set device type and refresh twice — Blender 4.x sometimes
+                # needs a second get_devices() after open_mainfile to populate
+                # the device list correctly.
+                prefs.compute_device_type = 'CUDA'
+                prefs.get_devices()
+                prefs.compute_device_type = 'CUDA'
+                prefs.get_devices()
+                gpu_found = False
+                for device in prefs.devices:
+                    vprint(f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}", self.verbose)
+                    if device.type == 'CUDA':
+                        device.use = True
+                        gpu_found = True
+                    else:
+                        device.use = False  # disable CPU compute when GPU available
+                if gpu_found:
+                    self.scene.cycles.device = 'GPU'
+                    vprint(f"Cycles rendering on GPU (CUDA)", self.verbose)
+                else:
+                    vprint("No CUDA GPU found, using CPU rendering", self.verbose)
+                # Confirm final state
+                vprint(f"  [GPU confirm] scene.cycles.device = {self.scene.cycles.device}", self.verbose)
+                vprint(f"  [GPU confirm] compute_device_type = {prefs.compute_device_type}", self.verbose)
+                for device in prefs.devices:
+                    vprint(f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}", self.verbose)
+            except Exception as e:
+                import traceback
+                vprint(f"GPU setup failed: {e}", self.verbose)
+                traceback.print_exc()
+
+        new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -134,34 +171,40 @@ class BlenderRenderer:
         scale_object_by_factor(clouds, self.config.objects["Clouds"].scale_factor)
         scale_object_by_factor(atmo, self.config.objects["Atmo"].scale_factor)
         return cam, sun
+    
+    def get_models_in_blend(self) -> List[str]:
+        """Inspect the blend file and return RF_* root names to render (without loading)."""
+        blend_path = self.config.objects["Target"].blend_path
+        all_names = list_blend_object_names(blend_path)
+        rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
+        return rf_names
 
-    def select_model_to_render(self) -> bpy.types.Object:
-        """Get RF_* model to render."""
+    def load_spacecraft(self, model_name: str) -> bpy.types.Object:
+        """Load a single spacecraft (root + descendants) into the scene and return the root."""
+        blend_path = self.config.objects["Target"].blend_path
+        all_names = list_blend_object_names(blend_path)
 
-        models = [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
-        selected_model = None
-        for model in models:
-            if model.name == self.config.selected_model:
-                selected_model = model
+        names_to_load = [model_name] + [n for n in all_names if not n.startswith("RF_")]
+        loaded_objs = append_blend_objects_filtered(blend_path, names_to_load)
 
-        if not selected_model:
-            raise ValueError(f"Selected model '{self.config.selected_model}' not found among RF_* objects.")
+        root = bpy.data.objects.get(model_name)
+        if root is None:
+            raise RuntimeError(f"Spacecraft root '{model_name}' not found after append")
 
-        return selected_model
+        # Keep only root and its actual descendants; remove orphans
+        keep = set([root] + list(root.children_recursive))
+        orphans = [o for o in loaded_objs if o not in keep]
+        if orphans:
+            remove_objects_from_scene(orphans)
 
-    def get_all_models(self) -> list[bpy.types.Object]:
+        vprint(f"Loaded spacecraft '{model_name}' ({1 + len(list(root.children_recursive))} objects)", self.verbose)
+        return root
+
+    def get_all_models(self) -> List[bpy.types.Object]:
         """Get all RF_* models."""
-        return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
-
-    def hide_all_except(self, target_root, all_roots):
-        """Hide all models except target."""
-        for r in all_roots:
-            hide = r != target_root
-            r.hide_render = hide
-            for c in r.children_recursive:
-                c.hide_render = hide
-        bpy.context.view_layer.update()
-
+        return [o for o in bpy.data.objects
+                 if o.parent is None and o.name.startswith("RF_")]
+    
     def rotate_z(self, obj, deg: float):
         """Rotate object around local Z axis."""
         obj.rotation_mode = "QUATERNION"

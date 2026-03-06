@@ -97,6 +97,7 @@ def generate_trajectories_dynamical(
     config_prefix: str = "Config_1",
     model_name: str = "",
     camera_config: CameraConfig = None,
+    save_scene_plots: bool = True,
 ) -> list[str]:
     if camera_config is None:
         camera_config = CameraConfig()
@@ -667,17 +668,18 @@ def generate_trajectories_dynamical(
         el_I_mc = el_I[mc_trial]
 
         # Generate plots
-        plot_trial_trajectories(
-            state_A_I=state_A_I_mc,
-            state_C_I=state_C_I_mc,
-            r_CG_G=r_CG_G_mc,
-            R_IG_all=R_IG_mc,
-            out_dir=mc_folder,
-            rotMode_Gframe=config.rotMode_Gframe,
-            show=False,
-            save=True,
-            mc_idx=mc_trial,
-        )
+        if save_scene_plots:
+            plot_trial_trajectories(
+                state_A_I=state_A_I_mc,
+                state_C_I=state_C_I_mc,
+                r_CG_G=r_CG_G_mc,
+                R_IG_all=R_IG_mc,
+                out_dir=mc_folder,
+                rotMode_Gframe=config.rotMode_Gframe,
+                show=False,
+                save=True,
+                mc_idx=mc_trial
+            )
 
         for agent_idx in range(config.num_agents):
             # Select the agent
@@ -763,18 +765,18 @@ def generate_trajectories_dynamical(
                 inc=inc[mc_trial],
                 ecc=ecc[mc_trial],
             )
-
-            generate_scene_plots(
-                output_dir=agent_folder,
-                p_C_I=state_C_I_mc_ag[:, 0:3],
-                p_G_I=r_GO_I_mc,
-                sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
-                sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
-                timestamps=timestamps,
-                r_CG_arr=r_CG_G_mc_ag,
-                q_IG_arr=q_IG_mc,
-                q_IC_arr=q_IC_mc_ag,
-            )
+            
+            if save_scene_plots:
+                generate_scene_plots(
+                    output_dir=agent_folder,
+                    p_C_I=state_C_I_mc_ag[:, 0:3],
+                    p_G_I=r_GO_I_mc,
+                    sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
+                    sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                    timestamps=timestamps,
+                    r_CG_arr=r_CG_G_mc_ag,
+                    q_IG_arr=q_IG_mc,
+                    q_IC_arr=q_IC_mc_ag)
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {config.seed}")
