@@ -649,7 +649,7 @@ def generate_scene_plots(output_dir: str,
                             r_CG_arr: np.ndarray,
                             q_IG_arr: np.ndarray,
                             q_IC_arr: np.ndarray,
-                            every_n_frames=1,
+                            every_n_frames=50,
                             max_frames=None):
     """
     Generate two plot sets for multiple frames in the INERTIAL FRAME:
