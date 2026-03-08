@@ -105,16 +105,20 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     print(config.setup)
     cam, sun = renderer.setup_total()
 
+    all_models = renderer.get_models_in_blend()
+    print(f"Available models in the blend: {[m.name for m in all_models]}")
+
+    model = renderer.load_spacecraft(model_name=config.selected_model)
+
+    all_models = renderer.get_all_models()
+    print(f"Models loaded in scene: {[m.name for m in all_models]}")
+
     trajectory_file = renders_base_dir / "camera_traj.csv"
     
     trajectory = read_camera_trajectory(str(trajectory_file))
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
     print(f"[Session] Renders output: {renders_base_dir}/")
-    
-    model = renderer.select_model_to_render()
-    vprint(f"Rendering model: {model.name}", True)
-    all_models = renderer.get_all_models()
     
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     res_x, res_y = config.camera.resolution
@@ -124,7 +128,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-    renderer.hide_all_except(model, all_models)
     image_out_dir = renders_base_dir / "images_raw"
     masked_out_dir = renders_base_dir / "images"
     if str(config.setup.stars_mode).casefold() == "off":
@@ -183,6 +186,8 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
             image_filenames.append(image_filename)
             pbar.update(1)
 
+            post_process_start_time = time.time()
+
             # Post-process NPZ
             target_dist = float(np.linalg.norm(
                 fr["p_G_I"] - fr["p_C_I"]
@@ -203,7 +208,11 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
             avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
             time_remaining_estimate = avg_frame_time * (total - i - 1)
             time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
+            render_time_s = post_process_start_time - frame_start_time
+            post_process_time_s = time.time() - post_process_start_time
             print(f"Generated frame {i} in {current_frame_time:.2f} seconds. Output: {image_filename}")
+            print(f"  - Render time: {render_time_s:.2f} seconds.")
+            print(f"  - Post-process time: {post_process_time_s:.2f} seconds.")
             print(f"Average frame time: {avg_frame_time:.2f} seconds.")
             print(f"Estimated time remaining: {time_delta_str}")
             print(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
