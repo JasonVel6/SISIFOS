@@ -191,6 +191,7 @@ class SceneConfig(BaseModel):
     save_optical_flow: bool = True
     save_segmentation: bool = True
     save_obj_poses: bool = True
+    save_scene_plots: bool = True
     
     # Rendering control
     frame_ids: Optional[List[int]] = None  # If None, use all frames

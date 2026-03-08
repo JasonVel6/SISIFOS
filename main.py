@@ -14,6 +14,8 @@ import sys
 import os
 import math
 from pathlib import Path
+import time
+import datetime
 from tqdm import tqdm
 import argparse
 import json
@@ -58,6 +60,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             config_prefix=config_prefix,
             model_name=model_token,
             camera_config=config.camera,
+            save_scene_plots=config.save_scene_plots,
         )
         
     elif config.trajectory_type == "sampling_trajectory":
@@ -146,9 +149,12 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     total = len(frame_ids)
     print("Enabling blur is: ", config.setup.enable_blur)
     
+    avg_frame_time = 0.0
+
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
         image_filenames = []
         for i in frame_ids:
+            frame_start_time = time.time()
             fr = frames[i]
             fake_fr2 = None
             if str(config.setup.enable_blur).casefold()=="on":
@@ -192,6 +198,15 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                     raw_images_dir=str(image_out_dir),
                     masked_images_dir=str(masked_out_dir)
                 )
+
+            current_frame_time = time.time() - frame_start_time
+            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
+            time_remaining_estimate = avg_frame_time * (total - i - 1)
+            time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
+            print(f"Generated frame {i} in {current_frame_time:.2f} seconds. Output: {image_filename}")
+            print(f"Average frame time: {avg_frame_time:.2f} seconds.")
+            print(f"Estimated time remaining: {time_delta_str}")
+            print(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
 
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
