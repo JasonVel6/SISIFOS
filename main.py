@@ -106,7 +106,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     cam, sun = renderer.setup_total()
 
     all_models = renderer.get_models_in_blend()
-    print(f"Available models in the blend: {[m.name for m in all_models]}")
+    print(f"Available models in the blend: {all_models}")
 
     model = renderer.load_spacecraft(model_name=config.selected_model)
 

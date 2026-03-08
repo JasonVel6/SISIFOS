@@ -177,8 +177,6 @@ class BlenderRenderer:
         blend_path = self.config.objects["Target"].blend_path
         all_names = list_blend_object_names(blend_path)
         rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
-        if self.config.selected_models:
-            rf_names = [n for n in rf_names if n in self.config.selected_models]
         return rf_names
 
     def load_spacecraft(self, model_name: str) -> bpy.types.Object:
