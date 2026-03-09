@@ -18,6 +18,7 @@ import shutil
 import numpy as np
 from pathlib import Path
 import sys
+import logging
 
 
 if sys.platform != "win32":
@@ -281,7 +282,7 @@ def clean_folder(folder_path):
                 elif os.path.isdir(file_path):
                     shutil.rmtree(file_path)
             except Exception as e:
-                print("Failed to delete %s. Reason: %s" % (file_path, e))
+                logging.getLogger("sisifos").error("Failed to delete %s. Reason: %s", file_path, e)
     else:
         os.makedirs(folder_path)
 

@@ -19,6 +19,7 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 import shlex
@@ -43,6 +44,8 @@ SUBSTRINGS = [
 DEFAULT_FPS = 30.0
 DEFAULT_GLOB = "*"  # e.g. "*.png" if you want to restrict
 OUTPUT_DIRNAME = "videos"  # created under base
+
+logger = logging.getLogger("sisifos")
 
 
 # ----------------------------
@@ -181,6 +184,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    if not logger.handlers:
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+
     args = parse_args()
     base = args.base.expanduser().resolve()
 
@@ -191,12 +197,12 @@ def main() -> None:
 
     folders = discover_image_folders(base, args.glob_pattern)
     if not folders:
-        print(f"[INFO] No image folders found under: {base}")
+        logger.info("[INFO] No image folders found under: %s", base)
         return
 
-    print(f"[INFO] Found {len(folders)} image folder(s) under: {base}")
-    print(f"[INFO] Substrings: {args.substrings}")
-    print(f"[INFO] Output dir: {base / args.output_dir}")
+    logger.info("[INFO] Found %d image folder(s) under: %s", len(folders), base)
+    logger.info("[INFO] Substrings: %s", args.substrings)
+    logger.info("[INFO] Output dir: %s", base / args.output_dir)
 
     errors = 0
     generated = 0
@@ -223,19 +229,25 @@ def main() -> None:
                     list_file = Path(td) / "concat.txt"
                     write_concat_list(imgs, list_file)
                     rel_folder = folder.relative_to(base)
-                    print(f"[RUN ] {rel_folder} | '{substring}' -> {out_mp4.relative_to(base)} "
-                          f"(frames={len(imgs)}, fps={args.fps})")
+                    logger.info(
+                        "[RUN ] %s | '%s' -> %s (frames=%d, fps=%s)",
+                        rel_folder,
+                        substring,
+                        out_mp4.relative_to(base),
+                        len(imgs),
+                        args.fps,
+                    )
                     run_ffmpeg_concat(list_file, out_mp4, args.fps, overwrite=args.overwrite)
                 generated += 1
             except Exception as e:
                 errors += 1
-                print(f"[ERR ] {folder} | '{substring}': {e}", file=sys.stderr)
+                logger.error("[ERR ] %s | '%s': %s", folder, substring, e)
 
-    print("\n[SUMMARY]")
-    print(f"  Generated videos: {generated}")
-    print(f"  Skipped (no match): {skipped_no_match}")
-    print(f"  Skipped (exists): {skipped_exists}")
-    print(f"  Errors: {errors}")
+    logger.info("[SUMMARY]")
+    logger.info("  Generated videos: %d", generated)
+    logger.info("  Skipped (no match): %d", skipped_no_match)
+    logger.info("  Skipped (exists): %d", skipped_exists)
+    logger.info("  Errors: %d", errors)
 
     if errors:
         sys.exit(2)
