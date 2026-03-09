@@ -7,6 +7,9 @@ import os
 import csv
 from mathutils import Vector, Quaternion
 import subprocess
+from modules.log_utils import get_logger
+
+logger = get_logger()
 
 # Target model
 SHAPE_MODEL_FILENAME = "../models/integral.obj"
@@ -325,7 +328,7 @@ def write_gtvalues(output_dir: str,
         np.savetxt(f, r_GO_I, fmt="%f %f %f")
         f.write("v_GO_I = \n")
         np.savetxt(f, v_GO_I, fmt="%f %f %f")
-    print(f"  [GTVAL]   {gtvalues_filepath}")
+    logger.info("  [GTVAL]   %s", gtvalues_filepath)
     return gtvalues_filepath
 
 def write_config(output_dir: str,
@@ -551,7 +554,7 @@ def write_config(output_dir: str,
         f.write(f"# inc: {inc}\n")
         f.write(f"# ecc: {ecc}\n")
 
-    print(f"  [CONFIG]  {config_filepath}")
+    logger.info("  [CONFIG]  %s", config_filepath)
 
 def write_sensormeasurements(output_dir: str,
                                 nbSteps: int,
@@ -586,7 +589,7 @@ def write_sensormeasurements(output_dir: str,
         r_SA_I_meas = state_C_I[:, 0:3] - state_A_I[:, 0:3]
         f.write("r_SA_I_meas = \n")
         np.savetxt(f, r_SA_I_meas, fmt="%f %f %f")
-    print(f"  [SENSOR]  {sensor_filepath}")
+    logger.info("  [SENSOR]  %s", sensor_filepath)
 
 def rename_imgs_in_folder(folder):
 
@@ -609,7 +612,7 @@ def rename_imgs_in_folder(folder):
 def create_ffmpeg(gt_output, filename):
     parent_directory = os.path.dirname(gt_output)
     output_video = os.path.join(parent_directory, filename + '.mp4')
-    print(f"Creating video {output_video} from images in {gt_output}")
+    logger.info("Creating video %s from images in %s", output_video, gt_output)
     
     ffmpeg_command = [
         # ffmpeg
@@ -633,9 +636,9 @@ def create_ffmpeg(gt_output, filename):
             stdout=subprocess.PIPE,
             text=True
         )
-        print(f"Video created successfully: {output_video}")
+        logger.info("Video created successfully: %s", output_video)
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Error creating video: {e}")
-        print(f"ffmpeg stderr: {e.stderr}")
+        logger.error("Error creating video: %s", e)
+        logger.error("ffmpeg stderr: %s", e.stderr)
         return False

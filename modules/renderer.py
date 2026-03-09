@@ -8,10 +8,11 @@ from typing import List, Dict
 from mathutils import Quaternion
 
 from .config import SceneConfig
-from .io_utils import vprint
+from .log_utils import get_logger
 from .blender_utils import (
     append_blend_objects, append_blend_objects_filtered, list_blend_object_names,
-    remove_objects_from_scene, scale_object_by_factor, set_sun_direction, 
+    remove_objects_from_scene, scale_object_by_factor, set_sun_direction,
+    clear_anim, keyframe_pose,
 )
 
 class BlenderRenderer:
@@ -22,9 +23,15 @@ class BlenderRenderer:
         self.verbose = verbose
         self.scene = bpy.context.scene
         self.world = self.scene.world
+        self._target_blend_object_names = None
+        self.logger = get_logger()
+
+    def _log_info(self, message: str, *args):
+        if self.verbose:
+            self.logger.info(message, *args)
 
     def setup_total(self):
-        vprint(f"Loading scene: {self.config.scene_blend_path}", self.verbose)
+        self._log_info("Loading scene: %s", self.config.scene_blend_path)
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
         
         self.scene = bpy.context.scene
@@ -36,6 +43,8 @@ class BlenderRenderer:
         # Enable GPU rendering if available (CUDA for GTX/RTX cards)
         if self.config.render.engine == "CYCLES":
             try:
+                # Reuse scene/mesh data across frames for faster sequence renders.
+                self.scene.render.use_persistent_data = True
                 prefs = bpy.context.preferences.addons["cycles"].preferences
                 # Set device type and refresh twice — Blender 4.x sometimes
                 # needs a second get_devices() after open_mainfile to populate
@@ -46,7 +55,7 @@ class BlenderRenderer:
                 prefs.get_devices()
                 gpu_found = False
                 for device in prefs.devices:
-                    vprint(f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}", self.verbose)
+                    self._log_info("  [GPU probe] device: %s, type: %s, use: %s", device.name, device.type, device.use)
                     if device.type == 'CUDA':
                         device.use = True
                         gpu_found = True
@@ -54,20 +63,20 @@ class BlenderRenderer:
                         device.use = False  # disable CPU compute when GPU available
                 if gpu_found:
                     self.scene.cycles.device = 'GPU'
-                    vprint(f"Cycles rendering on GPU (CUDA)", self.verbose)
+                    self._log_info("Cycles rendering on GPU (CUDA)")
                 else:
-                    vprint("No CUDA GPU found, using CPU rendering", self.verbose)
+                    self._log_info("No CUDA GPU found, using CPU rendering")
                 # Confirm final state
-                vprint(f"  [GPU confirm] scene.cycles.device = {self.scene.cycles.device}", self.verbose)
-                vprint(f"  [GPU confirm] compute_device_type = {prefs.compute_device_type}", self.verbose)
+                self._log_info("  [GPU confirm] scene.cycles.device = %s", self.scene.cycles.device)
+                self._log_info("  [GPU confirm] compute_device_type = %s", prefs.compute_device_type)
                 for device in prefs.devices:
-                    vprint(f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}", self.verbose)
+                    self._log_info("  [GPU confirm] %s: type=%s, use=%s", device.name, device.type, device.use)
             except Exception as e:
                 import traceback
-                vprint(f"GPU setup failed: {e}", self.verbose)
+                self._log_info("GPU setup failed: %s", e)
                 traceback.print_exc()
 
-        new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
+        append_blend_objects(self.config.objects["Earth"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -107,7 +116,7 @@ class BlenderRenderer:
             output = nodes.new(type="ShaderNodeOutputWorld")
             links.new(env_tex.outputs["Color"], background.inputs["Color"])
             links.new(background.outputs["Background"], output.inputs["Surface"])
-            print("Loaded stars HDRI:", self.config.hdri_path)
+            self.logger.info("Loaded stars HDRI: %s", self.config.hdri_path)
         def set_earth_visibility(enable: bool):
             for name in ["Earth", "Clouds", "Atmo"]:
                 obj = bpy.data.objects.get(name)
@@ -153,7 +162,7 @@ class BlenderRenderer:
         vb.bool_save_segmentation_masks = True     # needs object pass_index > 0
         vb.bool_save_obj_poses = True
             
-        vprint("Vision Blender addon configured", self.verbose)
+        self._log_info("Vision Blender addon configured")
         cam = bpy.data.objects.get("Camera")
         cam.rotation_mode = 'QUATERNION'
         cam.data.lens = self.config.camera.focal_length
@@ -172,17 +181,43 @@ class BlenderRenderer:
         scale_object_by_factor(atmo,   self.config.objects["Atmo"].scale_factor)
         return cam, sun
     
+    def _get_target_blend_object_names(self) -> List[str]:
+        """Cache object-name scan of target blend to avoid repeated library loads."""
+        if self._target_blend_object_names is None:
+            blend_path = self.config.objects["Target"].blend_path
+            self._target_blend_object_names = list_blend_object_names(blend_path)
+        return self._target_blend_object_names
+
+    def _remove_existing_spacecraft(self) -> None:
+        """Remove RF_* roots (and descendants) already present in the current scene."""
+        roots = [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
+        if not roots:
+            return
+        to_remove = set()
+        for root in roots:
+            to_remove.add(root)
+            to_remove.update(root.children_recursive)
+        remove_objects_from_scene(list(to_remove))
+    
     def get_models_in_blend(self) -> List[str]:
         """Inspect the blend file and return RF_* root names to render (without loading)."""
-        blend_path = self.config.objects["Target"].blend_path
-        all_names = list_blend_object_names(blend_path)
+        all_names = self._get_target_blend_object_names()
         rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
         return rf_names
 
     def load_spacecraft(self, model_name: str) -> bpy.types.Object:
         """Load a single spacecraft (root + descendants) into the scene and return the root."""
         blend_path = self.config.objects["Target"].blend_path
-        all_names = list_blend_object_names(blend_path)
+        all_names = self._get_target_blend_object_names()
+        rf_names = {n for n in all_names if n.startswith("RF_")}
+        if model_name not in rf_names:
+            raise ValueError(
+                f"Selected model '{model_name}' is not a valid RF_* root in '{blend_path}'. "
+                f"Available: {sorted(rf_names)}"
+            )
+
+        # Ensure scene starts with zero spacecraft roots.
+        self._remove_existing_spacecraft()
 
         names_to_load = [model_name] + [n for n in all_names if not n.startswith("RF_")]
         loaded_objs = append_blend_objects_filtered(blend_path, names_to_load)
@@ -197,7 +232,23 @@ class BlenderRenderer:
         if orphans:
             remove_objects_from_scene(orphans)
 
-        vprint(f"Loaded spacecraft '{model_name}' ({1 + len(list(root.children_recursive))} objects)", self.verbose)
+        # Hard guard: keep exactly one RF_* root in scene.
+        rf_roots_in_scene = self.get_all_models()
+        extras = [o for o in rf_roots_in_scene if o.name != model_name]
+        if extras:
+            to_remove = set()
+            for extra in extras:
+                to_remove.add(extra)
+                to_remove.update(extra.children_recursive)
+            remove_objects_from_scene(list(to_remove))
+            rf_roots_in_scene = self.get_all_models()
+        if len(rf_roots_in_scene) != 1 or rf_roots_in_scene[0].name != model_name:
+            raise RuntimeError(
+                f"Expected exactly one loaded spacecraft root '{model_name}', found: "
+                f"{[o.name for o in rf_roots_in_scene]}"
+            )
+
+        self._log_info("Loaded spacecraft '%s' (%d objects)", model_name, 1 + len(list(root.children_recursive)))
         return root
 
     def get_all_models(self) -> List[bpy.types.Object]:
@@ -271,23 +322,15 @@ class BlenderRenderer:
         # print("="*80)
         
         # Model pose
-        model_euler_deg = tuple(math.degrees(a) for a in model.rotation_euler)
         # print(f"\n[Model] {model.name} (in inertial frame)")
         # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  Rotation E:  ({model_euler_deg[0]:8.3f}°, {model_euler_deg[1]:8.3f}°, {model_euler_deg[2]:8.3f}°)")
         # print(f"  Distance from origin: {p_G_I.length:.6f} m")
         
         # Camera pose
-        cam_euler_deg = tuple(math.degrees(a) for a in cam.rotation_euler)
-        cam_to_model = (model.location - cam.location).normalized()
-        distance_cam_model = (model.location - cam.location).length
         # print(f"\n[Camera] {cam.name} (in inertial frame)")
         # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Rotation E:  ({cam_euler_deg[0]:8.3f}°, {cam_euler_deg[1]:8.3f}°, {cam_euler_deg[2]:8.3f}°)")
-        # print(f"  Look dir:    ({cam_to_model.x:8.6f}, {cam_to_model.y:8.6f}, {cam_to_model.z:8.6f})")
-        # print(f"  Distance to model: {distance_cam_model:.6f} m")
         # print(f"  Focal length: {cam.data.lens:.2f} mm")
         
         # Trajectory info

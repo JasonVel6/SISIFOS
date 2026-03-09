@@ -2,6 +2,9 @@ import bpy
 import math
 from typing import List, Tuple
 from mathutils import Vector, Euler, Quaternion
+from .log_utils import get_logger
+
+logger = get_logger()
 
 
 def clear_anim(obj):
@@ -21,7 +24,7 @@ def scale_object_by_factor(obj, factor):
                         old_scale.y * factor,
                         old_scale.z * factor))
     
-    print(f"Scaled {obj.name}: {old_scale} -> {obj.scale}")
+    logger.info("Scaled %s: %s -> %s", obj.name, old_scale, obj.scale)
 
 def set_scale(obj, scale) -> None:
     """Set object scale."""

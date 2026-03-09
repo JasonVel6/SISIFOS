@@ -3,13 +3,12 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from datetime import datetime
 from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb, _id_to_color
+from .log_utils import get_logger
 import os
 import shutil
 import bpy
 
-def vprint(msg: str, verbose: bool = True):
-    if verbose:
-        print(msg)
+logger = get_logger()
 
 def ensure_dir(path: Path) -> Path:
     path = Path(path)
@@ -110,7 +109,7 @@ def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
         for i in range(len(timestamps)):
             ts = timestamps[i]
             f.write(f"{ts:.6f} {image_paths[i]}\n")
-    print(f"  Created: {imglist_path}")
+    logger.info("  Created: %s", imglist_path)
     return imglist_path
 
 def images_to_video_blender_sequence(
@@ -142,7 +141,7 @@ def images_to_video_blender_sequence(
         if p.exists():
             frames.append({"name": p.name})
         else:
-            print(f"Skipping missing frame in video assembly: {p}")
+            logger.warning("Skipping missing frame in video assembly: %s", p)
 
     if not frames:
         raise ValueError("Cannot generate video: no existing frames found in image_dir.")
@@ -189,7 +188,7 @@ def images_to_video_blender_sequence(
         render_scene.render.filepath = str(abs_output)
 
         bpy.ops.render.render(animation=True, scene=render_scene.name)
-        print(f"Video generated successfully: {abs_output}")
+        logger.info("Video generated successfully: %s", abs_output)
         return str(abs_output)
     finally:
         bpy.data.scenes.remove(render_scene)
