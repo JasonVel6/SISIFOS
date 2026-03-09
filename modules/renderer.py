@@ -46,26 +46,36 @@ class BlenderRenderer:
                 # Reuse scene/mesh data across frames for faster sequence renders.
                 self.scene.render.use_persistent_data = True
                 prefs = bpy.context.preferences.addons["cycles"].preferences
-                # Set device type and refresh twice — Blender 4.x sometimes
-                # needs a second get_devices() after open_mainfile to populate
-                # the device list correctly.
-                prefs.compute_device_type = 'CUDA'
-                prefs.get_devices()
-                prefs.compute_device_type = 'CUDA'
-                prefs.get_devices()
+                # Prefer OptiX, fallback to CUDA.
+                selected_backend = None
                 gpu_found = False
-                for device in prefs.devices:
-                    self._log_info("  [GPU probe] device: %s, type: %s, use: %s", device.name, device.type, device.use)
-                    if device.type == 'CUDA':
-                        device.use = True
+                for backend in ("OPTIX", "CUDA"):
+                    try:
+                        # Refresh twice — Blender 4.x sometimes needs a second
+                        # get_devices() after open_mainfile to populate devices.
+                        prefs.compute_device_type = backend
+                        prefs.get_devices()
+                        prefs.compute_device_type = backend
+                        prefs.get_devices()
+                    except Exception:
+                        continue
+
+                    for device in prefs.devices:
+                        self._log_info("  [GPU probe] device: %s, type: %s, use: %s", device.name, device.type, device.use)
+
+                    backend_devices = [d for d in prefs.devices if d.type == backend]
+                    if backend_devices:
+                        for device in prefs.devices:
+                            device.use = (device.type == backend)
+                        selected_backend = backend
                         gpu_found = True
-                    else:
-                        device.use = False  # disable CPU compute when GPU available
+                        break
+
                 if gpu_found:
                     self.scene.cycles.device = 'GPU'
-                    self._log_info("Cycles rendering on GPU (CUDA)")
+                    self._log_info("Cycles rendering on GPU (%s)", selected_backend)
                 else:
-                    self._log_info("No CUDA GPU found, using CPU rendering")
+                    self._log_info("No OPTIX/CUDA GPU found, using CPU rendering")
                 # Confirm final state
                 self._log_info("  [GPU confirm] scene.cycles.device = %s", self.scene.cycles.device)
                 self._log_info("  [GPU confirm] compute_device_type = %s", prefs.compute_device_type)
@@ -155,12 +165,16 @@ class BlenderRenderer:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
         vb = self.scene.vision_blender
         vb.bool_save_gt_data = True
-        vb.bool_save_depth = True
-        vb.bool_save_normals = True
+        vb.bool_save_depth = self.config.save_depth
+        vb.bool_save_normals = self.config.save_normals
         vb.bool_save_cam_param = True
-        vb.bool_save_opt_flow = True               # needs Cycles' Vector pass
-        vb.bool_save_segmentation_masks = True     # needs object pass_index > 0
-        vb.bool_save_obj_poses = True
+        vb.bool_save_opt_flow = self.config.save_optical_flow
+        vb.bool_save_segmentation_masks = self.config.save_segmentation
+        vb.bool_save_obj_poses = self.config.save_obj_poses
+        vb.bool_save_gt_data = any([
+            vb.bool_save_depth, vb.bool_save_normals, vb.bool_save_cam_param,
+            vb.bool_save_opt_flow, vb.bool_save_segmentation_masks, vb.bool_save_obj_poses
+        ])
             
         self._log_info("Vision Blender addon configured")
         cam = bpy.data.objects.get("Camera")
