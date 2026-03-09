@@ -60,7 +60,7 @@
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": null,
+      "seed": 1817843519,
       "illumination_seed": 0,
       "num_agents": 1,
       "num_mc": 1,
