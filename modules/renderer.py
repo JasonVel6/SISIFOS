@@ -40,7 +40,7 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
-        # Enable GPU rendering if available (CUDA for GTX/RTX cards)
+        # Enable GPU rendering using the best available Cycles backend.
         if self.config.render.engine == "CYCLES":
             try:
                 # Reuse scene/mesh data across frames for faster sequence renders.

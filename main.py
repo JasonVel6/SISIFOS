@@ -16,6 +16,7 @@ import math
 from pathlib import Path
 import time
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 import argparse
 import json
@@ -45,6 +46,37 @@ from modules.trajectory.trajectory_io import (
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 
 DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
+
+
+def _postprocess_gt_async(
+    npz_src: Path,
+    target_dist: float,
+    image_filename: str,
+    image_out_dir: Path,
+    masked_out_dir: Path,
+    gt_dirs: dict[str, Path],
+    logger,
+    wait_timeout_s: float,
+    poll_interval_s: float = 0.05,
+) -> bool:
+    """Wait briefly for NPZ materialization, then run GT post-processing."""
+    deadline = time.monotonic() + wait_timeout_s
+    while not npz_src.exists():
+        if time.monotonic() >= deadline:
+            logger.warning("Timed out waiting for GT NPZ: %s", npz_src)
+            return False
+        time.sleep(poll_interval_s)
+
+    handle_gt_from_npz(
+        npz_src,
+        gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
+        gt_dirs["gt_flow"], gt_dirs["gt_seg"],
+        target_dist,
+        raw_image_filename=image_filename,
+        raw_images_dir=str(image_out_dir),
+        masked_images_dir=str(masked_out_dir),
+    )
+    return True
 
 def _sanitize_folder_token(value: str) -> str:
     token = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in value)
@@ -151,75 +183,102 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         renderer.rotate_z(model, config.model_rotation_z_deg)
 
     total = len(frame_ids)
+    enable_blur = str(config.setup.enable_blur).casefold() == "on"
     logger.info("Enabling blur is: %s", config.setup.enable_blur)
+
+    fps = None
+    shutter_frames = None
+    if enable_blur:
+        fps = renderer.scene.render.fps / renderer.scene.render.fps_base
+        shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
+
+    # Reduce logging overhead while still reporting progress regularly.
+    log_every = 1 if total <= 20 else min(5, max(5, total // 20))
+    postprocess_workers = max(1, int(os.getenv("SISIFOS_POSTPROCESS_WORKERS", "1")))
+    npz_wait_timeout_s = float(os.getenv("SISIFOS_NPZ_WAIT_TIMEOUT_S", "30.0"))
+    logger.info(
+        "GT post-processing workers=%d, npz_wait_timeout=%.1fs",
+        postprocess_workers,
+        npz_wait_timeout_s,
+    )
     
     avg_frame_time = 0.0
 
-    with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
-        image_filenames = []
-        for i in frame_ids:
-            frame_start_time = time.time()
-            fr = frames[i]
-            fake_fr2 = None
-            if str(config.setup.enable_blur).casefold()=="on":
-                fake_fr2 = make_fake_frame_from_frame0(
-                    fr, seed=12345 + i,
-                    cam_dir_max_deg=0.6*config.setup.blur_motion_factor,
-                    cam_radius_scale_sigma=0.01*config.setup.blur_motion_factor,
-                    target_rot_max_deg=1.0*config.setup.blur_motion_factor,
-                    force_camera_lookat=True,
-                )
-            
+    with ThreadPoolExecutor(max_workers=postprocess_workers) as post_pool:
+        post_futures = []
+        with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
+            image_filenames = []
+            for rendered_idx, i in enumerate(frame_ids):
+                frame_start_time = time.time()
+                fr = frames[i]
+                fake_fr2 = None
+                if enable_blur:
+                    fake_fr2 = make_fake_frame_from_frame0(
+                        fr, seed=12345 + i,
+                        cam_dir_max_deg=0.6*config.setup.blur_motion_factor,
+                        cam_radius_scale_sigma=0.01*config.setup.blur_motion_factor,
+                        target_rot_max_deg=1.0*config.setup.blur_motion_factor,
+                        force_camera_lookat=True,
+                    )
                 
-            if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
-                fps = renderer.scene.render.fps / renderer.scene.render.fps_base
-                shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
-                image_filename = renderer.render_frame_motion_blur_traj(
-                    cam, model, sun, fr, fake_fr2, i, shutter_frames,
-                    image_out_dir, config.camera.exposure_time_s, N_digits
-                )
-            else:
-                image_filename = renderer.render_frame_v2(
-                    cam, model, sun, fr, i, image_out_dir, config.camera.exposure_time_s,
-                    N_digits
-                )
+                    
+                if enable_blur and fake_fr2 is not None:
+                    image_filename = renderer.render_frame_motion_blur_traj(
+                        cam, model, sun, fr, fake_fr2, i, shutter_frames,
+                        image_out_dir, config.camera.exposure_time_s, N_digits
+                    )
+                else:
+                    image_filename = renderer.render_frame_v2(
+                        cam, model, sun, fr, i, image_out_dir, config.camera.exposure_time_s,
+                        N_digits
+                    )
 
-            image_filenames.append(image_filename)
-            pbar.update(1)
+                image_filenames.append(image_filename)
+                pbar.update(1)
 
-            post_process_start_time = time.time()
-
-            # Post-process NPZ
-            target_dist = float(np.linalg.norm(
-                fr["p_G_I"] - fr["p_C_I"]
-            ))
-            npz_src = Path(os.path.join(image_out_dir, f'{i:04d}.npz'))
-            if npz_src.exists():
-                handle_gt_from_npz(
-                    npz_src,
-                    gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
-                    gt_dirs["gt_flow"], gt_dirs["gt_seg"],
-                    target_dist,
-                    raw_image_filename=image_filename,
-                    raw_images_dir=str(image_out_dir),
-                    masked_images_dir=str(masked_out_dir)
+                # Queue GT post-processing so it can overlap with next-frame rendering.
+                target_dist = float(np.linalg.norm(fr["p_G_I"] - fr["p_C_I"]))
+                npz_src = image_out_dir / f"{i:0{N_digits}d}.npz"
+                post_futures.append(
+                    post_pool.submit(
+                        _postprocess_gt_async,
+                        npz_src=npz_src,
+                        target_dist=target_dist,
+                        image_filename=image_filename,
+                        image_out_dir=image_out_dir,
+                        masked_out_dir=masked_out_dir,
+                        gt_dirs=gt_dirs,
+                        logger=logger,
+                        wait_timeout_s=npz_wait_timeout_s,
+                    )
                 )
 
-            current_frame_time = time.time() - frame_start_time
-            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
-            time_remaining_estimate = avg_frame_time * (total - i - 1)
-            time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
-            render_time_s = post_process_start_time - frame_start_time
-            post_process_time_s = time.time() - post_process_start_time
-            logger.info("Generated frame %d in %.2f seconds. Output: %s", i, current_frame_time, image_filename)
-            logger.info("  - Render time: %.2f seconds.", render_time_s)
-            logger.info("  - Post-process time: %.2f seconds.", post_process_time_s)
-            logger.info("Average frame time: %.2f seconds.", avg_frame_time)
-            logger.info("Estimated time remaining: %s", time_delta_str)
-            logger.info(
-                "Estimated time of completion: %s",
-                datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate)),
-            )
+                current_frame_time = time.time() - frame_start_time
+                avg_frame_time = (avg_frame_time * rendered_idx + current_frame_time) / (rendered_idx + 1)
+                time_remaining_estimate = avg_frame_time * (total - rendered_idx - 1)
+                if (
+                    rendered_idx == 0
+                    or rendered_idx == total - 1
+                    or (rendered_idx + 1) % log_every == 0
+                ):
+                    time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
+                    logger.info(
+                        "Frame %d/%d (id=%d) | total=%.2fs avg=%.2fs ETA=%s output=%s queued_post=%d",
+                        rendered_idx + 1,
+                        total,
+                        i,
+                        current_frame_time,
+                        avg_frame_time,
+                        time_delta_str,
+                        image_filename,
+                        len(post_futures),
+                    )
+
+        # Ensure all queued GT post-processing completes and surface any failures.
+        completed = 0
+        for fut in post_futures:
+            completed += int(bool(fut.result()))
+        logger.info("Completed GT post-processing for %d/%d frames.", completed, len(post_futures))
 
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]

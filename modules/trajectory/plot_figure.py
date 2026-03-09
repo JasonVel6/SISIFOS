@@ -167,10 +167,8 @@ def plot_trial_trajectories(
                 continue
             label_base = f"traj{mc_idx}_{'nmc' if suf.endswith('nmc') else 'cro' if suf.endswith('cro') else suf.strip('_')}"
             for agent_idx in range(min(r_var.shape[0], len(relI_list))):
-                T = r_var.shape[1]
-                relI_var = np.empty_like(r_var[agent_idx])
-                for j in range(T):
-                    relI_var[j] = R_IG_i[j] @ r_var[agent_idx, j]
+                T = min(r_var.shape[1], R_IG_i.shape[0])
+                relI_var = np.einsum("tij,tj->ti", R_IG_i[:T], r_var[agent_idx, :T], optimize=True)
                 L = label_base if agent_idx == 0 else None
                 ax_relI.plot(relI_var[:,0], relI_var[:,1], relI_var[:,2],
                              lw=1.8, linestyle="--", label=L)
@@ -215,10 +213,13 @@ def plot_trial_trajectories(
                 continue
             label_base = f"Agent 0 ({'NMC' if suf.endswith('nmc') else 'CRO' if suf.endswith('cro') else suf.strip('_').upper()})"
             for agent_idx in range(min(r_var.shape[0], state_C_I.shape[0])):
-                T = r_var.shape[1]
-                r_CO_I_var = np.empty_like(r_var[agent_idx])
-                for j in range(T):
-                    r_CO_I_var[j] = rA[j] + (R_IG_i[j] @ r_var[agent_idx, j])
+                T = min(r_var.shape[1], R_IG_i.shape[0], rA.shape[0])
+                r_CO_I_var = rA[:T] + np.einsum(
+                    "tij,tj->ti",
+                    R_IG_i[:T],
+                    r_var[agent_idx, :T],
+                    optimize=True,
+                )
                 L = label_base if agent_idx == 0 else None
                 ax_inr.plot(r_CO_I_var[:,0], r_CO_I_var[:,1], r_CO_I_var[:,2],
                             lw=1.8, linestyle="--", label=L)
@@ -652,7 +653,7 @@ def generate_scene_plots(output_dir: str,
                             r_CG_arr: np.ndarray,
                             q_IG_arr: np.ndarray,
                             q_IC_arr: np.ndarray,
-                            max_frames=500):
+                            max_frames=100):
     """
     Generate two plot sets for multiple frames in the INERTIAL FRAME:
     1) Existing world/lighting scene plots.
@@ -743,31 +744,34 @@ def generate_scene_plots(output_dir: str,
     axis_length = max(0.15 * max_pcg_dist, 1.0)
     pose_plot_lim = max(max_pcg_dist * 0.85 + axis_length * 0.8, axis_length * 2.0)
 
+    p_c_i_all = p_C_I[:n_frames]
+    p_g_i_all = p_G_I[:n_frames]
+    r_cg_all = r_CG_arr[:n_frames]
+    q_ig_all = q_IG_arr[:n_frames]
+    q_ic_all = q_IC_arr[:n_frames]
+
+    # Vectorized sun-camera-angle computation in G-frame for all timesteps.
+    q_ig_xyzw = np.column_stack((q_ig_all[:, 1], q_ig_all[:, 2], q_ig_all[:, 3], q_ig_all[:, 0]))
+    rot_ig_all = Rotation.from_quat(q_ig_xyzw)
+    sun_dir_body_all = rot_ig_all.apply(np.repeat(sun_dir_I[None, :], n_frames, axis=0))
+    cam_norm = np.linalg.norm(r_cg_all, axis=1, keepdims=True)
+    cam_dir_body_all = -r_cg_all / (cam_norm + 1e-9)
+    sun_cam_cos = np.einsum("ij,ij->i", sun_dir_body_all, cam_dir_body_all, optimize=True)
+    sun_cam_angle_all = np.degrees(np.arccos(np.clip(sun_cam_cos, -1.0, 1.0)))
+
     rendered_scene_frames = []
     rendered_pose_frames = []
     rendered_indices = []
-    for i in frames_to_process:
-        # Get rotation from Inertial to Body frame at this timestep
-        qw, qx, qy, qz = q_IG_arr[i]
-        rot_IG = Rotation.from_quat([qx, qy, qz, qw])
-
-        # Transform static sun direction from Inertial to Body frame
-        sun_dir_body = rot_IG.apply(sun_dir_I)
-
-        # Camera direction toward target in body frame: -r_CG / |r_CG|
-        r_CG_i = r_CG_arr[i]
-        cam_dir_body = -r_CG_i / (np.linalg.norm(r_CG_i) + 1e-9)
-
-        # Compute sun-camera angle in body frame (accurate lighting metric for tumbling target)
-        sun_cam_angle_body = np.degrees(np.arccos(np.clip(np.dot(sun_dir_body, cam_dir_body), -1, 1)))
+    for processed_idx, i in enumerate(frames_to_process, start=1):
+        sun_cam_angle_body = float(sun_cam_angle_all[i])
 
         frame_rgb = plot_scene_frame(
             frame_idx=i,
-            camera_loc=p_C_I[i],
-            target_loc=p_G_I[i],
+            camera_loc=p_c_i_all[i],
+            target_loc=p_g_i_all[i],
             sun_dir_I=sun_dir_I,  # Static sun in inertial frame for visualization
-            camera_trajectory=p_C_I,
-            target_trajectory=p_G_I,
+            camera_trajectory=p_c_i_all,
+            target_trajectory=p_g_i_all,
             sun_az_deg=sun_az_I[0],  # Frame 0 values (static)
             sun_el_deg=sun_el_I[0],
             sun_cam_angle_G=sun_cam_angle_body  # Accurate angle accounting for tumbling
@@ -780,8 +784,8 @@ def generate_scene_plots(output_dir: str,
             frame_idx=i,
             timestamp_s=float(timestamps[i]),
             p_cg_i=p_cg_i_all[i],
-            q_ig_wxyz=q_IG_arr[i],
-            q_ic_wxyz=q_IC_arr[i],
+            q_ig_wxyz=q_ig_all[i],
+            q_ic_wxyz=q_ic_all[i],
             axis_length=axis_length,
             plot_lim=pose_plot_lim,
         )
@@ -790,8 +794,14 @@ def generate_scene_plots(output_dir: str,
         rendered_pose_frames.append(pose_rgb)
         rendered_indices.append(i)
 
-        if i % 50 == 0:
-            logger.info("  Generated scene plot for frame %d/%d", i, n_frames)
+        if processed_idx == 1 or processed_idx % 50 == 0 or processed_idx == len(frames_to_process):
+            logger.info(
+                "  Generated scene plot %d/%d (frame %d of %d)",
+                processed_idx,
+                len(frames_to_process),
+                i,
+                n_frames,
+            )
 
     scene_video = _save_animation_from_frames(
         rendered_frames=rendered_scene_frames,

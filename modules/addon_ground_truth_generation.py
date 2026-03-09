@@ -36,6 +36,12 @@ from bpy.app.handlers import persistent
 
 """ Defining fuctions to obtain ground truth data """
 
+_SCENE_RENDER_CACHE = {}
+
+
+def _scene_cache_key(scene) -> int:
+    return int(scene.as_pointer())
+
 # Trimesh depth pipeline helpers
 def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
     T = np.eye(4, dtype=float)
@@ -345,8 +351,12 @@ def get_transf0to1(scene):
 def load_file_data_to_numpy(scene, tmp_file_path, data_map):
     if not os.path.isfile(tmp_file_path):
         return None
-    out_data = bpy.data.images.load(tmp_file_path)
-    pixels_numpy = np.array(out_data.pixels[:])
+    out_data = bpy.data.images.load(tmp_file_path, check_existing=False)
+    try:
+        pixels_numpy = np.array(out_data.pixels[:], dtype=np.float32)
+    finally:
+        # Avoid accumulating loaded EXR images across frames.
+        bpy.data.images.remove(out_data)
     res_x, res_y = get_scene_resolution(scene)
     pixels_numpy.resize((res_y, res_x, 4))  # Numpy works with (y, x, channels)
     pixels_numpy = np.flip(
@@ -492,6 +502,15 @@ def load_handler_render_init(scene):
                     bpy.context.view_layer.use_pass_vector = True
 
         """ All the data will be saved to a MultiLayer OpenEXR image. """
+        # Cache static per-render metadata to avoid repeated full-scene scans.
+        scene_key = _scene_cache_key(scene)
+        has_non_zero_obj_idx = check_any_obj_with_non_zero_index()
+        _SCENE_RENDER_CACHE[scene_key] = {
+            "has_non_zero_obj_idx": has_non_zero_obj_idx,
+            "seg_masks_indexes": get_struct_array_of_obj_indexes() if has_non_zero_obj_idx else None,
+            "depth_source": str(os.getenv("SISIFOS_DEPTH_SOURCE", "render_pass")).strip().lower(),
+        }
+
         # 2. Set-up nodes
         tree = scene.node_tree
         ## Remove old nodes (from previous rendering)
@@ -534,7 +553,7 @@ def load_handler_render_init(scene):
             """Segmentation masks"""
             if vision_blender.bool_save_segmentation_masks:
                 # We can only generate segmentation masks if that are any labeled objects (objects w/ index set)
-                non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
+                non_zero_obj_ind_found = has_non_zero_obj_idx
                 if non_zero_obj_ind_found:
                     slot_seg_mask = _new_slot(node_output, "####_Segmentation_Mask")
                     links.new(rl.outputs["IndexOB"], slot_seg_mask)
@@ -612,10 +631,13 @@ def load_handler_after_rend_frame(
         if is_stereo_activated:
             suffix0 = scene.render.views[0].file_suffix  # By default '_L'
             suffix1 = scene.render.views[1].file_suffix  # By default '_R'
+        scene_cache = _SCENE_RENDER_CACHE.get(_scene_cache_key(scene), {})
+        depth_source = scene_cache.get("depth_source", "render_pass")
+        use_trimesh_depth = depth_source == "trimesh"
         """ Camera parameters """
         ## update camera - ref: https://blender.stackexchange.com/questions/5636/how-can-i-get-the-location-of-an-object-at-each-keyframe
         # print(scene.frame_current)
-        scene.frame_set(scene.frame_current)  # needed to update the camera position
+        # Scene is already at frame_current in render_post.
         intrinsic_mat = None
         extrinsic_mat0 = None
         extrinsic_mat1 = None
@@ -670,18 +692,39 @@ def load_handler_after_rend_frame(
                 normal0 = load_file_data_to_numpy(scene, tmp_file_path0, "Normal")
             """ Depth + Disparity """
             if vision_blender.bool_save_depth:
-                z0 = depth_from_trimesh(scene, extrinsic_mat0)
-                disp0 = None
-                if is_stereo_activated and extrinsic_mat1 is not None:
-                    z1 = depth_from_trimesh(scene, extrinsic_mat1)
-                    disp1 = None
+                if use_trimesh_depth:
+                    z0 = depth_from_trimesh(scene, extrinsic_mat0)
+                    disp0 = None
+                    if is_stereo_activated and extrinsic_mat1 is not None:
+                        z1 = depth_from_trimesh(scene, extrinsic_mat1)
+                        disp1 = None
+                else:
+                    if is_stereo_activated:
+                        tmp_file_path1 = os.path.join(
+                            TMP_FILES_PATH,
+                            "{:04d}_Depth{}.exr".format(scene.frame_current, suffix1),
+                        )
+                        depth1 = load_file_data_to_numpy(scene, tmp_file_path1, "Depth")
+                        if depth1 is not None:
+                            z1, disp1 = depth1
+                        tmp_file_path0 = os.path.join(
+                            TMP_FILES_PATH,
+                            "{:04d}_Depth{}.exr".format(scene.frame_current, suffix0),
+                        )
+                    else:
+                        tmp_file_path0 = os.path.join(
+                            TMP_FILES_PATH, "{:04d}_Depth.exr".format(scene.frame_current)
+                        )
+                    depth0 = load_file_data_to_numpy(scene, tmp_file_path0, "Depth")
+                    if depth0 is not None:
+                        z0, disp0 = depth0
             if scene.render.engine == "CYCLES":
                 """Segmentation masks"""
                 if (
                     vision_blender.bool_save_segmentation_masks
-                    and check_any_obj_with_non_zero_index()
+                    and scene_cache.get("has_non_zero_obj_idx", False)
                 ):
-                    seg_masks_indexes = get_struct_array_of_obj_indexes()
+                    seg_masks_indexes = scene_cache.get("seg_masks_indexes")
                     if is_stereo_activated:
                         tmp_file_path1 = os.path.join(
                             TMP_FILES_PATH,
@@ -756,6 +799,7 @@ def load_handler_after_rend_frame(
 
 @persistent
 def load_handler_after_rend_finish(scene):
+    _SCENE_RENDER_CACHE.pop(_scene_cache_key(scene), None)
     if check_if_node_exists(scene.node_tree, "output_vision_blender"):
         node_output = scene.node_tree.nodes["output_vision_blender"]
         TMP_FILES_PATH = node_output.base_path
@@ -948,13 +992,15 @@ def register():
         register_class(cls)
     # register the properties
     bpy.types.Scene.vision_blender = PointerProperty(type=MyAddonProperties)
-    # register the function being called when rendering starts
-    bpy.app.handlers.render_init.append(load_handler_render_init)
-    # register the function being called after rendering each frame
-    bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
-    # register the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    # register handlers idempotently to avoid duplicates across repeated setup calls.
+    if load_handler_render_init not in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.append(load_handler_render_init)
+    if load_handler_after_rend_frame not in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
 
 
 def unregister():
@@ -964,12 +1010,16 @@ def unregister():
     # unregister the properties
     del bpy.types.Scene.vision_blender
     # unregister the function being called when rendering starts
-    bpy.app.handlers.render_init.remove(load_handler_render_init)
+    if load_handler_render_init in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.remove(load_handler_render_init)
     # unregister the function being called after rendering each frame
-    bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
+    if load_handler_after_rend_frame in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
     # unregister the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.remove(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.remove(load_handler_after_rend_finish)
 
 
 if __name__ == "__main__":  # only for live edit.
