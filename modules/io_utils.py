@@ -133,9 +133,9 @@ def images_to_video_blender_sequence(
 
     image_dir = Path(image_dir)
     output_path = Path(output_path)
-    abs_output = Path(bpy.path.abspath(str(output_path)))
+    abs_output = Path(output_path).resolve()
 
-    abs_dir = Path(bpy.path.abspath(str(image_dir)))
+    abs_dir = Path(image_dir).resolve()
     frames = []
     for name in image_filenames:
         p = abs_dir / name

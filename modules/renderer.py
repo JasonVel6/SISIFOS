@@ -178,176 +178,109 @@ class BlenderRenderer:
         obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
         bpy.context.view_layer.update()
     
-    def render_frame_v2(self, 
-                        cam: bpy.types.Object,
-                        model: bpy.types.Object,
-                        sun:bpy.types.Object,
-                        frame_dict: Dict,
-                        frame_id: int,
-                        output_dir: Path,
-                        exposure_time_s: float,
-                        N_digits:int) -> str:
-        """
-        Render single frame using INERTIAL FRAME trajectory data.
-        
-        frame_dict contains:
-          p_G_I: position of target in inertial frame
-          q_I_G: orientation of target relative to inertial
-          p_C_I: position of camera in inertial frame
-          q_I_C: orientation of camera relative to inertial
-          sun_az, sun_el: sun angles
-        
-        Placement strategy:
-          - Earth/atmosphere: fixed at origin (0,0,0) with fixed orientation
-          - Target (model): p_G_I position, q_I_G orientation
-          - Camera: p_C_I position, q_I_C orientation (or look-at)
-        """
-        p_G_I = frame_dict["p_G_I"]
-        q_I_G = frame_dict["q_I_G"]
-        p_C_I = frame_dict["p_C_I"]
-        q_I_C = frame_dict["q_I_C"]
-        sun_az = frame_dict["sun_az"]
-        sun_el = frame_dict["sun_el"]
-        
-        # Apply poses
-        model.rotation_mode = "QUATERNION"
-        cam.rotation_mode = "QUATERNION"
-        
-        # Target (model) pose in inertial frame
-        model.location = p_G_I
-        model.rotation_quaternion = q_I_G
-        
-        # Camera pose in inertial frame
-        cam.location = p_C_I
-        
-        # Camera orientation: look-at target OR use q_I_C directly
-        # Option 1: Use stored orientation
-        cam.rotation_quaternion = q_I_C
-        
-        # Option 2: Enforce look-at (uncomment to use)
-        # direction = (model.location - cam.location).normalized()
-        # quat = direction.to_track_quat('-Z', 'Y')
-        # cam.rotation_quaternion = quat
+    @staticmethod
+    def _are_contiguous(frame_ids: List[int]) -> bool:
+        """Return True if *frame_ids* form a contiguous range min … max."""
+        if not frame_ids:
+            return False
+        return list(range(min(frame_ids), max(frame_ids) + 1)) == sorted(frame_ids)
+
+    def _keyframe_sun_direction(self, sun: bpy.types.Object, sun_az: float,
+                                sun_el: float, frame: int) -> None:
+        """Set the sun direction and insert a keyframe for it."""
         set_sun_direction(sun, sun_az, sun_el)
-        bpy.context.view_layer.update()
-        
-        # Debug: Log poses before rendering
-        # print("\n" + "="*80)
-        # print(f"[Frame {str(frame_id).zfill(N_digits)}] Rendering with exposure {exposure_time_s*1e6:.1f}µs")
-        # print("="*80)
-        
-        # Model pose
-        model_euler_deg = tuple(math.degrees(a) for a in model.rotation_euler)
-        # print(f"\n[Model] {model.name} (in inertial frame)")
-        # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
-        # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  Rotation E:  ({model_euler_deg[0]:8.3f}°, {model_euler_deg[1]:8.3f}°, {model_euler_deg[2]:8.3f}°)")
-        # print(f"  Distance from origin: {p_G_I.length:.6f} m")
-        
-        # Camera pose
-        cam_euler_deg = tuple(math.degrees(a) for a in cam.rotation_euler)
-        cam_to_model = (model.location - cam.location).normalized()
-        distance_cam_model = (model.location - cam.location).length
-        # print(f"\n[Camera] {cam.name} (in inertial frame)")
-        # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
-        # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Rotation E:  ({cam_euler_deg[0]:8.3f}°, {cam_euler_deg[1]:8.3f}°, {cam_euler_deg[2]:8.3f}°)")
-        # print(f"  Look dir:    ({cam_to_model.x:8.6f}, {cam_to_model.y:8.6f}, {cam_to_model.z:8.6f})")
-        # print(f"  Distance to model: {distance_cam_model:.6f} m")
-        # print(f"  Focal length: {cam.data.lens:.2f} mm")
-        
-        # Trajectory info
-        # print(f"\n[Trajectory Frame {frame_id}] (Inertial Frame Reference)")
-        # print(f"  p_G_I (target pos in I):  ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
-        # print(f"  q_I_G (target orient):    ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  p_C_I (camera pos in I):  ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
-        # print(f"  q_I_C (camera orient):    ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Sun azimuth: {sun_az:7.2f}°, elevation: {sun_el:7.2f}°")
-        
-        # Render settings
-        # print(f"\n[Render Settings]")
-        # print(f"  Output:      {self.scene.render.filepath}")
-        # print(f"  Resolution:  {self.scene.render.resolution_x}x{self.scene.render.resolution_y}")
-        # print(f"  Engine:      {self.scene.render.engine}")
-        # if self.scene.render.engine == 'CYCLES':
-        #     print(f"  Samples:     {self.scene.cycles.samples}")
-        # print("="*80 + "\n")
-        
-        # Set exposure
-        base_ev = self.scene.view_settings.exposure
-        ev_shift = math.log(exposure_time_s / self.config.setup.t_ref_s, 2.0)
-        self.scene.view_settings.exposure = base_ev + ev_shift
-        
-        # Render
-        #exp_tag = f"{int(round(exposure_time_s * 1e6)):08d}us"
-        #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id).zfill(N_digits)}"
-        
-        self.scene.render.filepath = str(output_dir / f"frame_{stem}")
-        self.scene.frame_set(frame_id)
-        bpy.ops.render.render(write_still=True)
-        
-        # Restore exposure
-        self.scene.view_settings.exposure = base_ev
+        sun.keyframe_insert(data_path="rotation_quaternion", frame=frame)
 
-        return f"frame_{stem}.png"
+    def render_animation(
+        self,
+        cam: bpy.types.Object,
+        model: bpy.types.Object,
+        sun: bpy.types.Object,
+        frames: List[Dict],
+        frame_ids: List[int],
+        output_dir: Path,
+        exposure_time_s: float,
+        N_digits: int,
+    ) -> List[str]:
+        """Keyframe the whole trajectory and render every *frame_id*.
 
-    def render_frame_motion_blur_traj(self,cam: bpy.types.Object,
-                     model: bpy.types.Object,sun:bpy.types.Object,
-                     frame_dict1: Dict,  frame_dict2: Dict,
-                     frame_id1: int,
-                     shutter:float,
-                     output_dir: Path,
-                     exposure_time_s: float,
-                    N_digits:int) -> str:
+        All frames are keyframed up front so Cycles can sample real
+        inter-frame motion for physically correct motion blur.
+        Frames are rendered individually to preserve per-frame GT
+        extraction via the vision_blender addon.
+
+        Returns a list of output PNG filenames.
+        """
+
+        # Clear existing animation data
         clear_anim(cam)
         clear_anim(model)
-        self.scene.frame_start = frame_id1
-        self.scene.frame_end = frame_id1+1
-        self.scene.frame_set(frame_id1)
-        sun_az = frame_dict1["sun_az"]
-        sun_el = frame_dict1["sun_el"]
-        set_sun_direction(sun, sun_az, sun_el)
-        bpy.context.view_layer.update()
-        base_ev = self.scene.view_settings.exposure
-        ev_shift = math.log(exposure_time_s / self.config.setup.t_ref_s, 2.0)
-        self.scene.view_settings.exposure = base_ev + ev_shift
-        
+        clear_anim(sun)
+
+        # Rotation modes
         model.rotation_mode = "QUATERNION"
         cam.rotation_mode = "QUATERNION"
-        p_G_I = frame_dict1["p_G_I"]
-        q_I_G = frame_dict1["q_I_G"]
-        p_C_I = frame_dict1["p_C_I"]
-        q_I_C = frame_dict1["q_I_C"]
-        model.location = p_G_I
-        model.rotation_quaternion = q_I_G
-        cam.location = p_C_I
-        cam.rotation_quaternion = q_I_C
-        bpy.context.view_layer.update()
-        keyframe_pose(model, frame_id1)
-        keyframe_pose(cam, frame_id1)
-        self.scene.frame_set(frame_id1+1)
-        p_G_I = frame_dict2["p_G_I"]
-        q_I_G = frame_dict2["q_I_G"]
-        p_C_I = frame_dict2["p_C_I"]
-        q_I_C = frame_dict2["q_I_C"]
-        model.location = p_G_I
-        model.rotation_quaternion = q_I_G
-        cam.location = p_C_I
-        cam.rotation_quaternion = q_I_C
-        bpy.context.view_layer.update()
-        keyframe_pose(model, frame_id1+1)
-        keyframe_pose(cam, frame_id1+1)
-        self.scene.render.use_motion_blur = True
-        self.scene.render.motion_blur_shutter = float(shutter)
-        cy = bpy.context.scene.cycles
-        if hasattr(cy, "motion_blur_position"):
-            cy.motion_blur_position = 'START'  
-        self.scene.frame_set(frame_id1)
-        bpy.context.view_layer.update()
-        #stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
-        stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
-        self.scene.render.filepath = str(output_dir / f"frame_{stem}")
-        bpy.ops.render.render(write_still=True)
+        sun.rotation_mode = "QUATERNION"
 
-        return f"frame_{stem}.png"
+        # Keyframe every frame 
+        for fid in frame_ids:
+            fdata = frames[fid]
+            self.scene.frame_set(fid)
+
+            model.location = fdata["p_G_I"]
+            model.rotation_quaternion = Quaternion(tuple(fdata["q_I_G"]))
+
+            cam.location = fdata["p_C_I"]
+            cam.rotation_quaternion = Quaternion(tuple(fdata["q_I_C"]))
+
+            bpy.context.view_layer.update()
+
+            keyframe_pose(model, fid)
+            keyframe_pose(cam, fid)
+            self._keyframe_sun_direction(sun, fdata["sun_az"], fdata["sun_el"], fid)
+
+        # Frame range 
+        self.scene.frame_start = min(frame_ids)
+        self.scene.frame_end = max(frame_ids)
+
+        # Per-frame exposure handler 
+        base_ev = self.scene.view_settings.exposure
+        ev_shift = math.log(exposure_time_s / self.config.setup.t_ref_s, 2.0)
+
+        def _exposure_handler(scene, depsgraph=None):
+            scene.view_settings.exposure = base_ev + ev_shift
+
+        bpy.app.handlers.frame_change_pre.append(_exposure_handler)
+
+        # Motion blur 
+        enable_blur = str(self.config.setup.enable_blur).casefold()
+        if enable_blur == "on":
+            self.scene.render.use_motion_blur = True
+            fps = self.scene.render.fps / self.scene.render.fps_base
+            shutter_frames = (self.config.camera.exposure_time_s
+                              * fps
+                              * self.config.setup.blur_shutter_factor)
+            self.scene.render.motion_blur_shutter = float(shutter_frames)
+        else:
+            self.scene.render.use_motion_blur = False
+
+        #  Output settings 
+        output_dir = Path(output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.scene.render.image_settings.file_format = 'PNG'
+        self.scene.render.use_file_extension = True
+
+        try:
+            # Render frame-by-frame with keyframed data in place.
+            for fid in frame_ids:
+                stem = str(fid).zfill(N_digits)
+                self.scene.render.filepath = str(output_dir / f"frame_{stem}")
+                self.scene.frame_set(fid)
+                bpy.ops.render.render(write_still=True)
+        finally:
+            if _exposure_handler in bpy.app.handlers.frame_change_pre:
+                bpy.app.handlers.frame_change_pre.remove(_exposure_handler)
+            self.scene.view_settings.exposure = base_ev
+
+        # Build output filename list 
+        return [f"frame_{str(fid).zfill(N_digits)}.png" for fid in frame_ids]
