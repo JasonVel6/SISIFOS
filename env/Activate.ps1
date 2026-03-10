@@ -26,6 +26,7 @@ $PyprojectFile = Join-Path $ProjectRoot "pyproject.toml"
 Write-Host -NoNewline "[SISIFOS] Syncing dependencies... "
 
 if ((Test-Path $LockFile) -and (Test-Path $PyprojectFile)) {
+    $env:UV_PROJECT_ENVIRONMENT = Split-Path -Path $BlenderPythonDir -Parent
     & $BlenderPython -m uv sync --no-editable -q *>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "`r[SISIFOS] Warning: Failed to sync. Run '.\env\Setup.ps1' to fix." -ForegroundColor Yellow

@@ -44,7 +44,7 @@ jobs:
           pip install -e .
           pip-audit
 
-  integration-tests:
+  integration-tests-ubuntu:
     needs: lint
     runs-on: ubuntu-latest
     steps:
@@ -96,7 +96,64 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-render-artifacts
+          name: ci-render-artifacts-ubuntu
+          path: renders/
+          retention-days: 14
+          if-no-files-found: error
+
+  integration-tests-windows:
+    needs: lint
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Cache Blender Binary
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: env/Blender_4.5
+          key: ${{ runner.os }}-blender-4.5.6
+
+      - name: Bypass Large Asset Downloads
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path assets -Force | Out-Null
+          New-Item -ItemType File -Path assets/starmap_2020_16k.exr -Force | Out-Null
+
+      - name: Setup Environment
+        shell: pwsh
+        run: ./env/Setup.ps1
+
+      - name: Generate Minimal CI Assets
+        shell: pwsh
+        run: |
+          . ./env/Activate.ps1
+          & $env:BLENDER -b -P tests/create_ci_assets.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Blender exited with code $LASTEXITCODE while generating CI assets."
+            exit $LASTEXITCODE
+          }
+
+      - name: Execute Test Suite
+        shell: pwsh
+        env:
+          CI: 1
+        run: |
+          . ./env/Activate.ps1
+          & $env:BLENDER -b -P tests/run_in_blender.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Blender test runner exited with code $LASTEXITCODE."
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload Render Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-render-artifacts-windows
           path: renders/
           retention-days: 14
           if-no-files-found: error
