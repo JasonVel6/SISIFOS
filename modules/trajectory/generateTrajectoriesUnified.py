@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 """
 generateTrajectoriesUnified.py — Unified trajectory generation and ground truth export
@@ -21,7 +20,7 @@ FRAME CONVENTIONS:
 - r_AG_G = A - G (position of COM relative to SLAM frame origin, in G coords).
 - Internal variable stores G - A for convenience; negated on output.
 - Axes are body-fixed (G).
-- 
+-
 
 OUTPUT FILES (per MC trial, per agent):
 - gtValues.txt: Ground truth values for SLAM
@@ -33,15 +32,15 @@ Usage:
     python generateTrajectoriesUnified.py [--seed SEED
 """
 
+import argparse
+import json
+import math
 import os
 import sys
-import math
-import json
 import time
-import shutil
-import argparse
-import numpy as np
 from datetime import datetime
+
+import numpy as np
 from scipy.linalg import expm
 
 # Add project root to path so imports work both when running directly and when imported
@@ -50,21 +49,38 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import (TrajectoryConfig, CameraConfig)
+from modules.config import CameraConfig, TrajectoryConfig
 from modules.trajectory.motion_cases import (
-    init_inertial, init_hill, init_tumbling,
-    validate_omega_timeseries_excitation, sample_inertia_excited_omega_direction
+    init_hill,
+    init_inertial,
+    init_tumbling,
+    sample_inertia_excited_omega_direction,
+    validate_omega_timeseries_excitation,
 )
-
+from modules.trajectory.plot_figure import generate_scene_plots, plot_trial_trajectories
+from modules.trajectory.trajectory_io import (
+    write_camera_trajectory,
+    write_config,
+    write_gtvalues,
+    write_sensormeasurements,
+)
 from modules.trajectory.trajectory_math import (
-    au2R, oe2cart, createHillFrame, propagate_orbit, parameterSetting,
-    sk, R2q, q2R, solve_ne_equation, so3_log_vec, rodrigues, _vecI_to_azel,
-    _seed_right, _lookat_continuous, _quat_hemi_continuous, enforce_quat_series_continuity,
-    calcInitCondChaser
+    R2q,
+    _lookat_continuous,
+    _quat_hemi_continuous,
+    _vecI_to_azel,
+    au2R,
+    calcInitCondChaser,
+    createHillFrame,
+    enforce_quat_series_continuity,
+    oe2cart,
+    parameterSetting,
+    propagate_orbit,
+    rodrigues,
+    sk,
+    so3_log_vec,
+    solve_ne_equation,
 )
-from modules.trajectory.plot_figure import plot_trial_trajectories, generate_scene_plots
-from modules.trajectory.trajectory_io import (write_camera_trajectory, 
-    write_gtvalues, write_config, write_sensormeasurements)
 
 # ---------------- Paths ----------------
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -89,7 +105,7 @@ def generate_trajectories_dynamical(
     if config.seed is not None:
         master_seed = config.seed
         print(f"[INITIALIZATION]: detected pre defined seed: {master_seed}")
-    else:        
+    else:
         master_seed = int(time.time() * 1e6) & 0x7FFFFFFF
         config.seed = master_seed  # Store the resolved seed back in the config for output
         print(f"[INITIALIZATION]: no pre defined seed detected, generating new seed: {master_seed}")
@@ -104,17 +120,28 @@ def generate_trajectories_dynamical(
     if config.rotMode_Gframe == "1":
         print("  Inertial mode (CRO trajectory)")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_inertial(
-            num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED, rho_max=0.90, R0_const=config.R0_const,
-            variant="cro", rngs_mc=rngs_mc
+            num_mc=config.num_mc,
+            num_agents=config.num_agents,
+            n_scalar=config.n_scalar,
+            focal_length_px=camera_config.focal_length_px,
+            kf_dt=config.IMAGE_MAX_DT_S,
+            px_min=config.MIN_F2F_PX_MED,
+            rho_max=0.90,
+            R0_const=config.R0_const,
+            variant="cro",
+            rngs_mc=rngs_mc,
         )
     elif config.rotMode_Gframe == "2":
         print("  Hill mode")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_hill(
-            num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED, rho_max=0.90
+            num_mc=config.num_mc,
+            num_agents=config.num_agents,
+            n_scalar=config.n_scalar,
+            rngs_mc=rngs_mc,
+            focal_length_px=camera_config.focal_length_px,
+            kf_dt=config.IMAGE_MAX_DT_S,
+            px_min=config.MIN_F2F_PX_MED,
+            rho_max=0.90,
         )
     elif config.rotMode_Gframe == "3":
         print("  Tumbling mode (CRO trajectory + target tumbling)")
@@ -123,11 +150,19 @@ def generate_trajectories_dynamical(
         # Slower rates (0.5-2 deg/s default) have near-zero omega_dot, making
         # inertia poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0.
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
-            num_mc=config.num_mc, num_agents=config.num_agents, n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED, rho_max=0.95, R0_const=config.R0_const,
-            omega_min_deg=3.0, omega_max_deg=5.0,
-            J=config.J, min_asymmetry_component=0.4
+            num_mc=config.num_mc,
+            num_agents=config.num_agents,
+            n_scalar=config.n_scalar,
+            rngs_mc=rngs_mc,
+            focal_length_px=camera_config.focal_length_px,
+            kf_dt=config.IMAGE_MAX_DT_S,
+            px_min=config.MIN_F2F_PX_MED,
+            rho_max=0.95,
+            R0_const=config.R0_const,
+            omega_min_deg=3.0,
+            omega_max_deg=5.0,
+            J=config.J,
+            min_asymmetry_component=0.4,
         )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])
@@ -140,8 +175,14 @@ def generate_trajectories_dynamical(
     r_0 = np.zeros((config.num_mc, config.num_agents, 6))
     for mc_trial in range(config.num_mc):
         for a in range(config.num_agents):
-            r_0[mc_trial, a] = [x_0[mc_trial, a], y_0[mc_trial, a], z_0[mc_trial, a],
-                         xdot_0[mc_trial, a], ydot_0[mc_trial, a], zdot_0[mc_trial, a]]
+            r_0[mc_trial, a] = [
+                x_0[mc_trial, a],
+                y_0[mc_trial, a],
+                z_0[mc_trial, a],
+                xdot_0[mc_trial, a],
+                ydot_0[mc_trial, a],
+                zdot_0[mc_trial, a],
+            ]
 
     # ---------- Generate MC parameters ----------
     print("\n[STEP 2] Sampling orbital and attitude parameters...")
@@ -178,7 +219,6 @@ def generate_trajectories_dynamical(
 
     # ---------- Derived constants ----------
     a = parameterSetting(config.h_orbit)
-    TU = np.sqrt(a**3 / config.mu_ref) * 2 * np.pi
 
     # ---------- Preallocations ----------
     r_AG_G = np.array(config.r_AG_G, dtype=float)
@@ -234,7 +274,6 @@ def generate_trajectories_dynamical(
     H_GI_G = np.zeros((config.num_mc, nbSteps, 3))
     H_GI_I = np.zeros((config.num_mc, nbSteps, 3))
 
-
     # Disturbances — generated per-trial inside MC loop for reproducibility
     eta = np.zeros((config.num_mc, config.num_agents, nbSteps, 3))
     nu = np.zeros((config.num_mc, config.num_agents, nbSteps, 3))
@@ -255,12 +294,16 @@ def generate_trajectories_dynamical(
 
     # Outer loop: MC trials
     for mc_trial in range(config.num_mc):
-        print(f"  MC trial {mc_trial+1}/{config.num_mc}...", end=" ", flush=True)
+        print(f"  MC trial {mc_trial + 1}/{config.num_mc}...", end=" ", flush=True)
 
         # Per-trial sensor disturbances (seeded for reproducibility)
         rng_mc = rngs_mc[mc_trial]
-        eta[mc_trial] = rng_mc.multivariate_normal(config.MEAN_DEFAULT, config.COV_R_ASTRO_APS3, (config.num_agents, nbSteps))
-        nu[mc_trial] = rng_mc.multivariate_normal(config.MEAN_DEFAULT, config.COV_OMEGA_ASTRIX, (config.num_agents, nbSteps))
+        eta[mc_trial] = rng_mc.multivariate_normal(
+            config.MEAN_DEFAULT, config.COV_R_ASTRO_APS3, (config.num_agents, nbSteps)
+        )
+        nu[mc_trial] = rng_mc.multivariate_normal(
+            config.MEAN_DEFAULT, config.COV_OMEGA_ASTRIX, (config.num_agents, nbSteps)
+        )
 
         # Target initial attitude
         Rz_arr[mc_trial] = au2R(yaw[mc_trial], np.array([0, 0, 1]))
@@ -272,7 +315,7 @@ def generate_trajectories_dynamical(
         oe_t[mc_trial] = np.array([a, ecc[mc_trial], inc[mc_trial], 0, 0, 0])
         r_AO_I_0[mc_trial], v_AO_I_0[mc_trial] = oe2cart(oe_t[mc_trial], config.mu_ref)
         R_IH_0[mc_trial] = createHillFrame(r_AO_I_0[mc_trial], v_AO_I_0[mc_trial])
-        n[mc_trial] = np.sqrt(config.mu_ref / np.linalg.norm(r_AO_I_0[mc_trial])**3)
+        n[mc_trial] = np.sqrt(config.mu_ref / np.linalg.norm(r_AO_I_0[mc_trial]) ** 3)
         omega_HI_I_0[mc_trial] = n[mc_trial] * R_IH_0[mc_trial, :, 2]
         state_A_I[mc_trial, 0] = np.hstack([r_AO_I_0[mc_trial], v_AO_I_0[mc_trial]])
 
@@ -286,12 +329,20 @@ def generate_trajectories_dynamical(
                 r0_agent[0] = -r0_agent[4] / (2 * n[mc_trial])
 
             r_CO_I_0, v_CO_I_0 = calcInitCondChaser(
-                r0_agent[3], r0_agent[4], r0_agent[5],
-                r0_agent[0], r0_agent[1], r0_agent[2],
-                state_A_I[mc_trial, 0], R_IH_0[mc_trial], omega_HI_I_0[mc_trial],
+                r0_agent[3],
+                r0_agent[4],
+                r0_agent[5],
+                r0_agent[0],
+                r0_agent[1],
+                r0_agent[2],
+                state_A_I[mc_trial, 0],
+                R_IH_0[mc_trial],
+                omega_HI_I_0[mc_trial],
             )
             state_C_I_0[mc_trial, agent_idx] = np.hstack([r_CO_I_0, v_CO_I_0])
-            state_C_I[mc_trial, agent_idx] = propagate_orbit(config.mu_ref, state_C_I_0[mc_trial, agent_idx], timestamps)
+            state_C_I[mc_trial, agent_idx] = propagate_orbit(
+                config.mu_ref, state_C_I_0[mc_trial, agent_idx], timestamps
+            )
 
         # Attitude law
         if config.rotMode_Gframe == "1":
@@ -313,13 +364,14 @@ def generate_trajectories_dynamical(
             omega_excitation_validated = False
 
             for omega_retry in range(MAX_OMEGA_RETRIES):
-                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.J)
+                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(
+                    nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.J
+                )
 
                 # Validate omega timeseries has sufficient excitation
                 dt_array = np.full(nbSteps - 1, tstep_eff)
                 is_valid, validation_stats = validate_omega_timeseries_excitation(
-                    omega_GI_G[mc_trial], dt_array=dt_array,
-                    omega_dot_min=1e-5, off_axis_min=0.3
+                    omega_GI_G[mc_trial], dt_array=dt_array, omega_dot_min=1e-5, off_axis_min=0.3
                 )
 
                 if is_valid:
@@ -330,14 +382,14 @@ def generate_trajectories_dynamical(
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
                         omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.J,
-                            min_asymmetry_component=0.4,
-                            off_axis_min=0.3
+                            rngs_mc[mc_trial], config.J, min_asymmetry_component=0.4, off_axis_min=0.3
                         )
                         omega_GI_G_0[mc_trial] = omega_mag * d_new
 
             if not omega_excitation_validated:
-                print(f"\n  WARNING: MC trial {mc_trial} omega excitation validation failed after {MAX_OMEGA_RETRIES} retries")
+                print(
+                    f"\n  WARNING: MC trial {mc_trial} omega excitation validation failed after {MAX_OMEGA_RETRIES} retries"
+                )
                 print(f"           max_omega_dot={validation_stats.get('max_omega_dot', 'N/A')}")
 
             for j in range(nbSteps):
@@ -368,11 +420,15 @@ def generate_trajectories_dynamical(
             j0 = 0
             agent0 = 0
             # r_CG^I = r_CA^I - r_AG^I = r_CA^I - R_IG @ r_AG^G
-            r_CG_I0 = (state_C_I[mc_trial, agent0, j0, 0:3] - state_A_I[mc_trial, j0, 0:3]) - R_IG[mc_trial, j0] @ r_AG_G
+            r_CG_I0 = (state_C_I[mc_trial, agent0, j0, 0:3] - state_A_I[mc_trial, j0, 0:3]) - R_IG[
+                mc_trial, j0
+            ] @ r_AG_G
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
-                cone_deg = config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
+                cone_deg = (
+                    config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
+                )
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
                 if abs(u_LOS_G @ up) > 0.95:
@@ -397,16 +453,19 @@ def generate_trajectories_dynamical(
             H_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ H_GI_G[mc_trial, j]
 
             r_OG_G[mc_trial, j] = -R_IG[mc_trial, j].T @ r_GO_I[mc_trial, j]
-            sun_dir_G[mc_trial, j] = R_IG[mc_trial, j].T @ np.array([
-                np.cos(el_I[mc_trial]) * np.cos(az_I[mc_trial]),
-                np.cos(el_I[mc_trial]) * np.sin(az_I[mc_trial]),
-                np.sin(el_I[mc_trial]),
-            ])
+            sun_dir_G[mc_trial, j] = R_IG[mc_trial, j].T @ np.array(
+                [
+                    np.cos(el_I[mc_trial]) * np.cos(az_I[mc_trial]),
+                    np.cos(el_I[mc_trial]) * np.sin(az_I[mc_trial]),
+                    np.sin(el_I[mc_trial]),
+                ]
+            )
             az_G[mc_trial, j] = math.degrees(math.atan2(sun_dir_G[mc_trial, j, 1], sun_dir_G[mc_trial, j, 0]))
-            el_G[mc_trial, j] = math.degrees(math.atan2(
-                sun_dir_G[mc_trial, j, 2],
-                np.sqrt(sun_dir_G[mc_trial, j, 0]**2 + sun_dir_G[mc_trial, j, 1]**2)
-            ))
+            el_G[mc_trial, j] = math.degrees(
+                math.atan2(
+                    sun_dir_G[mc_trial, j, 2], np.sqrt(sun_dir_G[mc_trial, j, 0] ** 2 + sun_dir_G[mc_trial, j, 1] ** 2)
+                )
+            )
 
             for agent_idx in range(config.num_agents):
                 d_rI = state_C_I[mc_trial, agent_idx, j, 0:3] - r_AO_I
@@ -416,7 +475,9 @@ def generate_trajectories_dynamical(
                 # r_CG^G = R_IG.T @ r_CA^I - r_AG^G
                 r_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_rI - r_AG_G
                 v_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_vI - np.cross(omega_GI_G[mc_trial, j], r_AG_G)
-                dr_CG_G[mc_trial, agent_idx, j] = v_CG_G[mc_trial, agent_idx, j] - np.cross(omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j])
+                dr_CG_G[mc_trial, agent_idx, j] = v_CG_G[mc_trial, agent_idx, j] - np.cross(
+                    omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j]
+                )
 
                 fwd_I = r_GO_I[mc_trial, j] - state_C_I[mc_trial, agent_idx, j, 0:3]
                 R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
@@ -424,7 +485,7 @@ def generate_trajectories_dynamical(
                     world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev[agent_idx],
                     cos_thr=0.9995,
-                    sin_thr=0.03
+                    sin_thr=0.03,
                 )
                 q_raw = R2q(R_IC[mc_trial, agent_idx, j])
                 q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
@@ -443,19 +504,19 @@ def generate_trajectories_dynamical(
 
         """
         Angular velocity computation - CONSISTENT with dynamics
-        
+
         Previously: omega_CI_C was computed from finite differences of R_IC, but omega_GI_G
         came from the ODE. This caused ~0.00086 rad/s discretization error.
-        
+
         Now: We compute omega_CI_C using the angular velocity addition formula:
           ω_IC^C = ω_IG^C + ω_GC^C
         where:
           ω_IG^C = R_CG @ ω_IG^G = -R_CG @ omega_GI_G  (from ODE, transformed to C frame)
           ω_GC^C = from finite differences of R_GC    (consistent with pose evolution)
-        
+
         This ensures omega_SI_S is consistent with BOTH the dynamics (omega_GI_G) AND
         the pose evolution (finite differences of R_GS).
-        
+
         NAMING NOTE: omega_CI_C variable stores ω_IC^C (I wrt C, in C frame).
         It is negated when outputting to gtValues.txt to get ω_SI^S = ω_CI^C = -ω_IC^C.
         """
@@ -467,7 +528,10 @@ def generate_trajectories_dynamical(
             for k in range(1, nbSteps - 1):
                 Rm = R_GC[mc_trial, agent_idx, k - 1].T @ R_GC[mc_trial, agent_idx, k + 1]
                 omega_GC_C[k] = so3_log_vec(Rm) / (2.0 * tstep_eff)
-            omega_GC_C[nbSteps - 1] = so3_log_vec(R_GC[mc_trial, agent_idx, nbSteps - 2].T @ R_GC[mc_trial, agent_idx, nbSteps - 1]) / tstep_eff
+            omega_GC_C[nbSteps - 1] = (
+                so3_log_vec(R_GC[mc_trial, agent_idx, nbSteps - 2].T @ R_GC[mc_trial, agent_idx, nbSteps - 1])
+                / tstep_eff
+            )
 
             # Now compute omega_IC^C using angular velocity addition:
             #   ω_IC = ω_IG + ω_GC  (I wrt C = I wrt G + G wrt C)
@@ -485,14 +549,22 @@ def generate_trajectories_dynamical(
             for k in range(nbSteps):
                 R_CG = R_GC[mc_trial, agent_idx, k].T
                 omega_IG_C = -R_CG @ omega_GI_G[mc_trial, k]  # ω_IG^C = -R_CG @ ω_GI^G
-                omega_CI_C[mc_trial, agent_idx, k] = omega_IG_C - omega_GC_C[k]  # ω_IC^C = ω_IG^C - ω_CG^C (note: omega_GC_C stores ω_CG^C)
+                omega_CI_C[mc_trial, agent_idx, k] = (
+                    omega_IG_C - omega_GC_C[k]
+                )  # ω_IC^C = ω_IG^C - ω_CG^C (note: omega_GC_C stores ω_CG^C)
 
             for j in range(nbSteps):
                 if j == 0:
                     gyro_bias_state[mc_trial, agent_idx] = rng_mc.normal(0.0, sigma_bg, size=3)
                 else:
-                    gyro_bias_state[mc_trial, agent_idx] = phi_g * gyro_bias_state[mc_trial, agent_idx] + inc_std_g * rng_mc.normal(0.0, 1.0, size=3)
-                omega_CI_C_m[mc_trial, agent_idx, j] = omega_CI_C[mc_trial, agent_idx, j] + nu[mc_trial, agent_idx, j] + gyro_bias_state[mc_trial, agent_idx]
+                    gyro_bias_state[mc_trial, agent_idx] = phi_g * gyro_bias_state[
+                        mc_trial, agent_idx
+                    ] + inc_std_g * rng_mc.normal(0.0, 1.0, size=3)
+                omega_CI_C_m[mc_trial, agent_idx, j] = (
+                    omega_CI_C[mc_trial, agent_idx, j]
+                    + nu[mc_trial, agent_idx, j]
+                    + gyro_bias_state[mc_trial, agent_idx]
+                )
 
         # Specific force and torque
         for agent_idx in range(config.num_agents):
@@ -501,27 +573,45 @@ def generate_trajectories_dynamical(
                 r_magnitude = np.linalg.norm(r_c_I)
                 gravity_I = -config.mu_ref * r_c_I / (r_magnitude**3)
                 if j == 0:
-                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, 1, 3:6] - state_C_I[mc_trial, agent_idx, 0, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (
+                        state_C_I[mc_trial, agent_idx, 1, 3:6] - state_C_I[mc_trial, agent_idx, 0, 3:6]
+                    ) / tstep_eff - gravity_I
                 elif j == nbSteps - 1:
-                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, j, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]) / tstep_eff - gravity_I
+                    non_grav_accel_I = (
+                        state_C_I[mc_trial, agent_idx, j, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]
+                    ) / tstep_eff - gravity_I
                 else:
-                    non_grav_accel_I = (state_C_I[mc_trial, agent_idx, j + 1, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]) / (2 * tstep_eff) - gravity_I
+                    non_grav_accel_I = (
+                        state_C_I[mc_trial, agent_idx, j + 1, 3:6] - state_C_I[mc_trial, agent_idx, j - 1, 3:6]
+                    ) / (2 * tstep_eff) - gravity_I
                 f_specific_S[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j].T @ non_grav_accel_I
 
                 if j == 0:
                     accel_bias_state[mc_trial, agent_idx] = rng_mc.normal(0.0, sigma_ba, size=3)
                 else:
-                    accel_bias_state[mc_trial, agent_idx] = phi_a * accel_bias_state[mc_trial, agent_idx] + inc_std_a * rng_mc.normal(0.0, 1.0, size=3)
-                f_specific_S_m[mc_trial, agent_idx, j] = f_specific_S[mc_trial, agent_idx, j] + rng_mc.multivariate_normal(np.zeros(3), config.COV_ACCEL_ASTRIX) + accel_bias_state[mc_trial, agent_idx]
+                    accel_bias_state[mc_trial, agent_idx] = phi_a * accel_bias_state[
+                        mc_trial, agent_idx
+                    ] + inc_std_a * rng_mc.normal(0.0, 1.0, size=3)
+                f_specific_S_m[mc_trial, agent_idx, j] = (
+                    f_specific_S[mc_trial, agent_idx, j]
+                    + rng_mc.multivariate_normal(np.zeros(3), config.COV_ACCEL_ASTRIX)
+                    + accel_bias_state[mc_trial, agent_idx]
+                )
 
                 if j == 0:
                     omega_dot = (omega_CI_C[mc_trial, agent_idx, 1] - omega_CI_C[mc_trial, agent_idx, 0]) / tstep_eff
                 elif j == nbSteps - 1:
-                    omega_dot = (omega_CI_C[mc_trial, agent_idx, j] - omega_CI_C[mc_trial, agent_idx, j - 1]) / tstep_eff
+                    omega_dot = (
+                        omega_CI_C[mc_trial, agent_idx, j] - omega_CI_C[mc_trial, agent_idx, j - 1]
+                    ) / tstep_eff
                 else:
-                    omega_dot = (omega_CI_C[mc_trial, agent_idx, j + 1] - omega_CI_C[mc_trial, agent_idx, j - 1]) / (2 * tstep_eff)
+                    omega_dot = (omega_CI_C[mc_trial, agent_idx, j + 1] - omega_CI_C[mc_trial, agent_idx, j - 1]) / (
+                        2 * tstep_eff
+                    )
                 J_omega = config.J @ omega_CI_C[mc_trial, agent_idx, j]
-                tau_specific_S[mc_trial, agent_idx, j] = config.J @ omega_dot + np.cross(omega_CI_C[mc_trial, agent_idx, j], J_omega)
+                tau_specific_S[mc_trial, agent_idx, j] = config.J @ omega_dot + np.cross(
+                    omega_CI_C[mc_trial, agent_idx, j], J_omega
+                )
 
         print("done")
 
@@ -531,7 +621,7 @@ def generate_trajectories_dynamical(
     os.makedirs(base_output_file, exist_ok=True)
     # Write the trajectory config for this run
     trajectory_config_filepath = os.path.join(base_output_file, f"{config_prefix}_trajectory.json")
-    with open(trajectory_config_filepath, 'w') as f:
+    with open(trajectory_config_filepath, "w") as f:
         payload = config.model_dump()
         json.dump(payload, f, indent=2)
 
@@ -586,7 +676,7 @@ def generate_trajectories_dynamical(
             rotMode_Gframe=config.rotMode_Gframe,
             show=False,
             save=True,
-            mc_idx=mc_trial
+            mc_idx=mc_trial,
         )
 
         for agent_idx in range(config.num_agents):
@@ -609,7 +699,9 @@ def generate_trajectories_dynamical(
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
-            print(f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length_px']:.1f}px")
+            print(
+                f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length_px']:.1f}px"
+            )
 
             write_camera_trajectory(
                 output_dir=agent_folder,
@@ -623,7 +715,7 @@ def generate_trajectories_dynamical(
                 sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
             )
 
-            gtvalues_filepath = write_gtvalues(
+            write_gtvalues(
                 output_dir=agent_folder,
                 nbSteps=nbSteps,
                 timestamps=timestamps,
@@ -642,34 +734,36 @@ def generate_trajectories_dynamical(
                 state_A_I=state_A_I_mc,
                 r_GO_I=r_GO_I_mc,
                 v_GO_I=v_GO_I_mc,
-                state_C_I=state_C_I_mc_ag
+                state_C_I=state_C_I_mc_ag,
             )
 
+            write_sensormeasurements(
+                output_dir=agent_folder,
+                nbSteps=nbSteps,
+                timestamps=timestamps,
+                q_IC_m=q_IC_m_mc_ag,
+                omega_CI_C_m=omega_CI_C_m_mc_ag,
+                state_A_I=state_A_I_mc,
+                state_C_I=state_C_I_mc_ag,
+                f_specific_S_m=f_specific_S_m_mc_ag,
+                tau_specific_S=tau_specific_S_mc_ag,
+            )
+            write_config(
+                output_dir=agent_folder,
+                nbSteps=nbSteps,
+                camera_obj=camera_obj,
+                tstep_eff=tstep_eff,
+                child_ss=child_ss[mc_trial],
+                path_mode=config.path_mode,
+                rotMode_Gframe=config.rotMode_Gframe,
+                agent_idx=agent_idx,
+                mu_ref=config.mu_ref,
+                h_orbit=config.h_orbit,
+                tend=config.tend,
+                inc=inc[mc_trial],
+                ecc=ecc[mc_trial],
+            )
 
-            write_sensormeasurements(output_dir=agent_folder,
-                                        nbSteps=nbSteps,
-                                        timestamps=timestamps,
-                                        q_IC_m=q_IC_m_mc_ag,
-                                        omega_CI_C_m=omega_CI_C_m_mc_ag,
-                                        state_A_I=state_A_I_mc,
-                                        state_C_I=state_C_I_mc_ag,
-                                        f_specific_S_m=f_specific_S_m_mc_ag,
-                                        tau_specific_S=tau_specific_S_mc_ag
-                                    )
-            write_config(output_dir=agent_folder,
-                            nbSteps=nbSteps,
-                            camera_obj=camera_obj,
-                            tstep_eff=tstep_eff,
-                            child_ss=child_ss[mc_trial],
-                            path_mode=config.path_mode,
-                            rotMode_Gframe=config.rotMode_Gframe,
-                            agent_idx=agent_idx,
-                            mu_ref=config.mu_ref,
-                            h_orbit=config.h_orbit,
-                            tend=config.tend,
-                            inc=inc[mc_trial],
-                            ecc=ecc[mc_trial],)
-            
             generate_scene_plots(
                 output_dir=agent_folder,
                 p_C_I=state_C_I_mc_ag[:, 0:3],
@@ -679,7 +773,8 @@ def generate_trajectories_dynamical(
                 timestamps=timestamps,
                 r_CG_arr=r_CG_G_mc_ag,
                 q_IG_arr=q_IG_mc,
-                q_IC_arr=q_IC_mc_ag)
+                q_IC_arr=q_IC_mc_ag,
+            )
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {config.seed}")
@@ -712,7 +807,7 @@ def main():
     env_seed = os.getenv("SATSLAM_SEED")
     if env_seed:
         seed = int(env_seed)
-    
+
     if rotMode_Gframe == "1":
         path_mode = "inertial"
     elif rotMode_Gframe == "2":
@@ -721,13 +816,8 @@ def main():
         path_mode = "tumbling"
     else:
         raise ValueError("Mode must be 1, 2, or 3.")
-    
-    config = TrajectoryConfig(
-        path_mode=path_mode,
-        num_agents=num_agents,
-        num_mc=num_mc,
-        seed=seed
-    )
+
+    config = TrajectoryConfig(path_mode=path_mode, num_agents=num_agents, num_mc=num_mc, seed=seed)
 
     print(f"\n[INFO] Master seed: {seed}")
     print(f"[INFO] Mode: {path_mode}")
@@ -740,6 +830,7 @@ def main():
     os.makedirs(base_output_file, exist_ok=True)
 
     generate_trajectories_dynamical(config=config, base_output_file=base_output_file)
+
 
 if __name__ == "__main__":
     main()

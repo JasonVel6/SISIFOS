@@ -1,20 +1,28 @@
 import math
 import random
-import numpy as np
 from pathlib import Path
-from typing import List, Dict
-from mathutils import Vector, Quaternion
-from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
+
+import numpy as np
+from mathutils import Quaternion, Vector
+
 from modules.io_utils import ensure_dir
 from modules.trajectory.trajectory_io import write_camera_trajectory
+from modules.trajectory.trajectory_math import (
+    _rand_quat_uniform,
+    _rand_unit_vec,
+    _small_random_rotation,
+    fibonacci_sphere,
+    quat_to_wxyz,
+)
+
 
 def make_fake_frame_from_frame0(
     frame0: dict,
     seed: int,
-    cam_dir_max_deg: float = 0.5,        # how much to "swing" camera direction around target
-    cam_radius_scale_sigma: float = 0.0, # optional: random radial scaling (e.g. 0.01 = 1%)
-    target_rot_max_deg: float = 0.0,     # optional: random target rotation
-    force_camera_lookat: bool = True,    # recommended
+    cam_dir_max_deg: float = 0.5,  # how much to "swing" camera direction around target
+    cam_radius_scale_sigma: float = 0.0,  # optional: random radial scaling (e.g. 0.01 = 1%)
+    target_rot_max_deg: float = 0.0,  # optional: random target rotation
+    force_camera_lookat: bool = True,  # recommended
 ) -> dict:
     """
     Create an artificial 'next frame' using only frame0, by perturbing camera pose
@@ -49,7 +57,7 @@ def make_fake_frame_from_frame0(
     # choose a random axis perpendicular to r_hat (tangent direction)
     a = _rand_unit_vec(rng)
     # remove component along r_hat
-    a = (a - a.dot(r_hat) * r_hat)
+    a = a - a.dot(r_hat) * r_hat
     if a.length < 1e-9:
         # fallback: pick any perpendicular
         a = r_hat.orthogonal()
@@ -71,12 +79,12 @@ def make_fake_frame_from_frame0(
 
     # --- camera orientation ---
     if force_camera_lookat:
-        look_dir = (p_G_I0 - p_C_I1)
+        look_dir = p_G_I0 - p_C_I1
         if look_dir.length < 1e-12:
             look_dir = Vector((0.0, 0.0, -1.0))
         else:
             look_dir.normalize()
-        q_I_C1 = look_dir.to_track_quat('-Z', 'Y').normalized()
+        q_I_C1 = look_dir.to_track_quat("-Z", "Y").normalized()
     else:
         # small random perturbation of existing q_I_C0
         dq_c = _small_random_rotation(rng, cam_dir_max_deg)
@@ -88,6 +96,7 @@ def make_fake_frame_from_frame0(
         "p_C_I": p_C_I1,
         "q_I_C": q_I_C1,
     }
+
 
 def write_camera_trajectory_fib(
     out_dir: str,
@@ -103,16 +112,16 @@ def write_camera_trajectory_fib(
     """
     Generate camera Fibonacci-style trajectory in ECI arrays and write using
     the shared trajectory writer.
-    
+
     Target (G) orbits on sphere at radius R_LEO.
     Camera (C) is positioned radially outward from target at distance R_RPO,
     looking back toward origin.
     Both use same Fibonacci sphere angles.
-    
+
     Earth/clouds/atmosphere stay at inertial origin (0,0,0) with fixed orientation.
     """
     sphere_pts = fibonacci_sphere(N, radius=1.0)
-    
+
     if shuffle_points:
         random.seed(seed)
         random.shuffle(sphere_pts)
@@ -131,24 +140,24 @@ def write_camera_trajectory_fib(
 
         # Fibonacci sphere point (unit direction)
         direction_radial = sphere_pts[i].normalized()
-        
+
         # Target position at radius R_LEO
         p_G_I_front = direction_radial * R_LEO
-        
+
         # Camera position at radius R_LEO + R_RPO (same direction)
         p_C_I_front = direction_radial * (R_LEO + R_RPO)
-        
+
         # Random target orientation in inertial frame
         rng = random.Random(seed + i)
         q_IG = _rand_quat_uniform(rng)
-        
+
         # Camera orientation: looking toward origin (nadir/Earth-pointed)
         # Direction from camera toward sc/origin (negative radial direction)
         look_direction = -direction_radial  # Points toward Earth at origin
-        
+
         # Create quaternion that aligns -Z axis (camera forward) with look direction
-        q_IC = look_direction.to_track_quat('-Z', 'Y').normalized()
-        
+        q_IC = look_direction.to_track_quat("-Z", "Y").normalized()
+
         # Convert quaternions to wxyz format
         q_IG_wxyz_front = quat_to_wxyz(q_IG)
         q_IC_wxyz_front = quat_to_wxyz(q_IC)
@@ -160,24 +169,24 @@ def write_camera_trajectory_fib(
 
         # Fibonacci sphere point (unit direction)
         direction_radial = -sphere_pts[i].normalized()
-        
+
         # Target position at radius R_LEO
         p_G_I_back = direction_radial * R_LEO
-        
+
         # Camera position at radius R_LEO - R_RPO (no Earth)
         p_C_I_back = direction_radial * (R_LEO - R_RPO)
-        
+
         # Random target orientation in inertial frame
         rng = random.Random(seed + i)
         q_IG = _rand_quat_uniform(rng)
-        
+
         # Camera orientation: looking toward OUT (-nadir/Earth-pointed from the other side)
         # Direction from camera toward sc (negative of negative already radial direction)
         look_direction = direction_radial  # Points toward Earth at origin
-        
+
         # Create quaternion that aligns -Z axis (camera forward) with look direction
-        q_IC = look_direction.to_track_quat('-Z', 'Y').normalized()
-        
+        q_IC = look_direction.to_track_quat("-Z", "Y").normalized()
+
         # Convert quaternions to wxyz format
         q_IG_wxyz_back = quat_to_wxyz(q_IG)
         q_IC_wxyz_back = quat_to_wxyz(q_IC)
@@ -199,11 +208,12 @@ def write_camera_trajectory_fib(
         sun_az_I=sun_az_arr,
         sun_el_I=sun_el_arr,
     )
-    
+
     if verbose:
         print(f"Trajectory (v2 - inertial orbital) written to: {out_path}")
-    
+
     return [out_dir]
+
 
 def write_camera_approach(
     out_path: str,
@@ -211,14 +221,14 @@ def write_camera_approach(
     R_LEO: float,
     R_RPO_start: float = 36.0,
     R_RPO_end: float = 5.0,
-    n_revs: float = 1.0,              # number of orbital revolutions over N frames
-    orbit_plane: str = "xy",          # "xy", "xz", or "yz"
-    shuffle_points: bool = False,     
+    n_revs: float = 1.0,  # number of orbital revolutions over N frames
+    orbit_plane: str = "xy",  # "xy", "xz", or "yz"
+    shuffle_points: bool = False,
     seed: int = 0,
     sun_az: float = 0.0,
     sun_el: float = 0.0,
     verbose: bool = True,
-    include_rpo_column: bool = True
+    include_rpo_column: bool = True,
 ) -> list[str]:
     """
     This is a demo approach phase. Not actually implementing the trajectory module
@@ -226,14 +236,10 @@ def write_camera_approach(
 
     out_path = str(Path(out_path) / "camera_traj.txt")
 
-    
     if N < 2:
         rpo_list = [float(R_RPO_start)]
     else:
-        rpo_list = [
-            float(R_RPO_start + (R_RPO_end - R_RPO_start) * (i / (N - 1)))
-            for i in range(N)
-        ]
+        rpo_list = [float(R_RPO_start + (R_RPO_end - R_RPO_start) * (i / (N - 1))) for i in range(N)]
 
     if verbose:
         print(f"R_RPO evolution: start={rpo_list[0]:.3f}, end={rpo_list[-1]:.3f}")
@@ -248,21 +254,21 @@ def write_camera_approach(
         "# Camera is center-pointing at target (-Z axis looks at target)",
         f"# N={N}, R_LEO={R_LEO:.6f}, R_RPO_start={R_RPO_start:.6f}, R_RPO_end={R_RPO_end:.6f}, n_revs={n_revs}",
         "# Columns:",
-        "# p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el" + ("  R_RPO" if include_rpo_column else ""),
+        "# p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el"
+        + ("  R_RPO" if include_rpo_column else ""),
         "#",
     ]
 
     # Orbit angle over time
     # theta spans n_revs revolutions
-    lag_ratio=-0.5
+    lag_ratio = -0.5
     for i in range(N):
         t = 0.0 if N < 2 else (i / (N - 1))
         theta = 2.0 * math.pi * n_revs * t
-        if i <N//2:
-            lag_ratio += 0.75/N
+        if i < N // 2:
+            lag_ratio += 0.75 / N
         else:
-            lag_ratio -= 0.5/N
-        
+            lag_ratio -= 0.5 / N
 
         # Unit radial direction (depends on chosen plane)
         if orbit_plane == "xy":
@@ -274,11 +280,11 @@ def write_camera_approach(
         else:
             raise ValueError("orbit_plane must be one of: 'xy', 'xz', 'yz'")
         if orbit_plane == "xy":
-            t_hat = Vector((-math.sin(theta),  math.cos(theta), 0.0))
+            t_hat = Vector((-math.sin(theta), math.cos(theta), 0.0))
         elif orbit_plane == "xz":
-            t_hat = Vector((-math.sin(theta), 0.0,  math.cos(theta)))
+            t_hat = Vector((-math.sin(theta), 0.0, math.cos(theta)))
         elif orbit_plane == "yz":
-            t_hat = Vector((0.0, -math.sin(theta),  math.cos(theta)))
+            t_hat = Vector((0.0, -math.sin(theta), math.cos(theta)))
         else:
             raise ValueError("orbit_plane must be one of: 'xy', 'xz', 'yz'")
 
@@ -290,25 +296,27 @@ def write_camera_approach(
 
         # Camera approaches target along the same radial line, staying OUTSIDE (Earth behind target)
         R_RPO_i = rpo_list[i]
-        #p_C_I = u * (R_LEO + R_RPO_i)
-        r_behind = lag_ratio *  rpo_list[0]
+        # p_C_I = u * (R_LEO + R_RPO_i)
+        r_behind = lag_ratio * rpo_list[0]
         r_rad = math.sqrt(max(0.0, R_RPO_i * R_RPO_i - r_behind * r_behind))
         p_C_I = p_G_I + (u * r_rad) + (t_hat * r_behind)
 
         # Random target orientation per frame (same as your v2 idea)
-        #rng = random.Random(seed + i)
-        q_IG = Quaternion((1.0, 0.0, 0.0, 0.0)).normalized()          # should return a mathutils.Quaternion (wxyz or xyzw depending on your helper)
+        # rng = random.Random(seed + i)
+        q_IG = Quaternion(
+            (1.0, 0.0, 0.0, 0.0)
+        ).normalized()  # should return a mathutils.Quaternion (wxyz or xyzw depending on your helper)
         q_IG_wxyz = quat_to_wxyz(q_IG)
 
         # Camera orientation: center-point at target
-        look_dir = (p_G_I - p_C_I)
+        look_dir = p_G_I - p_C_I
         if look_dir.length < 1e-12:
             # Degenerate (shouldn't happen unless R_RPO_i == 0)
             look_dir = -u
         else:
             look_dir.normalize()
 
-        q_IC = look_dir.to_track_quat('-Z', 'Y').normalized()
+        q_IC = look_dir.to_track_quat("-Z", "Y").normalized()
         q_IC_wxyz = quat_to_wxyz(q_IC)
 
         # Write row

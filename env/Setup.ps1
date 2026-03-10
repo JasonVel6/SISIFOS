@@ -54,35 +54,36 @@ try {
         throw "Blender Python not found at $BlenderPython"
     }
 
-    # 4. Setup Python Environment
-    Push-Location $ProjectRoot
-    $env:UV_PROJECT_ENVIRONMENT = Split-Path -Path $BlenderPythonDir -Parent
+    # 4. Prepare Blender Python as a virtual environment for uv
+    $BlenderPythonParent = Split-Path -Path $BlenderPythonDir -Parent
 
-    Update-Progress "Bootstrapping pip..."
+    Update-Progress "Preparing Blender Python environment..."
+
+    $PythonVersion = & $BlenderPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+    $PyvenvCfg = Join-Path $BlenderPythonParent "pyvenv.cfg"
+    @"
+home = $BlenderPythonDir
+implementation = CPython
+version_info = $PythonVersion
+include-system-site-packages = false
+"@ | Set-Content -Path $PyvenvCfg
+
+    # 5. Install uv
+    Update-Progress "Installing uv..."
     & $BlenderPython -m ensurepip --upgrade *>$null
-    
-    Update-Progress "Upgrading build tools..."
-    & $BlenderPython -m pip install --upgrade pip setuptools wheel uv -q *>$null
-    
-    Update-Progress "Generating lock file..."
-    & $BlenderPython -m uv lock -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "uv lock failed" }
-    
-    $UvReqFile = Join-Path $env:TEMP "sisifos-uv-req.txt"
-    if (Test-Path $UvReqFile) { Remove-Item $UvReqFile -Force }
-    
-    Update-Progress "Resolving dependencies..."
-    & $BlenderPython -m uv export --format requirements.txt --locked --no-emit-project --output-file $UvReqFile -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "uv export failed" }
-    
-    Update-Progress "Installing dependencies..."
-    & $BlenderPython -m uv pip install --require-hashes --requirements $UvReqFile -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "uv pip install failed" }
-    
-    Update-Progress "Installing project in editable mode..."
-    & $BlenderPython -m uv pip install --no-deps --editable . -q *>$null
-    if ($LASTEXITCODE -ne 0) { throw "editable install failed" }
-    
+    if ($LASTEXITCODE -ne 0) { throw "Failed to bootstrap pip" }
+
+    & $BlenderPython -m pip install --upgrade uv *>$null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to install uv" }
+
+    # 6. Sync dependencies using uv
+    Update-Progress "Syncing dependencies..."
+    Push-Location $ProjectRoot
+    $env:UV_PROJECT_ENVIRONMENT = $BlenderPythonParent
+
+    & $BlenderPython -m uv sync
+    if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
+
     Remove-Item env:\UV_PROJECT_ENVIRONMENT -ErrorAction SilentlyContinue
     Pop-Location
 

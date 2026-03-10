@@ -1,6 +1,6 @@
-import bpy
 import os
-import math
+
+import bpy
 from mathutils import Vector
 
 # =========================================================
@@ -18,6 +18,7 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 collection = scene.collection
 
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -29,7 +30,7 @@ def get_root_world_dimensions(root_obj):
     max_c = Vector((-1e10, -1e10, -1e10))
 
     for obj in [root_obj] + list(root_obj.children_recursive):
-        if obj.type != 'MESH':
+        if obj.type != "MESH":
             continue
 
         obj_eval = obj.evaluated_get(depsgraph)
@@ -47,7 +48,8 @@ def get_root_world_dimensions(root_obj):
 
         obj_eval.to_mesh_clear()
 
-    return (max_c - min_c)
+    return max_c - min_c
+
 
 def power_of_10_scale(max_dim, target_min=5.0, target_max=50.0):
     """Return scale factor (power of 10) that brings max_dim into [target_min, target_max]."""
@@ -60,6 +62,7 @@ def power_of_10_scale(max_dim, target_min=5.0, target_max=50.0):
         scale /= 10.0
     return scale
 
+
 def compute_center_of_mass(root_obj):
     """Compute center of mass (average of mesh vertices) in WORLD coordinates for root + children."""
     depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -68,7 +71,7 @@ def compute_center_of_mass(root_obj):
     count = 0
 
     for obj in [root_obj] + list(root_obj.children_recursive):
-        if obj.type != 'MESH':
+        if obj.type != "MESH":
             continue
 
         obj_eval = obj.evaluated_get(depsgraph)
@@ -85,6 +88,7 @@ def compute_center_of_mass(root_obj):
         return Vector((0.0, 0.0, 0.0))
     return acc / count
 
+
 def recenter_model_to_com(root_obj, verbose=True):
     """Move all geometry so RF origin coincides with the model COM."""
     com = compute_center_of_mass(root_obj)
@@ -97,6 +101,7 @@ def recenter_model_to_com(root_obj, verbose=True):
         obj.location -= com
 
     bpy.context.view_layer.update()
+
 
 def normalize_model(root_obj, verbose=True):
     """
@@ -111,9 +116,9 @@ def normalize_model(root_obj, verbose=True):
 
     # Your original scaling choice:
     scale = 10.0 / max_dim if max_dim != 0 else 1.0
-    if scale >1000:
+    if scale > 1000:
         scale = 1 / max_dim
-    if scale <0.001:
+    if scale < 0.001:
         scale = 5 / max_dim
     if verbose:
         print(f"  Max dim before scale: {max_dim:.4f}")
@@ -127,23 +132,26 @@ def normalize_model(root_obj, verbose=True):
     if verbose:
         print(f"  Max dim after scale:  {max(dims_after):.4f}")
 
+
 def assign_segmentation_ids(imported_objects, start_id=1):
     """Assign unique pass_index to each MESH object in imported_objects."""
     idx = start_id
     for obj in imported_objects:
-        if obj.type == 'MESH':
+        if obj.type == "MESH":
             obj.pass_index = idx
             idx += 1
+
 
 def create_reference_frame(name):
     """Create a hidden Empty used as a reference frame."""
     rf = bpy.data.objects.new(name, None)
-    rf.empty_display_type = 'PLAIN_AXES'
+    rf.empty_display_type = "PLAIN_AXES"
     rf.empty_display_size = 0.0
     rf.hide_viewport = True
     rf.hide_render = True
     collection.objects.link(rf)
     return rf
+
 
 def import_fbx(filepath):
     """Import FBX and return newly imported objects."""
@@ -152,6 +160,7 @@ def import_fbx(filepath):
     after = set(bpy.data.objects)
     return list(after - before)
 
+
 def import_glb(filepath):
     """Import GLB/GLTF and return newly imported objects."""
     before = set(bpy.data.objects)
@@ -159,9 +168,11 @@ def import_glb(filepath):
     after = set(bpy.data.objects)
     return list(after - before)
 
+
 def file_stem(path):
     """Filename without extension (safe-ish label)."""
     return os.path.splitext(os.path.basename(path))[0]
+
 
 # =========================================================
 # MODEL NAME MAP (for ESA FBX)
@@ -170,32 +181,28 @@ model_names = {
     # -------------------------------------------------
     # Rosetta / Comet missions
     # -------------------------------------------------
-    0:  "Rosetta",
-    1:  "Philae",
-    2:  "Giotto",
-
+    0: "Rosetta",
+    1: "Philae",
+    2: "Giotto",
     # -------------------------------------------------
     # BepiColombo mission family
     # -------------------------------------------------
-    3:  "Bepi-mpo",
-    4:  "Bepi-mmo",
-    5:  "Bepi-mtm",
-    6:  "Bepi-mcs",
-
+    3: "Bepi-mpo",
+    4: "Bepi-mmo",
+    5: "Bepi-mtm",
+    6: "Bepi-mcs",
     # -------------------------------------------------
     # Proba missions
     # -------------------------------------------------
-    7:  "Proba-2",
-    8:  "Proba-3",
-    9:  "Proba-3-csc",
+    7: "Proba-2",
+    8: "Proba-3",
+    9: "Proba-3-csc",
     10: "Proba-3-osc",
-
     # -------------------------------------------------
     # Cassini / Saturn system
     # -------------------------------------------------
     11: "Cassini",
     12: "Cassini-huygens-in",
-
     # -------------------------------------------------
     # ExoMars / Mars exploration
     # -------------------------------------------------
@@ -203,14 +210,12 @@ model_names = {
     14: "TGO",
     15: "TGO-edm",
     16: "Schiaparelli",
-
     # -------------------------------------------------
     # Solar & heliophysics missions
     # -------------------------------------------------
     17: "Solar-orbiter",
     18: "Soho",
     19: "Ulysses",
-
     # -------------------------------------------------
     # Astrophysics / space observatories
     # -------------------------------------------------
@@ -219,31 +224,26 @@ model_names = {
     22: "Planck",
     23: "Herschel",
     24: "XMM-Newton",
-
     # -------------------------------------------------
     # Technology / pathfinder missions
     # -------------------------------------------------
     25: "Lisa-pathfinder",
     26: "Smart-1",
     27: "Cheops",
-
     # -------------------------------------------------
     # Earth / multi-spacecraft missions
     # -------------------------------------------------
     28: "Cluster",
     29: "Double-star",
-
     # -------------------------------------------------
     # Other ESA science missions
     # -------------------------------------------------
     30: "Integral",
     31: "Venus-express",
     32: "Juice",
-
     # =================================================
     # NASA / Other missions
     # =================================================
-
     # -------------------------------------------------
     # Earth observing / climate & atmosphere
     # -------------------------------------------------
@@ -259,13 +259,11 @@ model_names = {
     42: "Jason1",
     43: "Landsat8",
     44: "QuickSCAT",
-
     # -------------------------------------------------
     # Space telescopes / astrophysics observatories
     # -------------------------------------------------
     45: "Chandra",
     46: "Hubble",
-
     # -------------------------------------------------
     # Planetary / deep-space exploration & infrastructure
     # -------------------------------------------------
@@ -279,12 +277,10 @@ model_names = {
     54: "MAVEN",
     55: "MRO",
     56: "NEAR",
-
     # -------------------------------------------------
     # Communications / relay satellites
     # -------------------------------------------------
     57: "TDRS",
-
     # -------------------------------------------------
     # Heliophysics / space environment
     # -------------------------------------------------
@@ -317,10 +313,7 @@ for idx, fbx_name in enumerate(fbx_files):
 # =========================================================
 # MAIN: GLB/GLTF (NASA)
 # =========================================================
-glb_files = sorted(
-    f for f in os.listdir(GLB_FOLDER)
-    if f.lower().endswith((".glb", ".gltf"))
-)
+glb_files = sorted(f for f in os.listdir(GLB_FOLDER) if f.lower().endswith((".glb", ".gltf")))
 
 for glb_name in glb_files:
     glb_path = os.path.join(GLB_FOLDER, glb_name)
