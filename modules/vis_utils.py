@@ -49,7 +49,7 @@ def _depth_vis_and_mask_from_rrpo(
     x = (depth - dmin) / denom
     x = np.clip(x, 0.0, 1.0)
 
-    cmap = mpl.colormaps.get_cmap(cmap_name)   # or mpl.colormaps[cmap_name]
-    rgb = cmap(x)[..., :3].astype(np.float32)    
+    cmap = mpl.colormaps.get_cmap(cmap_name)  # or mpl.colormaps[cmap_name]
+    rgb = cmap(x)[..., :3].astype(np.float32)
     rgb[~valid] = 0.0  # background black
     return rgb, valid

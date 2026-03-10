@@ -15,26 +15,24 @@ bl_info = {
 import json
 import os
 import shutil
-import numpy as np
-from pathlib import Path
 import sys
 
+import numpy as np
 
 if sys.platform != "win32":
     _old_dl_flags = sys.getdlopenflags()
     sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
-    import embreex.rtcore_scene
+
     sys.setdlopenflags(_old_dl_flags)
     del _old_dl_flags
-import trimesh
-
 import bpy
-import numpy as np
+import trimesh
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, FloatVectorProperty, PointerProperty
 from bpy.types import Panel, PropertyGroup
 
 """ Defining fuctions to obtain ground truth data """
+
 
 # Trimesh depth pipeline helpers
 def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
@@ -84,8 +82,7 @@ def _mesh_from_scene(scene) -> trimesh.Trimesh:
         mesh = obj_eval.to_mesh()
         mesh.calc_loop_triangles()
         verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
-        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]]
-                          for lt in mesh.loop_triangles], dtype=int)
+        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]] for lt in mesh.loop_triangles], dtype=int)
         if verts.size == 0 or faces.size == 0:
             obj_eval.to_mesh_clear()
             continue
@@ -101,11 +98,13 @@ def _mesh_from_scene(scene) -> trimesh.Trimesh:
 
 def _make_ray_intersector(mesh: trimesh.Trimesh):
     from trimesh.ray.ray_pyembree import RayMeshIntersector
+
     return RayMeshIntersector(mesh)
 
 
 def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
-    from modules.addon_ground_truth_generation import get_scene_resolution, get_camera_parameters_intrinsic
+    from modules.addon_ground_truth_generation import get_camera_parameters_intrinsic, get_scene_resolution
+
     res_x, res_y = get_scene_resolution(scene)
     f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
     K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
@@ -122,9 +121,7 @@ def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
         return np.zeros((res_y, res_x), dtype=np.float32)
 
     intersector = _make_ray_intersector(mesh)
-    locs_W, ray_idx, _tri_idx = intersector.intersects_location(
-        origins_W, dirs_W, multiple_hits=False
-    )
+    locs_W, ray_idx, _tri_idx = intersector.intersects_location(origins_W, dirs_W, multiple_hits=False)
 
     depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
     if locs_W.shape[0] == 0:
@@ -145,6 +142,7 @@ def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
     z = z[valid]
     depth_z[ray_idx] = z.astype(np.float32)
     return depth_z.reshape(res_y, res_x)
+
 
 def get_scene_resolution(scene):
     resolution_scale = scene.render.resolution_percentage / 100.0
