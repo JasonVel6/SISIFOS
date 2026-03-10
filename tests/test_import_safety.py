@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 
@@ -12,5 +13,6 @@ class TestImportSafety:
             ],
             capture_output=True,
             text=True,
+            env={**os.environ, "PYTHONNOUSERSITE": "1"},
         )
         assert result.returncode == 0

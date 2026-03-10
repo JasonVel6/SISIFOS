@@ -272,7 +272,7 @@ class BlenderRenderer:
         # stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
         stem = f"{str(frame_id).zfill(N_digits)}"
 
-        self.scene.render.filepath = str(output_dir / f"frame_{stem}")
+        self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
         self.scene.frame_set(frame_id)
         bpy.ops.render.render(write_still=True)
 
@@ -341,7 +341,7 @@ class BlenderRenderer:
         bpy.context.view_layer.update()
         # stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
         stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
-        self.scene.render.filepath = str(output_dir / f"frame_{stem}")
+        self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
         bpy.ops.render.render(write_still=True)
 
         return f"frame_{stem}.png"
