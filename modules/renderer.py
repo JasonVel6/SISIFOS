@@ -165,12 +165,16 @@ class BlenderRenderer:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
         vb = self.scene.vision_blender
         vb.bool_save_gt_data = True
-        vb.bool_save_depth = True
-        vb.bool_save_normals = True
+        vb.bool_save_depth = self.config.save_depth
+        vb.bool_save_normals = self.config.save_normals
         vb.bool_save_cam_param = True
-        vb.bool_save_opt_flow = True               # needs Cycles' Vector pass
-        vb.bool_save_segmentation_masks = True     # needs object pass_index > 0
-        vb.bool_save_obj_poses = True
+        vb.bool_save_opt_flow = self.config.save_optical_flow
+        vb.bool_save_segmentation_masks = self.config.save_segmentation
+        vb.bool_save_obj_poses = self.config.save_obj_poses
+        vb.bool_save_gt_data = any([
+            vb.bool_save_depth, vb.bool_save_normals, vb.bool_save_cam_param,
+            vb.bool_save_opt_flow, vb.bool_save_segmentation_masks, vb.bool_save_obj_poses
+        ])
             
         self._log_info("Vision Blender addon configured")
         cam = bpy.data.objects.get("Camera")
