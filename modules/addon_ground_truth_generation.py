@@ -22,6 +22,7 @@ import numpy as np
 if sys.platform != "win32":
     _old_dl_flags = sys.getdlopenflags()
     sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
+    import embreex.rtcore_scene  # noqa: F401
 
     sys.setdlopenflags(_old_dl_flags)
     del _old_dl_flags
