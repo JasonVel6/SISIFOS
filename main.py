@@ -14,7 +14,6 @@ import sys
 import os
 import math
 from pathlib import Path
-from tqdm import tqdm
 import argparse
 import json
 import numpy as np
@@ -32,8 +31,7 @@ from modules.io_utils import (
     create_image_list,
 )
 from modules.trajectory.sampling_trajectory import (
-    write_camera_trajectory_fib, 
-    make_fake_frame_from_frame0
+    write_camera_trajectory_fib,
 )
 from modules.trajectory.trajectory_io import (
     get_scaled_trajectory_in_ECI,
@@ -145,55 +143,29 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     total = len(frame_ids)
     print("Enabling blur is: ", config.setup.enable_blur)
-    
-    with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
-        image_filenames = []
-        for i in frame_ids:
-            fr = frames[i]
-            fake_fr2 = None
-            if str(config.setup.enable_blur).casefold()=="on":
-                fake_fr2 = make_fake_frame_from_frame0(
-                    fr, seed=12345 + i,
-                    cam_dir_max_deg=0.6*config.setup.blur_motion_factor,
-                    cam_radius_scale_sigma=0.01*config.setup.blur_motion_factor,
-                    target_rot_max_deg=1.0*config.setup.blur_motion_factor,
-                    force_camera_lookat=True,
-                )
-            
-                
-            if str(config.setup.enable_blur).casefold()=="on" and fake_fr2 is not None:
-                fps = renderer.scene.render.fps / renderer.scene.render.fps_base
-                shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
-                image_filename = renderer.render_frame_motion_blur_traj(
-                    cam, model, sun, fr, fake_fr2, i, shutter_frames,
-                    image_out_dir, config.camera.exposure_time_s, N_digits
-                )
-            else:
-                image_filename = renderer.render_frame_v2(
-                    cam, model, sun, fr, i, image_out_dir, config.camera.exposure_time_s,
-                    N_digits
-                )
 
-            image_filenames.append(image_filename)
-            pbar.update(1)
+    image_filenames = renderer.render_animation(
+        cam, model, sun, frames, frame_ids,
+        image_out_dir, config.camera.exposure_time_s, N_digits
+    )
 
-            # Post-process NPZ
-            target_dist = float(np.linalg.norm(
-                fr["p_G_I"] - fr["p_C_I"]
-            ))
-            npz_src = Path(os.path.join(image_out_dir, f'{i:04d}.npz'))
-            if npz_src.exists():
-                handle_gt_from_npz(
-                    npz_src,
-                    gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
-                    gt_dirs["gt_flow"], gt_dirs["gt_seg"],
-                    target_dist,
-                    raw_image_filename=image_filename,
-                    raw_images_dir=str(image_out_dir),
-                    masked_images_dir=str(masked_out_dir)
-                )
-
-    # End of frames loop
+    # Post-process NPZ ground truth data
+    for idx, i in enumerate(frame_ids):
+        fr = frames[i]
+        target_dist = float(np.linalg.norm(
+            fr["p_G_I"] - fr["p_C_I"]
+        ))
+        npz_src = Path(os.path.join(image_out_dir, f'{i:04d}.npz'))
+        if npz_src.exists():
+            handle_gt_from_npz(
+                npz_src,
+                gt_dirs["gt_npz"], gt_dirs["gt_depth"], gt_dirs["gt_norm"],
+                gt_dirs["gt_flow"], gt_dirs["gt_seg"],
+                target_dist,
+                raw_image_filename=image_filenames[idx],
+                raw_images_dir=str(image_out_dir),
+                masked_images_dir=str(masked_out_dir)
+            )
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)

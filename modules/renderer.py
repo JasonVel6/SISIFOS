@@ -351,3 +351,111 @@ class BlenderRenderer:
         bpy.ops.render.render(write_still=True)
 
         return f"frame_{stem}.png"
+
+    @staticmethod
+    def _are_contiguous(frame_ids: List[int]) -> bool:
+        """Return True if *frame_ids* form a contiguous range min … max."""
+        if not frame_ids:
+            return False
+        return list(range(min(frame_ids), max(frame_ids) + 1)) == sorted(frame_ids)
+
+    def _keyframe_sun_direction(self, sun: bpy.types.Object, sun_az: float,
+                                sun_el: float, frame: int) -> None:
+        """Set the sun direction and insert a keyframe for it."""
+        set_sun_direction(sun, sun_az, sun_el)
+        sun.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+
+    def render_animation(
+        self,
+        cam: bpy.types.Object,
+        model: bpy.types.Object,
+        sun: bpy.types.Object,
+        frames: List[Dict],
+        frame_ids: List[int],
+        output_dir: Path,
+        exposure_time_s: float,
+        N_digits: int,
+    ) -> List[str]:
+        """Keyframe the whole trajectory and render every *frame_id*.
+
+        If *frame_ids* are contiguous the render is dispatched as a single
+        ``bpy.ops.render.render(animation=True)`` call.  For sparse
+        *frame_ids* each frame is rendered individually with
+        ``write_still=True`` while still benefiting from persistent
+        BVH / kernel caches and real inter-frame motion blur.
+
+        Returns a list of output PNG filenames.
+        """
+
+        # Clear existing animation data
+        clear_anim(cam)
+        clear_anim(model)
+        clear_anim(sun)
+
+        # Rotation modes
+        model.rotation_mode = "QUATERNION"
+        cam.rotation_mode = "QUATERNION"
+        sun.rotation_mode = "QUATERNION"
+
+        # Keyframe every frame 
+        for fid in frame_ids:
+            fdata = frames[fid]
+            self.scene.frame_set(fid)
+
+            model.location = fdata["p_G_I"]
+            model.rotation_quaternion = Quaternion(tuple(fdata["q_I_G"]))
+
+            cam.location = fdata["p_C_I"]
+            cam.rotation_quaternion = Quaternion(tuple(fdata["q_I_C"]))
+
+            bpy.context.view_layer.update()
+
+            keyframe_pose(model, fid)
+            keyframe_pose(cam, fid)
+            self._keyframe_sun_direction(sun, fdata["sun_az"], fdata["sun_el"], fid)
+
+        # Frame range 
+        self.scene.frame_start = min(frame_ids)
+        self.scene.frame_end = max(frame_ids)
+
+        # Per-frame exposure handler 
+        base_ev = self.scene.view_settings.exposure
+        ev_shift = math.log(exposure_time_s / self.config.setup.t_ref_s, 2.0)
+
+        def _exposure_handler(scene, depsgraph=None):
+            scene.view_settings.exposure = base_ev + ev_shift
+
+        bpy.app.handlers.frame_change_pre.append(_exposure_handler)
+
+        # Motion blur 
+        enable_blur = str(self.config.setup.enable_blur).casefold()
+        if enable_blur == "on":
+            self.scene.render.use_motion_blur = True
+            fps = self.scene.render.fps / self.scene.render.fps_base
+            shutter_frames = (self.config.camera.exposure_time_s
+                              * fps
+                              * self.config.setup.blur_shutter_factor)
+            self.scene.render.motion_blur_shutter = float(shutter_frames)
+        else:
+            self.scene.render.use_motion_blur = False
+
+        #  Output settings 
+        output_dir = Path(output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.scene.render.image_settings.file_format = 'PNG'
+        self.scene.render.use_file_extension = True
+
+        try:
+            # Render frame-by-frame with keyframed data in place.
+            for fid in frame_ids:
+                stem = str(fid).zfill(N_digits)
+                self.scene.render.filepath = str(output_dir / f"frame_{stem}")
+                self.scene.frame_set(fid)
+                bpy.ops.render.render(write_still=True)
+        finally:
+            if _exposure_handler in bpy.app.handlers.frame_change_pre:
+                bpy.app.handlers.frame_change_pre.remove(_exposure_handler)
+            self.scene.view_settings.exposure = base_ev
+
+        # Build output filename list 
+        return [f"frame_{str(fid).zfill(N_digits)}.png" for fid in frame_ids]
