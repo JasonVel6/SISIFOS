@@ -179,7 +179,9 @@ def read_camera_trajectory(file_path: str) -> dict[str, np.ndarray]:
     required_keys = ("timestamps", "p_G_I", "q_I_G", "p_C_I", "q_I_C", "sun_az", "sun_el")
     lengths = [len(trajectory[k]) for k in required_keys]
     if len(set(lengths)) != 1:
-        raise ValueError(f"Inconsistent trajectory lengths across keys: {dict(zip(required_keys, lengths, strict=False))}")
+        raise ValueError(
+            f"Inconsistent trajectory lengths across keys: {dict(zip(required_keys, lengths, strict=False))}"
+        )
 
     trajectory["N"] = np.array(lengths[0], dtype=int)
     return trajectory
@@ -689,9 +691,7 @@ def create_ffmpeg(gt_output, filename):
 
     try:
         # Set working directory to ensure correct relative paths
-        subprocess.run(
-            ffmpeg_command, check=True, env=my_env, capture_output=True, text=True
-        )
+        subprocess.run(ffmpeg_command, check=True, env=my_env, capture_output=True, text=True)
         print(f"Video created successfully: {output_video}")
         return True
     except subprocess.CalledProcessError as e:

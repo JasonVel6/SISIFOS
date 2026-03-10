@@ -390,7 +390,6 @@ def plot_scene_frame(
         target_color = "gray"
         lit_status = "BACK-LIT"
 
-
     # Trajectory window
     n_frames = len(camera_trajectory)
     start_idx = max(0, frame_idx - show_trajectory_window)
