@@ -219,7 +219,6 @@ def generate_trajectories_dynamical(
 
     # ---------- Derived constants ----------
     a = parameterSetting(config.h_orbit)
-    TU = np.sqrt(a**3 / config.mu_ref) * 2 * np.pi
 
     # ---------- Preallocations ----------
     r_AG_G = np.array(config.r_AG_G, dtype=float)
@@ -505,19 +504,19 @@ def generate_trajectories_dynamical(
 
         """
         Angular velocity computation - CONSISTENT with dynamics
-        
+
         Previously: omega_CI_C was computed from finite differences of R_IC, but omega_GI_G
         came from the ODE. This caused ~0.00086 rad/s discretization error.
-        
+
         Now: We compute omega_CI_C using the angular velocity addition formula:
           ω_IC^C = ω_IG^C + ω_GC^C
         where:
           ω_IG^C = R_CG @ ω_IG^G = -R_CG @ omega_GI_G  (from ODE, transformed to C frame)
           ω_GC^C = from finite differences of R_GC    (consistent with pose evolution)
-        
+
         This ensures omega_SI_S is consistent with BOTH the dynamics (omega_GI_G) AND
         the pose evolution (finite differences of R_GS).
-        
+
         NAMING NOTE: omega_CI_C variable stores ω_IC^C (I wrt C, in C frame).
         It is negated when outputting to gtValues.txt to get ω_SI^S = ω_CI^C = -ω_IC^C.
         """
@@ -716,7 +715,7 @@ def generate_trajectories_dynamical(
                 sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
             )
 
-            gtvalues_filepath = write_gtvalues(
+            write_gtvalues(
                 output_dir=agent_folder,
                 nbSteps=nbSteps,
                 timestamps=timestamps,

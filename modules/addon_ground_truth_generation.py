@@ -159,7 +159,7 @@ def clean_folder(folder_path):
                 elif os.path.isdir(file_path):
                     shutil.rmtree(file_path)
             except Exception as e:
-                print("Failed to delete %s. Reason: %s" % (file_path, e))
+                print(f"Failed to delete {file_path}. Reason: {e}")
     else:
         os.makedirs(folder_path)
 
@@ -659,7 +659,6 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
 
     def draw(self, context):
         scene = context.scene
-        rd = scene.render
         layout = self.layout
 
         vision_blender = scene.vision_blender

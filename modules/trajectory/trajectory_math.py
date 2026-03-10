@@ -365,7 +365,6 @@ def _lookat_continuous(fwd_I, world_up_I, x_prev=None, cos_thr=0.9995, sin_thr=0
 
     x_up = np.cross(world_up_I, f)
     n_up = np.linalg.norm(x_up)
-    near_sing = (abs(f @ world_up_I) > cos_thr) or (n_up < sin_thr)
 
     if use_prev and n_proj > eps:
         x = x_proj / n_proj
@@ -744,12 +743,14 @@ def parameterSetting(d_ref):
     return a
 
 
-def centerPointingAttitude(r, v, up_fallback=np.array([0, 1, 0]), v_collinear_deg=15.0):
+def centerPointingAttitude(r, v, up_fallback=None, v_collinear_deg=15.0):
     """
     Stable 'look-at' camera pointing: +Z toward -r (target at the image center).
     Uses velocity projected on image plane to define 'up'; falls back to fixed up if needed.
     Returns R_GC: columns are camera x,y,z axes expressed in the G frame.
     """
+    if up_fallback is None:
+        up_fallback = np.array([0, 1, 0])
     r_vec = unit(
         -np.asarray(r, dtype=float).reshape(
             3,
@@ -783,7 +784,7 @@ def centerPointingAttitudeWithBoresight(
     r,
     v,
     boresight_angles=(0.0, 0.0, 0.0),
-    up_fallback=np.array([0, 1, 0]),
+    up_fallback=None,
     v_collinear_deg=15.0,
 ):
     """

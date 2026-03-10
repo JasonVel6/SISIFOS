@@ -689,8 +689,8 @@ def create_ffmpeg(gt_output, filename):
 
     try:
         # Set working directory to ensure correct relative paths
-        result = subprocess.run(
-            ffmpeg_command, check=True, env=my_env, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        subprocess.run(
+            ffmpeg_command, check=True, env=my_env, capture_output=True, text=True
         )
         print(f"Video created successfully: {output_video}")
         return True

@@ -25,6 +25,7 @@ py-modules = ["main", "video_gen", "build_model_scene", "addon_ground_truth_gene
 [tool.ruff.lint.per-file-ignores]
 "modules/addon_ground_truth_generation.py" = ["E402"]
 "modules/trajectory/generateTrajectoriesUnified.py" = ["E402"]
+"modules/config.py" = ["E741"]
 
 [tool.ruff]
 line-length = 120

@@ -109,7 +109,7 @@ def ensure_ffmpeg() -> None:
     try:
         subprocess.run([FFMPEG_BIN, "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
     except Exception as e:
-        raise RuntimeError(f"ffmpeg not available ({FFMPEG_BIN}). Install it or set env var FFMPEG_BIN. {e}")
+        raise RuntimeError(f"ffmpeg not available ({FFMPEG_BIN}). Install it or set env var FFMPEG_BIN. {e}") from e
 
 
 def run_ffmpeg_concat(list_file: Path, output_mp4: Path, fps: float, overwrite: bool) -> None:
@@ -141,7 +141,7 @@ def run_ffmpeg_concat(list_file: Path, output_mp4: Path, fps: float, overwrite: 
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"ffmpeg failed (exit {e.returncode}): {shlex.join(cmd)}")
+        raise RuntimeError(f"ffmpeg failed (exit {e.returncode}): {shlex.join(cmd)}") from e
 
 
 # ----------------------------

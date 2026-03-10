@@ -26,7 +26,7 @@ def scale_object_by_factor(obj, factor):
 
 def set_scale(obj, scale) -> None:
     """Set object scale."""
-    if isinstance(scale, (float, int)):
+    if isinstance(scale, float | int):
         obj.scale = Vector((scale, scale, scale))
     else:
         obj.scale = Vector(scale)
@@ -78,8 +78,6 @@ def set_sun_direction(sun_obj, sun_az_deg: float, sun_el_deg: float):
 
 
 def append_blend_objects(filepath):
-    before = set(bpy.data.objects.keys())
-
     with bpy.data.libraries.load(filepath, link=False) as (data_from, data_to):
         data_to.objects = data_from.objects[:]  # append all objects
 

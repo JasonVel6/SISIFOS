@@ -31,8 +31,8 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
-        new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
-        new_objects2 = append_blend_objects(self.config.objects["Target"].blend_path)
+        append_blend_objects(self.config.objects["Earth"].blend_path)
+        append_blend_objects(self.config.objects["Target"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -127,7 +127,6 @@ class BlenderRenderer:
         earth = bpy.data.objects["Earth"]
         clouds = bpy.data.objects["Clouds"]
         atmo = bpy.data.objects["Atmo"]
-        target = bpy.data.objects["Target"]
         sun = bpy.data.objects["Sun"]  # or create one
         bpy.context.view_layer.update()
         sun.data.energy = 10.0
@@ -231,7 +230,6 @@ class BlenderRenderer:
         # print("="*80)
 
         # Model pose
-        model_euler_deg = tuple(math.degrees(a) for a in model.rotation_euler)
         # print(f"\n[Model] {model.name} (in inertial frame)")
         # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
@@ -239,9 +237,6 @@ class BlenderRenderer:
         # print(f"  Distance from origin: {p_G_I.length:.6f} m")
 
         # Camera pose
-        cam_euler_deg = tuple(math.degrees(a) for a in cam.rotation_euler)
-        cam_to_model = (model.location - cam.location).normalized()
-        distance_cam_model = (model.location - cam.location).length
         # print(f"\n[Camera] {cam.name} (in inertial frame)")
         # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")

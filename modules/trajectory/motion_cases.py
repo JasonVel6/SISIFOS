@@ -300,7 +300,7 @@ def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4, 
     outlier_axis = int(np.argmax(asymmetry_scores))
     max_asymmetry = asymmetry_scores[outlier_axis]
 
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         # Sample uniformly on the sphere
         d = np.array([rng.normal(), rng.normal(), rng.normal()])
         norm = np.linalg.norm(d)

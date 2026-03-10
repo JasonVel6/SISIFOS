@@ -390,7 +390,6 @@ def plot_scene_frame(
         target_color = "gray"
         lit_status = "BACK-LIT"
 
-    is_front_lit = sun_camera_angle < 90  # Keep for legacy compatibility
 
     # Trajectory window
     n_frames = len(camera_trajectory)
@@ -450,7 +449,6 @@ def plot_scene_frame(
 
     # Positions relative to target
     cam_rel = camera_loc - target_loc
-    earth_rel = -target_loc
 
     # Target at center
     ax2.scatter([0], [0], [0], c=target_color, s=150, marker="*", label="Target", zorder=5)
