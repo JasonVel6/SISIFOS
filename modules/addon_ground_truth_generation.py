@@ -81,8 +81,10 @@ def _mesh_from_scene(scene) -> trimesh.Trimesh:
             continue
         obj_eval = obj.evaluated_get(depsgraph)
         mesh = obj_eval.to_mesh()
+        mesh.calc_loop_triangles()
         verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
-        faces = np.array([p.vertices[:] for p in mesh.polygons], dtype=int)
+        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]]
+                          for lt in mesh.loop_triangles], dtype=int)
         if verts.size == 0 or faces.size == 0:
             obj_eval.to_mesh_clear()
             continue
@@ -755,7 +757,7 @@ def load_handler_after_rend_frame(
 
 @persistent
 def load_handler_after_rend_finish(scene):
-    if check_if_node_exists(scene.node_tree, "output_vision_blender"):
+    if scene.node_tree and check_if_node_exists(scene.node_tree, "output_vision_blender"):
         node_output = scene.node_tree.nodes["output_vision_blender"]
         TMP_FILES_PATH = node_output.base_path
         shutil.rmtree(TMP_FILES_PATH)
