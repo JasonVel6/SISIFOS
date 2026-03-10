@@ -24,3 +24,27 @@ dev = []
 
 [tool.setuptools]
 py-modules = ["main", "video_gen", "build_model_scene", "addon_ground_truth_generation"]
+
+[tool.ruff.lint.per-file-ignores]
+"modules/addon_ground_truth_generation.py" = ["E402"]
+"modules/trajectory/generateTrajectoriesUnified.py" = ["E402"]
+"modules/config.py" = ["E741"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # line length (handled by formatter)
+    "E203",  # whitespace before : (conflicts with Black-style)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sisifos"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

@@ -3,9 +3,9 @@ name: CI Pipeline
 on:
   push:
     branches: [main]
-    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
+    paths: ["**.py", "**.json", "**.sh", "**.ps1", ".github/workflows/ci.yml"]
   pull_request:
-    paths: ['**.py', '**.json', '**.sh', '**.ps1', '.github/workflows/ci.yml']
+    paths: ["**.py", "**.json", "**.sh", "**.ps1", ".github/workflows/ci.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +13,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  integration-tests:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Ruff Lint
+        uses: astral-sh/ruff-action@v3
+
+      - name: Ruff Format Check
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "format --check"
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run pip-audit
+        run: |
+          pip install pip-audit
+          pip install -e .
+          pip-audit
+
+  integration-tests-ubuntu:
+    needs: lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
@@ -54,17 +86,65 @@ jobs:
         run: |
           source ./env/activate.sh
           $BLENDER -b -P tests/run_in_blender.py
-          BLENDER_EXIT=$?
-          if [ $BLENDER_EXIT -ne 0 ]; then
-            echo "::error::Blender test runner exited with code $BLENDER_EXIT."
-            exit $BLENDER_EXIT
-          fi
 
       - name: Upload Render Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-render-artifacts
+          name: ci-render-artifacts-ubuntu
+          path: renders/
+          retention-days: 14
+          if-no-files-found: error
+
+  integration-tests-windows:
+    needs: lint
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Cache Blender Binary
+        id: cache-blender
+        uses: actions/cache@v4
+        with:
+          path: env/Blender_4.5
+          key: ${{ runner.os }}-blender-4.5.6
+
+      - name: Bypass Large Asset Downloads
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path assets | Out-Null
+          New-Item -ItemType File -Force -Path assets/starmap_2020_16k.exr | Out-Null
+
+      - name: Setup Environment
+        shell: pwsh
+        run: .\env\Setup.ps1
+
+      - name: Generate Minimal CI Assets
+        shell: pwsh
+        run: |
+          . .\env\Activate.ps1
+          & $env:BLENDER -b -P tests/create_ci_assets.py
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Blender exited with code $LASTEXITCODE while generating CI assets."
+            exit $LASTEXITCODE
+          }
+
+      - name: Execute Test Suite
+        shell: pwsh
+        env:
+          CI: 1
+        run: |
+          . .\env\Activate.ps1
+          & $env:BLENDER -b -P tests/run_in_blender.py
+
+      - name: Upload Render Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-render-artifacts-windows
           path: renders/
           retention-days: 14
           if-no-files-found: error

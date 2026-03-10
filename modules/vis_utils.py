@@ -1,6 +1,7 @@
-import numpy as np
 import matplotlib as mpl
+import numpy as np
 from matplotlib.colors import hsv_to_rgb
+
 
 def _flow_to_rgb(flow: np.ndarray) -> np.ndarray:
     """HSV visualization for optical flow (u,v in pixels)."""
@@ -13,6 +14,7 @@ def _flow_to_rgb(flow: np.ndarray) -> np.ndarray:
     hsv[..., 1] = np.clip(mag / (p99 + 1e-9), 0, 1)  # sat
     hsv[..., 2] = 1.0  # val
     return hsv_to_rgb(hsv).astype(np.float32)
+
 
 def _norm_to_rgb(normals: np.ndarray) -> np.ndarray:
     """Normals assumed in [-1,1]; map to [0,1]."""
