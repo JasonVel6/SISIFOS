@@ -56,7 +56,8 @@ class SetupConfig(BaseModel):
     blur_motion_factor: float =  0.8
     glare_threshold: float = 0.95
     glare_size: int = 6
-
+    generate_video: bool = True
+    video_fps: int = 10
 
 class SamplingTrajectoryConfig(BaseModel):
     """Configuration for the sampling-based trajectory generator"""

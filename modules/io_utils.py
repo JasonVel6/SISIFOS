@@ -6,7 +6,6 @@ from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb
 import os
 import shutil
 import bpy
-import subprocess
 
 def vprint(msg: str, verbose: bool = True):
     if verbose:
@@ -114,49 +113,83 @@ def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     print(f"  Created: {imglist_path}")
     return imglist_path
 
-def images_to_video_ffmpeg(
-    input_pattern,
-    output_path,
-    fps=24,
-    crf=18,
-    overwrite=True
-):
+def images_to_video_blender_sequence(
+    image_dir: str | Path,
+    image_filenames: list[str],
+    output_path: str | Path,
+    fps: int = 24,
+) -> str:
     """
-    Convert rendered images to a video using FFmpeg.
+    Assemble a video from pre-rendered frames using Blender's sequence editor.
 
-    input_pattern: e.g. "//renders/INE_24_11_2025/frame_%04d.png"
-    output_path:   e.g. "//renders/INE_24_11_2025/output.mp4"
-    fps: frames per second
-    crf: quality (lower = better, default 18)
-    overwrite: allow overwriting existing file
+    Args:
+        image_dir: Directory containing rendered frames.
+        image_filenames: Ordered list of image filenames to include.
+        output_path: Target .mp4 filepath.
+        fps: Output frames per second.
     """
+    if not image_filenames:
+        raise ValueError("Cannot generate video: no image filenames provided.")
 
-    # Expand Blender paths ("//")
-    abs_input = bpy.path.abspath(input_pattern)
-    abs_output = bpy.path.abspath(output_path)
+    image_dir = Path(image_dir)
+    output_path = Path(output_path)
+    abs_output = Path(bpy.path.abspath(str(output_path)))
 
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(abs_output), exist_ok=True)
+    abs_dir = Path(bpy.path.abspath(str(image_dir)))
+    frames = []
+    for name in image_filenames:
+        p = abs_dir / name
+        if p.exists():
+            frames.append({"name": p.name})
+        else:
+            print(f"Skipping missing frame in video assembly: {p}")
 
-    # -y means overwrite
-    overwrite_flag = "-y" if overwrite else "-n"
+    if not frames:
+        raise ValueError("Cannot generate video: no existing frames found in image_dir.")
 
-    cmd = [
-        "ffmpeg",
-        overwrite_flag,
-        "-framerate", str(fps),
-        "-i", abs_input,
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",   # safest for compatibility
-        "-crf", str(crf),
-        abs_output
-    ]
-
-    print("Running FFmpeg command:\n", " ".join(cmd))
-
-    # Execute FFmpeg
+    render_scene = bpy.data.scenes.new(name="SISIFOS_VideoAssembly")
     try:
-        subprocess.run(cmd, check=True)
-        print("Video generated successfully:", abs_output)
-    except subprocess.CalledProcessError as e:
-        print("Error during video generation:", e)
+        render_scene.sequence_editor_create()
+        seq = render_scene.sequence_editor
+        first_frame_path = abs_dir / frames[0]["name"]
+
+        seq.sequences.new_image(
+            name="RenderFrames",
+            filepath=str(first_frame_path),
+            channel=1,
+            frame_start=1,
+        )
+        image_strip = seq.sequences_all["RenderFrames"]
+        # new_image already creates the first element, so append the rest.
+        for frame in frames[1:]:
+            image_strip.elements.append(frame["name"])
+
+        # Match output dimensions to source frames to avoid stretching/cropping.
+        first_img = bpy.data.images.load(str(first_frame_path), check_existing=True)
+        src_w, src_h = int(first_img.size[0]), int(first_img.size[1])
+
+        render_scene.frame_start = 1
+        render_scene.frame_end = len(frames)
+        render_scene.render.use_sequencer = True
+        render_scene.render.resolution_x = src_w
+        render_scene.render.resolution_y = src_h
+        bpy.data.images.remove(first_img)  # cleanup loaded image to avoid memory bloat
+        render_scene.render.resolution_percentage = 100
+        render_scene.render.pixel_aspect_x = 1.0
+        render_scene.render.pixel_aspect_y = 1.0
+        render_scene.render.fps = int(fps)
+        render_scene.render.fps_base = 1.0
+        render_scene.render.image_settings.file_format = "FFMPEG"
+        render_scene.render.ffmpeg.format = "MPEG4"
+        render_scene.render.ffmpeg.codec = "H264"
+        render_scene.render.ffmpeg.constant_rate_factor = "HIGH"
+        render_scene.render.ffmpeg.ffmpeg_preset = "GOOD"
+        render_scene.render.ffmpeg.gopsize = 12
+        render_scene.render.ffmpeg.audio_codec = "NONE"
+        render_scene.render.filepath = str(abs_output)
+
+        bpy.ops.render.render(animation=True, scene=render_scene.name)
+        print(f"Video generated successfully: {abs_output}")
+        return str(abs_output)
+    finally:
+        bpy.data.scenes.remove(render_scene)
