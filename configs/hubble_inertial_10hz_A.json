@@ -59,7 +59,7 @@
     },
     "trajectory_type": "trajectory_generator",
     "trajectory": {
-      "path_mode": "tumbling",
+      "path_mode": "inertial",
       "seed": null,
       "illumination_seed": 0,
       "num_agents": 1,
