@@ -60,8 +60,8 @@
     "trajectory_type": "const_rotate",
     "trajectory_const_rotate": {
       "angular_velocity": [1.0, 0.0, 0.0],
-      "tstep": 1,
-      "tend": 25.0
+      "tstep": 0.1,
+      "tend": 2.50
     },
     "save_depth": true,
     "save_normals": false,
