@@ -6,13 +6,18 @@ Defines the configuration schema for the trajectory generator and renderer
 """
 
 import time
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 from typing import List, Dict, Optional, Tuple, Any, Literal
 import json
 import numpy as np
 import itertools
 import copy
 import enum
+import yaml
+
+spacecraft_default_filepath = "modules/spacecraft_defaults.yaml"
+with open(spacecraft_default_filepath, 'r') as f:
+    spacecraft_defaults = yaml.safe_load(f)
 
 class ObjectConfig(BaseModel):
     name: str
@@ -67,9 +72,76 @@ class SamplingTrajectoryConfig(BaseModel):
     sun_az: float = 0.0
     sun_el: float = 0.0
 
+class ConstantRotationConfig(BaseModel):
+    """Configuration for the constant-rotation-based trajectory generator"""
+    R_RPO: float = 70.0
+    R_LEO: float = 10000.0
+    sun_az: float = 0.0
+    sun_el: float = 0.0
+    tstep: float = 0.1
+    tend: float = 10.0
+    angular_velocity: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+
+class InertiaConfig(BaseModel):
+    """
+    Defines the inertia for physics propagation
+    Triaxial inertia avoids axisymmetric observability degeneracy
+    X - Highest inertial axis
+    Y - Intermediate inertial axis
+    Z - Lowest inertial axis
+    """
+    inertia_type: Literal["box", "cylinder", "custom"]
+    m: float = 4000.0 #kg
+    # following spatial dimensions are in meters
+    l: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    r:Optional[float] = None
+
+    Jx: Optional[float] = None
+    Jy: Optional[float] = None
+    Jz: Optional[float] = None
+
+    @property
+    def J(self) -> np.ndarray:
+        if self.inertia_type == "box":
+            if self.l is None or self.w is None or self.h is None:
+                raise ValueError("Box inertia requires l, w, and h to be defined")
+            J_xx = (1.0/12.0) * self.m * (self.w**2 + self.h**2)  # rotation about x (longest)
+            J_yy = (1.0/12.0) * self.m * (self.l**2 + self.h**2)  # rotation about y
+            J_zz = (1.0/12.0) * self.m * (self.l**2 + self.w**2)  # rotation about z
+            return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
+        elif self.inertia_type == "cylinder":
+            # From https://scienceworld.wolfram.com/physics/MomentofInertiaCylinder.html
+            # Simplified cylinder inertia (assuming rotation about central axis)
+            if self.r is None or self.h is None:
+                raise ValueError("Cylinder inertia requires r and h to be defined")
+            J_xx = (1.0/12.0) * self.m * self.h **2 + (1/4) * self.m * self.r**2  # rotation about x (longitudinal)
+            J_yy = (1.0/12.0) * self.m * self.h **2 + (1/4) * self.m * self.r**2  # rotation about y
+            J_zz = (1.0/2.0) * self.m * self.r **2  # rotation about z (central axis)
+            return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
+        elif self.inertia_type == "custom":
+            if self.Jx is None or self.Jy is None or self.Jz is None:
+                raise ValueError("Custom inertia requires Jx, Jy, and Jz to be defined")
+            return np.array([[self.Jx, 0, 0], [0, self.Jy, 0], [0, 0, self.Jz]])
+        else:
+            raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
+
+def default_inertia_config(data: dict) -> InertiaConfig:
+    if not data.get("selected_model"):
+        raise ValueError("model_name must be specified if inertia_config is not provided")
+    
+    if data["selected_model"] not in spacecraft_defaults:
+        raise ValueError(f"Couldn't find default for model_name: {data['selected_model']} in spacecraft_defaults.yaml")
+    
+    model_defaults = spacecraft_defaults[data["selected_model"]]
+    # Default to integral inertia if not specified
+    default_inertia = model_defaults["inertia"]
+    return InertiaConfig(**default_inertia)
 
 class TrajectoryConfig(BaseModel):
     """Trajectory generation settings"""
+    selected_model: str
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
     seed: Optional[int] = None # For reproducibility
@@ -123,14 +195,7 @@ class TrajectoryConfig(BaseModel):
     tstep: float = 0.5
     MIN_F2F_PX_MED: float = 3.0
 
-    # Inertia (ESA INTEGRAL satellite, box approximation)
-    # Dimensions: 2.8 x 3.2 x 5.0 m, mass ~4000 kg
-    # Triaxial inertia avoids axisymmetric observability degeneracy
-    m: float = 4000.0
-    l: float = 5.0  # longest axis (5m), y=3.2m, z=2.8m
-    w: float = 3.2
-    h: float = 2.8
-
+    inertia_config: InertiaConfig = Field(default_factory=default_inertia_config)
 
     @property
     def a_ref(self) -> float:
@@ -139,13 +204,6 @@ class TrajectoryConfig(BaseModel):
     @property
     def n_scalar(self) -> float:
         return np.sqrt(self.mu_ref / self.a_ref**3)
-    
-    @property
-    def J(self) -> np.ndarray:
-        J_xx = (1/12) * self.m * (self.w**2 + self.h**2)  # rotation about x (longest)
-        J_yy = (1/12) * self.m * (self.l**2 + self.h**2)  # rotation about y
-        J_zz = (1/12) * self.m * (self.l**2 + self.w**2)  # rotation about z
-        return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
     
     @property
     def COV_R_ASTRO_APS3(self) -> List[List[float]]:
@@ -172,6 +230,24 @@ class TrajectoryConfig(BaseModel):
         else:
             raise ValueError(f"Invalid path_mode: {self.path_mode}")
 
+def default_trajectory_config(data: dict) -> TrajectoryConfig:
+    if not data.get("selected_model"):
+        raise ValueError("model_name must be specified if trajectory_config is not provided")
+    
+    return TrajectoryConfig(selected_model=data["selected_model"])
+
+def default_model_rotation(data: dict) -> tuple[float, float, float]:
+    if not data.get("selected_model"):
+        return (0.0, 0.0, 0.0) # No rotation
+
+    if data["selected_model"] not in spacecraft_defaults:
+        return (0.0, 0.0, 0.0) # No rotation
+    
+    model_defaults = spacecraft_defaults[data["selected_model"]]
+    model_rotation = model_defaults.get("model_rotation_euler")
+    model_rotation = (model_rotation["x"], model_rotation["y"], model_rotation["z"])
+    # Default to identity rotation if not specified
+    return model_rotation
 
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
@@ -181,10 +257,6 @@ class SceneConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
-    trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath"] = "trajectory_generator"
-    trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
-    trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig)
-    trajectory_filepath: Optional[str] = ""
     # Vision Blender addon settings
     save_depth: bool = True
     save_normals: bool = True
@@ -192,12 +264,20 @@ class SceneConfig(BaseModel):
     save_segmentation: bool = True
     save_obj_poses: bool = True
     save_scene_plots: bool = True
+
+    selected_model: str = "RF_Hubble"
     
     # Rendering control
     frame_ids: Optional[List[int]] = None  # If None, use all frames
-    selected_model: str = "RF_Hubble"
-    model_rotation_z_deg: float = 45.0  # Apply initial Z rotation, will be extended to X,Y
+    model_rotation_quat: Optional[float] = None # To align model with propper inertia calculation
 
+    trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath", "const_rotate"] = "trajectory_generator"
+    trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
+    trajectory_const_rotate: ConstantRotationConfig = Field(default_factory=ConstantRotationConfig)
+    trajectory: TrajectoryConfig = Field(default_factory=default_trajectory_config)
+    trajectory_filepath: Optional[str] = ""
+
+    model_rotation_A_model_euler: tuple[float, float, float] = Field(default_factory=default_model_rotation)#XYZ
 
 class SweepConfig(BaseModel):
     """

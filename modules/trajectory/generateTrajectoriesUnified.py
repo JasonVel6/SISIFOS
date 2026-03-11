@@ -130,7 +130,7 @@ def generate_trajectories_dynamical(
             rngs_mc=rngs_mc, focal_length_px=camera_config.focal_length_px, kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED, rho_max=0.95, R0_const=config.R0_const,
             omega_min_deg=3.0, omega_max_deg=5.0,
-            J=config.J, min_asymmetry_component=0.4
+            J=config.inertia_config.J, min_asymmetry_component=0.4
         )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])
@@ -316,7 +316,7 @@ def generate_trajectories_dynamical(
             omega_excitation_validated = False
 
             for omega_retry in range(MAX_OMEGA_RETRIES):
-                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.J)
+                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.inertia_config.J)
 
                 # Validate omega timeseries has sufficient excitation
                 dt_array = np.full(nbSteps - 1, tstep_eff)
@@ -333,7 +333,7 @@ def generate_trajectories_dynamical(
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
                         omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.J,
+                            rngs_mc[mc_trial], config.inertia_config.J,
                             min_asymmetry_component=0.4,
                             off_axis_min=0.3
                         )
@@ -400,7 +400,7 @@ def generate_trajectories_dynamical(
             r_GO_I[mc_trial, j] = r_AO_I + R_IG[mc_trial, j] @ r_AG_G
             v_GO_I[mc_trial, j] = v_AO_I + R_IG[mc_trial, j] @ np.cross(omega_GI_G[mc_trial, j], r_AG_G)
 
-            H_GI_G[mc_trial, j] = config.J @ omega_GI_G[mc_trial, j]
+            H_GI_G[mc_trial, j] = config.inertia_config.J @ omega_GI_G[mc_trial, j]
             H_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ H_GI_G[mc_trial, j]
 
             r_OG_G[mc_trial, j] = -R_IG[mc_trial, j].T @ r_GO_I[mc_trial, j]
@@ -527,8 +527,8 @@ def generate_trajectories_dynamical(
                     omega_dot = (omega_CI_C[mc_trial, agent_idx, j] - omega_CI_C[mc_trial, agent_idx, j - 1]) / tstep_eff
                 else:
                     omega_dot = (omega_CI_C[mc_trial, agent_idx, j + 1] - omega_CI_C[mc_trial, agent_idx, j - 1]) / (2 * tstep_eff)
-                J_omega = config.J @ omega_CI_C[mc_trial, agent_idx, j]
-                tau_specific_S[mc_trial, agent_idx, j] = config.J @ omega_dot + np.cross(omega_CI_C[mc_trial, agent_idx, j], J_omega)
+                J_omega = config.inertia_config.J @ omega_CI_C[mc_trial, agent_idx, j]
+                tau_specific_S[mc_trial, agent_idx, j] = config.inertia_config.J @ omega_dot + np.cross(omega_CI_C[mc_trial, agent_idx, j], J_omega)
 
         logger.info("  MC trial %d complete", mc_trial + 1)
 
@@ -642,7 +642,7 @@ def generate_trajectories_dynamical(
                 output_dir=agent_folder,
                 nbSteps=nbSteps,
                 timestamps=timestamps,
-                J=config.J,
+                J=config.inertia_config.inertia_config.J,
                 r_AG_G=r_AG_G,
                 q_GC=q_GC_mc_ag,
                 q_IG=q_IG_mc,
