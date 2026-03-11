@@ -67,15 +67,15 @@ class SetupConfig(BaseModel):
 class SamplingTrajectoryConfig(BaseModel):
     """Configuration for the sampling-based trajectory generator"""
     num_frames: int = 200
-    R_RPO: float = 70.0
-    R_LEO: float = 10000.0
+    R_RPO: float = 36.0
+    R_LEO: float = 8000000.0
     sun_az: float = 0.0
     sun_el: float = 0.0
 
 class ConstantRotationConfig(BaseModel):
     """Configuration for the constant-rotation-based trajectory generator"""
-    R_RPO: float = 70.0
-    R_LEO: float = 10000.0
+    R_RPO: float = 36.0
+    R_LEO: float = 8000000.0
     sun_az: float = 0.0
     sun_el: float = 0.0
     tstep: float = 0.1
