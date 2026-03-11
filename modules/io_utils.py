@@ -6,7 +6,11 @@ from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb
 from .log_utils import get_logger
 import os
 import shutil
-import bpy
+
+try:
+    import bpy
+except ImportError:  # pragma: no cover - exercised outside Blender.
+    bpy = None
 
 logger = get_logger()
 
@@ -76,6 +80,15 @@ def handle_gt_from_npz(
         # Save the near-mask too (handy for debugging / training)
         plt.imsave(str(gt_seg_dir / f"{base}_SegDepthGate.png"), near_mask.astype(np.float32), cmap="gray")
 
+        # Create masked images
+        ensure_dir(Path(masked_images_dir))
+        rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
+        rendered_img = plt.imread(rendered_img_path)
+        masked_img = np.zeros_like(rendered_img)
+        masked_img[near_mask] = rendered_img[near_mask]
+        masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
+        plt.imsave(masked_img_path, masked_img)
+
     # --------- NORMALS ---------
     if "normal_map" in data:
         n = data["normal_map"].astype(np.float32)
@@ -90,15 +103,6 @@ def handle_gt_from_npz(
     if "segmentation_masks" in data:
         seg = data["segmentation_masks"]
         plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
-
-    # Create masked images
-    ensure_dir(Path(masked_images_dir))
-    rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
-    rendered_img = plt.imread(rendered_img_path)
-    masked_img = np.zeros_like(rendered_img)
-    masked_img[near_mask] = rendered_img[near_mask]
-    masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
-    plt.imsave(masked_img_path, masked_img)
 
 def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     """
@@ -127,6 +131,9 @@ def images_to_video_blender_sequence(
         output_path: Target .mp4 filepath.
         fps: Output frames per second.
     """
+    if bpy is None:
+        raise RuntimeError("Blender Python API 'bpy' is required for video assembly.")
+
     if not image_filenames:
         raise ValueError("Cannot generate video: no image filenames provided.")
 

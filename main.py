@@ -36,6 +36,7 @@ from modules.io_utils import (
 )
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib, 
+    write_camera_trajectory_const_rotation,
     make_fake_frame_from_frame0
 )
 from modules.trajectory.trajectory_io import (
@@ -83,7 +84,7 @@ def _sanitize_folder_token(value: str) -> str:
     return token.strip("_") or "Unknown"
 
 def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: str) -> list[str]:
-    model_token = _sanitize_folder_token(config.selected_model)
+    model_token = _sanitize_folder_token(config.trajectory.selected_model)
 
     if config.trajectory_type == "trajectory_generator":
         agent_folders = generate_trajectories_dynamical(
@@ -105,6 +106,20 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
                 sun_az=config.trajectory_sampling.sun_az,
                 sun_el=config.trajectory_sampling.sun_el,
         )
+    
+    elif config.trajectory_type == "const_rotate":
+        agent_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
+        agent_folders = write_camera_trajectory_const_rotation(
+            str(agent_folder),
+            R_LEO=config.trajectory_const_rotate.R_LEO,
+            R_RPO=config.trajectory_const_rotate.R_RPO,
+            tstep=config.trajectory_const_rotate.tstep,
+            tend=config.trajectory_const_rotate.tend,
+            angular_velocity=config.trajectory_const_rotate.angular_velocity,
+            sun_az=config.trajectory_const_rotate.sun_az,
+            sun_el=config.trajectory_const_rotate.sun_el,
+        )
+
     elif config.trajectory_type == "filepath":
         if not config.trajectory_filepath:
             raise ValueError("Trajectory type is set to 'filepath' but no trajectory_filepath is provided in the config.")
@@ -178,9 +193,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         "gt_flow": ensure_dir(gt_root / "Flow"),
         "gt_seg": ensure_dir(gt_root / "Seg")
     }
-    
-    if config.model_rotation_z_deg != 0:
-        renderer.rotate_z(model, config.model_rotation_z_deg)
 
     total = len(frame_ids)
     enable_blur = str(config.setup.enable_blur).casefold() == "on"

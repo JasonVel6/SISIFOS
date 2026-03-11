@@ -2,12 +2,13 @@ import math
 import random
 import numpy as np
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 from mathutils import Vector, Quaternion
 from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_uniform, _small_random_rotation, _rand_unit_vec, quat_to_wxyz
 from modules.io_utils import ensure_dir
 from modules.log_utils import get_logger
 from modules.trajectory.trajectory_io import write_camera_trajectory
+from modules.trajectory.plot_figure import generate_scene_plots
 
 logger = get_logger()
 
@@ -208,128 +209,100 @@ def write_camera_trajectory_fib(
     
     return [out_dir]
 
-def write_camera_approach(
-    out_path: str,
-    N: int,
+
+def write_camera_trajectory_const_rotation(
+    out_dir: str,
     R_LEO: float,
-    R_RPO_start: float = 36.0,
-    R_RPO_end: float = 5.0,
-    n_revs: float = 1.0,              # number of orbital revolutions over N frames
-    orbit_plane: str = "xy",          # "xy", "xz", or "yz"
-    shuffle_points: bool = False,     
-    seed: int = 0,
+    R_RPO: float,
+    tstep: float,
+    tend: float,
+    angular_velocity: Optional[Tuple[float, float, float]] = (0.0, 0.0, 1.0),
     sun_az: float = 0.0,
     sun_el: float = 0.0,
     verbose: bool = True,
-    include_rpo_column: bool = True
 ) -> list[str]:
     """
-    This is a demo approach phase. Not actually implementing the trajectory module
+    Generate a fixed camera/target geometry where the camera always looks at the
+    target and the target rotates at constant angular velocity.
+
+    The geometry mirrors the "back-side" Fibonacci samples: both target and
+    camera lie on the same radial line away from Earth, with the target farther
+    from the origin so the camera renders outward rather than toward Earth.
     """
+    if tstep <= 0.0:
+        raise ValueError(f"tstep must be positive, got {tstep}")
+    if tend < 0.0:
+        raise ValueError(f"tend must be non-negative, got {tend}")
+    if R_RPO <= 0.0:
+        raise ValueError(f"R_RPO must be positive, got {R_RPO}")
+    if R_LEO <= R_RPO:
+        raise ValueError(f"R_LEO must be greater than R_RPO, got R_LEO={R_LEO}, R_RPO={R_RPO}")
 
-    out_path = str(Path(out_path) / "camera_traj.txt")
+    timestamps = np.arange(0.0, tend + tstep, tstep, dtype=float)
+    num_steps = len(timestamps)
 
-    
-    if N < 2:
-        rpo_list = [float(R_RPO_start)]
+    p_G_I = np.zeros((num_steps, 3), dtype=float)
+    q_IG_wxyz = np.zeros((num_steps, 4), dtype=float)
+    p_C_I = np.zeros((num_steps, 3), dtype=float)
+    q_IC_wxyz = np.zeros((num_steps, 4), dtype=float)
+    sun_az_arr = np.full((num_steps,), float(sun_az), dtype=float)
+    sun_el_arr = np.full((num_steps,), float(sun_el), dtype=float)
+
+    direction_radial = Vector((0.0, 0.0, -1.0))
+    p_G_vec = direction_radial * R_LEO
+    p_C_vec = direction_radial * (R_LEO - R_RPO)
+    look_direction = (p_G_vec - p_C_vec).normalized()
+    q_IC = look_direction.to_track_quat('-Z', 'Y').normalized()
+    q_IC_wxyz_single = quat_to_wxyz(q_IC)
+
+    omega_vec = Vector(angular_velocity if angular_velocity is not None else (0.0, 0.0, 0.0))
+    omega_mag = omega_vec.length
+    if omega_mag > 0.0:
+        omega_axis = omega_vec.normalized()
     else:
-        rpo_list = [
-            float(R_RPO_start + (R_RPO_end - R_RPO_start) * (i / (N - 1)))
-            for i in range(N)
-        ]
+        omega_axis = None
+
+    q_IG0 = Quaternion((1.0, 0.0, 0.0, 0.0))
+
+    p_G_I[:] = (p_G_vec.x, p_G_vec.y, p_G_vec.z)
+    p_C_I[:] = (p_C_vec.x, p_C_vec.y, p_C_vec.z)
+    q_IC_wxyz[:] = q_IC_wxyz_single
+
+    for i, timestamp in enumerate(timestamps):
+        if omega_axis is None:
+            q_IG = q_IG0
+        else:
+            q_delta = Quaternion(omega_axis, omega_mag * float(timestamp)).normalized()
+            q_IG = (q_delta @ q_IG0).normalized()
+        q_IG_wxyz[i] = quat_to_wxyz(q_IG)
+
+    ensure_dir(Path(out_dir))
+    out_path = write_camera_trajectory(
+        output_dir=out_dir,
+        nbSteps=num_steps,
+        timestamps=timestamps,
+        r_GO_I=-p_G_I,
+        q_IG=q_IG_wxyz,
+        r_CO_I=-p_C_I,
+        q_IC=q_IC_wxyz,
+        sun_az_I=sun_az_arr,
+        sun_el_I=sun_el_arr,
+    )
+
+    plot_out_path = Path(out_dir) / "trajectory_plot.png"
+    generate_scene_plots(
+        output_dir=str(plot_out_path),
+        p_G_I=p_G_I,
+        p_C_I=p_C_I,
+        r_CG_arr=p_G_I - p_C_I,
+        q_IG_arr=q_IG_wxyz,
+        q_IC_arr=q_IC_wxyz,
+        sun_az_I=sun_az_arr,
+        sun_el_I=sun_el_arr,
+        timestamps=timestamps,
+    )
 
     if verbose:
-        logger.info("R_RPO evolution: start=%.3f, end=%.3f", rpo_list[0], rpo_list[-1])
-        if N >= 6:
-            logger.info("  first 3: %s", [round(x, 3) for x in rpo_list[:3]])
-            logger.info("  last  3: %s", [round(x, 3) for x in rpo_list[-3:]])
+        logger.info("Constant-rotation trajectory written to: %s", out_path)
 
-    lines = [
-        "# camera_traj_orbit_approach.txt (inertial frame reference)",
-        "# Target: circular orbit around origin at radius R_LEO",
-        "# Camera: co-orbits with target and approaches with R_RPO(i) decreasing",
-        "# Camera is center-pointing at target (-Z axis looks at target)",
-        f"# N={N}, R_LEO={R_LEO:.6f}, R_RPO_start={R_RPO_start:.6f}, R_RPO_end={R_RPO_end:.6f}, n_revs={n_revs}",
-        "# Columns:",
-        "# p_G_I(xyz)  q_I_G(wxyz)  p_C_I(xyz)  q_I_C(wxyz)  sun_az  sun_el" + ("  R_RPO" if include_rpo_column else ""),
-        "#",
-    ]
-
-    # Orbit angle over time
-    # theta spans n_revs revolutions
-    lag_ratio=-0.5
-    for i in range(N):
-        t = 0.0 if N < 2 else (i / (N - 1))
-        theta = 2.0 * math.pi * n_revs * t
-        if i <N//2:
-            lag_ratio += 0.75/N
-        else:
-            lag_ratio -= 0.5/N
-        
-
-        # Unit radial direction (depends on chosen plane)
-        if orbit_plane == "xy":
-            u = Vector((math.cos(theta), math.sin(theta), 0.0))
-        elif orbit_plane == "xz":
-            u = Vector((math.cos(theta), 0.0, math.sin(theta)))
-        elif orbit_plane == "yz":
-            u = Vector((0.0, math.cos(theta), math.sin(theta)))
-        else:
-            raise ValueError("orbit_plane must be one of: 'xy', 'xz', 'yz'")
-        if orbit_plane == "xy":
-            t_hat = Vector((-math.sin(theta),  math.cos(theta), 0.0))
-        elif orbit_plane == "xz":
-            t_hat = Vector((-math.sin(theta), 0.0,  math.cos(theta)))
-        elif orbit_plane == "yz":
-            t_hat = Vector((0.0, -math.sin(theta),  math.cos(theta)))
-        else:
-            raise ValueError("orbit_plane must be one of: 'xy', 'xz', 'yz'")
-
-        t_hat.normalize()
-        u.normalize()
-
-        # Target position on orbit
-        p_G_I = u * R_LEO
-
-        # Camera approaches target along the same radial line, staying OUTSIDE (Earth behind target)
-        R_RPO_i = rpo_list[i]
-        #p_C_I = u * (R_LEO + R_RPO_i)
-        r_behind = lag_ratio *  rpo_list[0]
-        r_rad = math.sqrt(max(0.0, R_RPO_i * R_RPO_i - r_behind * r_behind))
-        p_C_I = p_G_I + (u * r_rad) + (t_hat * r_behind)
-
-        # Random target orientation per frame (same as your v2 idea)
-        #rng = random.Random(seed + i)
-        q_IG = Quaternion((1.0, 0.0, 0.0, 0.0)).normalized()          # should return a mathutils.Quaternion (wxyz or xyzw depending on your helper)
-        q_IG_wxyz = quat_to_wxyz(q_IG)
-
-        # Camera orientation: center-point at target
-        look_dir = (p_G_I - p_C_I)
-        if look_dir.length < 1e-12:
-            # Degenerate (shouldn't happen unless R_RPO_i == 0)
-            look_dir = -u
-        else:
-            look_dir.normalize()
-
-        q_IC = look_dir.to_track_quat('-Z', 'Y').normalized()
-        q_IC_wxyz = quat_to_wxyz(q_IC)
-
-        # Write row
-        row = (
-            f"{p_G_I.x:12.6f} {p_G_I.y:12.6f} {p_G_I.z:12.6f}  "
-            f"{q_IG_wxyz[0]:.9f} {q_IG_wxyz[1]:.9f} {q_IG_wxyz[2]:.9f} {q_IG_wxyz[3]:.9f}  "
-            f"{p_C_I.x:12.6f} {p_C_I.y:12.6f} {p_C_I.z:12.6f}  "
-            f"{q_IC_wxyz[0]:.9f} {q_IC_wxyz[1]:.9f} {q_IC_wxyz[2]:.9f} {q_IC_wxyz[3]:.9f}  "
-            f"{sun_az:.6f} {sun_el:.6f}"
-        )
-        if include_rpo_column:
-            row += f"  {R_RPO_i:.6f}"
-
-        lines.append(row)
-    ensure_dir(Path(out_path).parent)
-    with open(out_path, "w") as f:
-        f.write("\n".join(lines) + "\n")
-
-    if verbose:
-        logger.info("Trajectory (orbit + approach) written to: %s", out_path)
-    return [out_path]
+    return [out_dir]
