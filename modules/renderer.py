@@ -319,7 +319,8 @@ class BlenderRenderer:
         
         # Target (model) pose in inertial frame
         model.location = p_G_I
-        model.rotation_quaternion = self.quat_A_model * Quaternion(q_I_G)
+        model.rotation_quaternion = self.quat_A_model @ Quaternion(q_I_G)
+        self.logger.info(model.rotation_quaternion)
         
         # Camera pose in inertial frame
         cam.location = p_C_I
@@ -416,7 +417,7 @@ class BlenderRenderer:
         p_C_I = frame_dict1["p_C_I"]
         q_I_C = frame_dict1["q_I_C"]
         model.location = p_G_I
-        model.rotation_quaternion = self.quat_A_model * Quaternion(q_I_G)
+        model.rotation_quaternion = self.quat_A_model @ Quaternion(q_I_G)
         cam.location = p_C_I
         cam.rotation_quaternion = q_I_C
         bpy.context.view_layer.update()
@@ -428,7 +429,7 @@ class BlenderRenderer:
         p_C_I = frame_dict2["p_C_I"]
         q_I_C = frame_dict2["q_I_C"]
         model.location = p_G_I
-        model.rotation_quaternion = self.quat_A_model * Quaternion(q_I_G)
+        model.rotation_quaternion = self.quat_A_model @ Quaternion(q_I_G)
         cam.location = p_C_I
         cam.rotation_quaternion = q_I_C
         bpy.context.view_layer.update()

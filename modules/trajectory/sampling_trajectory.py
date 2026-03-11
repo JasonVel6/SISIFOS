@@ -8,6 +8,7 @@ from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_unif
 from modules.io_utils import ensure_dir
 from modules.log_utils import get_logger
 from modules.trajectory.trajectory_io import write_camera_trajectory
+from modules.trajectory.plot_figure import generate_scene_plots
 
 logger = get_logger()
 
@@ -286,6 +287,19 @@ def write_camera_trajectory_const_rotation(
         q_IC=q_IC_wxyz,
         sun_az_I=sun_az_arr,
         sun_el_I=sun_el_arr,
+    )
+
+    plot_out_path = Path(out_dir) / "trajectory_plot.png"
+    generate_scene_plots(
+        output_dir=str(plot_out_path),
+        p_G_I=p_G_I,
+        p_C_I=p_C_I,
+        r_CG_arr=p_G_I - p_C_I,
+        q_IG_arr=q_IG_wxyz,
+        q_IC_arr=q_IC_wxyz,
+        sun_az_I=sun_az_arr,
+        sun_el_I=sun_el_arr,
+        timestamps=timestamps,
     )
 
     if verbose:
