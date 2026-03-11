@@ -124,6 +124,12 @@ class TrajectoryConfig(BaseModel):
     pointing_scan_amplitude: float = 0.0  # [m]
     pointing_scan_period: float = 60.0    # [s]
 
+    # Camera frame for look-at computation.
+    # "I" = inertial (default, realistic for RPO inspection — camera up is inertially fixed)
+    # "G" = body-frame (camera co-rotates with target — unrealistic for inspection but
+    #        useful as ablation baseline; routes tumble rate through gyro instead of VO)
+    camera_lookat_frame: Literal["I", "G"] = "I"
+
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
     SUN_ALIGN_CONE_DEG: float = 12.0

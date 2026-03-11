@@ -430,6 +430,7 @@ def generate_trajectories_dynamical(
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents
         q_IC_prev = [None] * config.num_agents
+        q_GC_prev = [None] * config.num_agents
 
         # Pointing offset: body-frame offset from geometric center G
         pointing_offset_G = np.array(config.pointing_offset_G, dtype=float)
@@ -489,20 +490,42 @@ def generate_trajectories_dynamical(
                 v_CG_G[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ d_vI - np.cross(omega_GI_G[mc_trial, j], r_AG_G)
                 dr_CG_G[mc_trial, agent_idx, j] = v_CG_G[mc_trial, agent_idx, j] - np.cross(omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j])
 
-                fwd_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
-                R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
-                    fwd_I=fwd_I,
-                    world_up_I=np.array([0.0, 0.0, 1.0]),
-                    x_prev=x_right_prev[agent_idx],
-                    cos_thr=0.9995,
-                    sin_thr=0.03
-                )
-                q_raw = R2q(R_IC[mc_trial, agent_idx, j])
-                q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
-                q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
+                if config.camera_lookat_frame == "G":
+                    # G-frame look-at: camera up/roll locked to target body frame.
+                    # Ablation baseline only — not realistic for RPO inspection.
+                    # Routes tumble rate through gyro (omega_SI_S) instead of VO.
+                    fwd_G = -r_CG_G[mc_trial, agent_idx, j]
+                    R_GC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
+                        fwd_I=fwd_G,
+                        world_up_I=np.array([0.0, 0.0, 1.0]),
+                        x_prev=x_right_prev[agent_idx],
+                        cos_thr=0.9995,
+                        sin_thr=0.03
+                    )
+                    q_raw = R2q(R_GC[mc_trial, agent_idx, j])
+                    q_GC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_GC_prev[agent_idx])
+                    q_GC_prev[agent_idx] = q_GC[mc_trial, agent_idx, j]
 
-                R_GC[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ R_IC[mc_trial, agent_idx, j]
-                q_GC[mc_trial, agent_idx, j] = R2q(R_GC[mc_trial, agent_idx, j])
+                    R_IC[mc_trial, agent_idx, j] = R_IG[mc_trial, j] @ R_GC[mc_trial, agent_idx, j]
+                    q_IC[mc_trial, agent_idx, j] = R2q(R_IC[mc_trial, agent_idx, j])
+                    q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
+                else:
+                    # I-frame look-at (default): camera up/roll fixed in inertial frame.
+                    # Realistic for RPO inspection — chaser maintains inertial attitude control.
+                    fwd_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
+                    R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
+                        fwd_I=fwd_I,
+                        world_up_I=np.array([0.0, 0.0, 1.0]),
+                        x_prev=x_right_prev[agent_idx],
+                        cos_thr=0.9995,
+                        sin_thr=0.03
+                    )
+                    q_raw = R2q(R_IC[mc_trial, agent_idx, j])
+                    q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
+                    q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
+
+                    R_GC[mc_trial, agent_idx, j] = R_IG[mc_trial, j].T @ R_IC[mc_trial, agent_idx, j]
+                    q_GC[mc_trial, agent_idx, j] = R2q(R_GC[mc_trial, agent_idx, j])
 
                 R_IC_m[mc_trial, agent_idx, j] = R_IC[mc_trial, agent_idx, j] @ expm(sk(eta[mc_trial, agent_idx, j]))
                 q_IC_m[mc_trial, agent_idx, j] = R2q(R_IC_m[mc_trial, agent_idx, j])
