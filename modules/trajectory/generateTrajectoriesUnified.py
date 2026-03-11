@@ -449,6 +449,15 @@ def generate_trajectories_dynamical(
         x_right_prev = [None] * config.num_agents
         q_IC_prev = [None] * config.num_agents
 
+        # Pointing offset: body-frame offset from geometric center G
+        pointing_offset_G = np.array(config.pointing_offset_G, dtype=float)
+        has_pointing_offset = np.linalg.norm(pointing_offset_G) > 1e-12
+        # For non-tumbling modes, add sinusoidal scan if amplitude > 0
+        is_tumbling = (config.rotMode_Gframe == "3")
+        scan_amp = config.pointing_scan_amplitude
+        scan_T = config.pointing_scan_period
+        has_scan = (not is_tumbling) and (scan_amp > 0) and (scan_T > 0)
+
         for j in range(nbSteps):
             q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
             r_AO_I = state_A_I[mc_trial, j, 0:3]
@@ -475,6 +484,22 @@ def generate_trajectories_dynamical(
                 )
             )
 
+            # Compute look-at point: G + offset (+ scan for non-tumbling)
+            if has_pointing_offset or has_scan:
+                offset_G = pointing_offset_G.copy()
+                if has_scan:
+                    t = timestamps[j]
+                    freq = 2.0 * np.pi / scan_T
+                    # Lissajous-like scan: different phase per axis for coverage
+                    offset_G = offset_G + scan_amp * np.array([
+                        np.sin(freq * t),
+                        np.sin(freq * t + 2.0 * np.pi / 3.0),
+                        np.sin(freq * t + 4.0 * np.pi / 3.0),
+                    ])
+                lookat_I = r_GO_I[mc_trial, j] + R_IG[mc_trial, j] @ offset_G
+            else:
+                lookat_I = r_GO_I[mc_trial, j]
+
             for agent_idx in range(config.num_agents):
                 d_rI = state_C_I[mc_trial, agent_idx, j, 0:3] - r_AO_I
                 d_vI = state_C_I[mc_trial, agent_idx, j, 3:6] - v_AO_I
@@ -487,7 +512,7 @@ def generate_trajectories_dynamical(
                     omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j]
                 )
 
-                fwd_I = r_GO_I[mc_trial, j] - state_C_I[mc_trial, agent_idx, j, 0:3]
+                fwd_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
                 R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
                     fwd_I=fwd_I,
                     world_up_I=np.array([0.0, 0.0, 1.0]),
