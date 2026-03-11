@@ -113,6 +113,17 @@ class TrajectoryConfig(BaseModel):
     # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
     # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
     tumbling_span_frac: float = 0.20
+    # Camera pointing offset — look at a point offset from geometric center G
+    # in body frame. For tumbling targets, the tumble sweeps this offset through
+    # inertial space, providing parallax diversity that breaks monocular VO
+    # degeneracies (pure-LOS rotation). For non-tumbling modes (inertial/Hill),
+    # a slow sinusoidal scan is added automatically.
+    pointing_offset_G: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    # Scan amplitude for non-tumbling modes [m]. Each axis oscillates as
+    # A*sin(2*pi*t/T + phase_i). Ignored when pointing_offset_G is zero or tumbling.
+    pointing_scan_amplitude: float = 0.0  # [m]
+    pointing_scan_period: float = 60.0    # [s]
+
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
     SUN_ALIGN_CONE_DEG: float = 12.0
