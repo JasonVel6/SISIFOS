@@ -236,19 +236,6 @@ def default_trajectory_config(data: dict) -> TrajectoryConfig:
     
     return TrajectoryConfig(selected_model=data["selected_model"])
 
-def default_model_rotation(data: dict) -> tuple[float, float, float]:
-    if not data.get("selected_model"):
-        return (0.0, 0.0, 0.0) # No rotation
-
-    if data["selected_model"] not in spacecraft_defaults:
-        return (0.0, 0.0, 0.0) # No rotation
-    
-    model_defaults = spacecraft_defaults[data["selected_model"]]
-    model_rotation = model_defaults.get("model_rotation_euler")
-    model_rotation = (model_rotation["x"], model_rotation["y"], model_rotation["z"])
-    # Default to identity rotation if not specified
-    return model_rotation
-
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
     scene_blend_path: str = "assets/scene.blend"
@@ -277,7 +264,24 @@ class SceneConfig(BaseModel):
     trajectory: TrajectoryConfig = Field(default_factory=default_trajectory_config)
     trajectory_filepath: Optional[str] = ""
 
-    model_rotation_A_model_euler: tuple[float, float, float] = Field(default_factory=default_model_rotation)#XYZ
+    model_rotation_A_model_euler: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    @model_validator(mode="after")
+    def default_model_rotation(self):
+        if not self.selected_model:
+            self.model_rotation_A_model_euler = (0.0, 0.0, 0.0)
+            return self # No rotation
+
+        if self.selected_model not in spacecraft_defaults:
+            self.model_rotation_A_model_euler = (0.0, 0.0, 0.0)
+            return self # No rotation
+        
+        model_defaults = spacecraft_defaults[self.selected_model]
+        model_rotation = model_defaults.get("model_rotation_euler")
+        model_rotation = (model_rotation["x"], model_rotation["y"], model_rotation["z"])
+        # Default to identity rotation if not specified
+        self.model_rotation_A_model_euler = model_rotation
+        return self
 
 class SweepConfig(BaseModel):
     """
@@ -330,6 +334,7 @@ class SweepConfig(BaseModel):
             config_copy = copy.deepcopy(self.base_config)
             for param_path, value in combo.items():
                 self._set_nested_attr(config_copy, param_path, value)
+            SceneConfig.model_validate(config_copy) # Validate the modified config
             sweep_configs.append(config_copy)
 
         return sweep_configs
