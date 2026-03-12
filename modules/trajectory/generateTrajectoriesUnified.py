@@ -43,6 +43,8 @@ from datetime import datetime
 import numpy as np
 from scipy.linalg import expm
 
+from modules.log_utils import get_logger
+
 # Add project root to path so imports work both when running directly and when imported
 _SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
@@ -86,6 +88,7 @@ from modules.trajectory.trajectory_math import (
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 SISIFOS_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir, os.pardir))
 DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
+logger = get_logger()
 
 
 # ============================================================================
@@ -104,21 +107,21 @@ def generate_trajectories_dynamical(
     # Initialize random seeds for reproducibility
     if config.seed is not None:
         master_seed = config.seed
-        print(f"[INITIALIZATION]: detected pre defined seed: {master_seed}")
+        logger.info("[INITIALIZATION]: detected pre defined seed: %s", master_seed)
     else:
         master_seed = int(time.time() * 1e6) & 0x7FFFFFFF
         config.seed = master_seed  # Store the resolved seed back in the config for output
-        print(f"[INITIALIZATION]: no pre defined seed detected, generating new seed: {master_seed}")
+        logger.info("[INITIALIZATION]: no pre defined seed detected, generating new seed: %s", master_seed)
 
     ss_master = np.random.SeedSequence(master_seed)
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
     # ---------- Generate initial conditions ----------
-    print("\n[STEP 1] Generating initial conditions...")
+    logger.info("[STEP 1] Generating initial conditions...")
 
     if config.rotMode_Gframe == "1":
-        print("  Inertial mode (CRO trajectory)")
+        logger.info("  Inertial mode (CRO trajectory)")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_inertial(
             num_mc=config.num_mc,
             num_agents=config.num_agents,
@@ -132,7 +135,7 @@ def generate_trajectories_dynamical(
             rngs_mc=rngs_mc,
         )
     elif config.rotMode_Gframe == "2":
-        print("  Hill mode")
+        logger.info("  Hill mode")
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_hill(
             num_mc=config.num_mc,
             num_agents=config.num_agents,
@@ -144,7 +147,7 @@ def generate_trajectories_dynamical(
             rho_max=0.90,
         )
     elif config.rotMode_Gframe == "3":
-        print("  Tumbling mode (CRO trajectory + target tumbling)")
+        logger.info("  Tumbling mode (CRO trajectory + target tumbling)")
         # Use faster tumbling (3-5 deg/s) for better inertia observability.
         # This is within the conservative design envelope (~5 deg/s upper bound).
         # Slower rates (0.5-2 deg/s default) have near-zero omega_dot, making
@@ -185,7 +188,7 @@ def generate_trajectories_dynamical(
             ]
 
     # ---------- Generate MC parameters ----------
-    print("\n[STEP 2] Sampling orbital and attitude parameters...")
+    logger.info("[STEP 2] Sampling orbital and attitude parameters...")
 
     inc = np.zeros(config.num_mc)
     ecc = np.zeros(config.num_mc)
@@ -215,7 +218,7 @@ def generate_trajectories_dynamical(
     tstep_eff = float(timestamps[1] - timestamps[0]) if len(timestamps) > 1 else config.tstep
     nbSteps = len(timestamps)
 
-    print(f"  Time span: 0 to {config.tend}s, effective dt: {tstep_eff}s, samples: {nbSteps}")
+    logger.info("  Time span: 0 to %ss, effective dt: %ss, samples: %s", config.tend, tstep_eff, nbSteps)
 
     # ---------- Derived constants ----------
     a = parameterSetting(config.h_orbit)
@@ -290,11 +293,11 @@ def generate_trajectories_dynamical(
     accel_bias_state = np.zeros((config.num_mc, config.num_agents, 3))
 
     # ---------- Propagate orbits and compute geometry ----------
-    print("\n[STEP 3] Propagating orbits and computing geometry...")
+    logger.info("[STEP 3] Propagating orbits and computing geometry...")
 
     # Outer loop: MC trials
     for mc_trial in range(config.num_mc):
-        print(f"  MC trial {mc_trial + 1}/{config.num_mc}...", end=" ", flush=True)
+        logger.info("  MC trial %d/%d...", mc_trial + 1, config.num_mc)
 
         # Per-trial sensor disturbances (seeded for reproducibility)
         rng_mc = rngs_mc[mc_trial]
@@ -387,10 +390,12 @@ def generate_trajectories_dynamical(
                         omega_GI_G_0[mc_trial] = omega_mag * d_new
 
             if not omega_excitation_validated:
-                print(
-                    f"\n  WARNING: MC trial {mc_trial} omega excitation validation failed after {MAX_OMEGA_RETRIES} retries"
+                logger.warning(
+                    "MC trial %d omega excitation validation failed after %d retries",
+                    mc_trial,
+                    MAX_OMEGA_RETRIES,
                 )
-                print(f"           max_omega_dot={validation_stats.get('max_omega_dot', 'N/A')}")
+                logger.warning("           max_omega_dot=%s", validation_stats.get("max_omega_dot", "N/A"))
 
             for j in range(nbSteps):
                 omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
@@ -613,10 +618,10 @@ def generate_trajectories_dynamical(
                     omega_CI_C[mc_trial, agent_idx, j], J_omega
                 )
 
-        print("done")
+        logger.info("  MC trial %d complete", mc_trial + 1)
 
     # ---------- Write output files ----------
-    print("\n[STEP 4] Writing output files...")
+    logger.info("[STEP 4] Writing output files...")
     # Ensure the file exists
     os.makedirs(base_output_file, exist_ok=True)
     # Write the trajectory config for this run
@@ -699,8 +704,13 @@ def generate_trajectories_dynamical(
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
             r_min, r_max = float(np.min(ranges)), float(np.max(ranges))
-            print(
-                f"  [INFO] MC{mc_trial} Agent{agent_idx}: range=[{r_min:.2f}, {r_max:.2f}]m, focal_length={camera_obj['focal_length_px']:.1f}px"
+            logger.info(
+                "  [INFO] MC%d Agent%d: range=[%.2f, %.2f]m, focal_length=%.1fpx",
+                mc_trial,
+                agent_idx,
+                r_min,
+                r_max,
+                camera_obj["focal_length_px"],
             )
 
             write_camera_trajectory(
@@ -776,10 +786,10 @@ def generate_trajectories_dynamical(
                 q_IC_arr=q_IC_mc_ag,
             )
 
-    print(f"\n[DONE] Output written to: {base_output_file}")
-    print(f"       Master seed: {config.seed}")
-    print(f"       Mode: {config.path_mode}")
-    print(f"       {config.num_mc} MC trials, {config.num_agents} agent(s) each")
+    logger.info("[DONE] Output written to: %s", base_output_file)
+    logger.info("       Master seed: %s", config.seed)
+    logger.info("       Mode: %s", config.path_mode)
+    logger.info("       %d MC trials, %d agent(s) each", config.num_mc, config.num_agents)
 
     return agent_folders
 
@@ -788,9 +798,9 @@ def generate_trajectories_dynamical(
 # CLI Entry Point
 # ============================================================================
 def main():
-    print("=" * 60)
-    print("UNIFIED TRAJECTORY GENERATOR")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("UNIFIED TRAJECTORY GENERATOR")
+    logger.info("=" * 60)
 
     # ---------- User inputs ----------
     num_agents = int(input("Number of agents for inspection scenario: ").strip())
@@ -819,9 +829,9 @@ def main():
 
     config = TrajectoryConfig(path_mode=path_mode, num_agents=num_agents, num_mc=num_mc, seed=seed)
 
-    print(f"\n[INFO] Master seed: {seed}")
-    print(f"[INFO] Mode: {path_mode}")
-    print(f"[INFO] Agents: {num_agents}, MC trials: {num_mc}")
+    logger.info("[INFO] Master seed: %s", seed)
+    logger.info("[INFO] Mode: %s", path_mode)
+    logger.info("[INFO] Agents: %s, MC trials: %s", num_agents, num_mc)
 
     now = datetime.today()
     date_str = now.strftime("%m_%d_%y")  # e.g., "1207"

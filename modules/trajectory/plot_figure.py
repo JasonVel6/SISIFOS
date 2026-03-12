@@ -8,6 +8,9 @@ from matplotlib.lines import Line2D
 from scipy.spatial.transform import Rotation
 
 matplotlib.use("Agg")  # Non-interactive backend for Blender
+from modules.log_utils import get_logger
+
+logger = get_logger()
 
 # --------------------------- utilities ---------------------------
 
@@ -120,7 +123,7 @@ def plot_trial_trajectories(
     os.makedirs(out_dir, exist_ok=True)
 
     num_agents = state_C_I.shape[0]
-    print(f"[PLOTS] Plotting trajectories for {num_agents} agents...")
+    logger.info("[PLOTS] Plotting trajectories for %d agents...", num_agents)
     colors = cm.tab10(np.linspace(0, 1, max(3, num_agents)))
 
     # Extract this trial’s trajectories
@@ -296,7 +299,7 @@ def plot_trial_trajectories(
     if save:
         out_png = os.path.join(out_dir, f"MC_{mc_idx:03d}_traj.png")
         fig.savefig(out_png, dpi=170)
-        print(f"[PLOTS] Saved: {out_png}")
+        logger.info("[PLOTS] Saved: %s", out_png)
 
     if show:
         plt.show(block=True)
@@ -714,7 +717,7 @@ def _save_animation_from_frames(
         anim.save(video_path, writer=animation.FFMpegWriter(fps=fps))
         out_path = video_path
     else:
-        print("  ffmpeg not found. Saving GIF instead.")
+        logger.warning("  ffmpeg not found. Saving GIF instead.")
         anim.save(gif_path, writer=animation.PillowWriter(fps=fps))
         out_path = gif_path
     plt.close(anim_fig)
@@ -800,11 +803,11 @@ def generate_scene_plots(
     os.makedirs(scene_dir, exist_ok=True)
     os.makedirs(pose_dir, exist_ok=True)
 
-    print(f"\n=== Generating scene plots to {scene_root} ===")
-    print("    Earth: at origin (0,0,0)")
-    print(f"    Sun: STATIC in inertial frame (from frame 0: az={sun_az_I[0]:.1f}° el={sun_el_I[0]:.1f}°)")
-    print("    Target: tumbling via q_IG")
-    print("    Lighting: sun transformed to body frame, compared with camera direction")
+    logger.info("=== Generating scene plots to %s ===", scene_root)
+    logger.info("    Earth: at origin (0,0,0)")
+    logger.info("    Sun: STATIC in inertial frame (from frame 0: az=%.1f° el=%.1f°)", sun_az_I[0], sun_el_I[0])
+    logger.info("    Target: tumbling via q_IG")
+    logger.info("    Lighting: sun transformed to body frame, compared with camera direction")
 
     # Relative pose plot sizing (slightly zoomed in vs full bounds).
     p_cg_i_all = p_C_I[:n_frames] - p_G_I[:n_frames]
@@ -860,7 +863,7 @@ def generate_scene_plots(
         rendered_indices.append(i)
 
         if i % 50 == 0:
-            print(f"  Generated scene plot for frame {i}/{n_frames}")
+            logger.info("  Generated scene plot for frame %d/%d", i, n_frames)
 
     scene_video = _save_animation_from_frames(
         rendered_frames=rendered_scene_frames,
@@ -872,7 +875,7 @@ def generate_scene_plots(
         fps=10,
     )
     if scene_video:
-        print(f"  Scene animation saved to: {scene_video}")
+        logger.info("  Scene animation saved to: %s", scene_video)
 
     pose_video = _save_animation_from_frames(
         rendered_frames=rendered_pose_frames,
@@ -884,7 +887,7 @@ def generate_scene_plots(
         fps=10,
     )
     if pose_video:
-        print(f"  Relative-pose animation saved to: {pose_video}")
+        logger.info("  Relative-pose animation saved to: %s", pose_video)
 
-    print(f"  Scene plots saved to: {scene_root}")
+    logger.info("  Scene plots saved to: %s", scene_root)
     return scene_root

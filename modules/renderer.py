@@ -9,7 +9,7 @@ from mathutils import Quaternion
 
 from .blender_utils import append_blend_objects, clear_anim, keyframe_pose, scale_object_by_factor, set_sun_direction
 from .config import SceneConfig
-from .io_utils import vprint
+from .log_utils import get_logger
 
 
 class BlenderRenderer:
@@ -20,9 +20,15 @@ class BlenderRenderer:
         self.verbose = verbose
         self.scene = bpy.context.scene
         self.world = self.scene.world
+        self._target_blend_object_names = None
+        self.logger = get_logger()
+
+    def _log_info(self, message: str, *args):
+        if self.verbose:
+            self.logger.info(message, *args)
 
     def setup_total(self):
-        vprint(f"Loading scene: {self.config.scene_blend_path}", self.verbose)
+        self._log_info("Loading scene: %s", self.config.scene_blend_path)
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
 
         self.scene = bpy.context.scene
@@ -70,7 +76,7 @@ class BlenderRenderer:
             output = nodes.new(type="ShaderNodeOutputWorld")
             links.new(env_tex.outputs["Color"], background.inputs["Color"])
             links.new(background.outputs["Background"], output.inputs["Surface"])
-            print("Loaded stars HDRI:", self.config.hdri_path)
+            self.logger.info("Loaded stars HDRI: %s", self.config.hdri_path)
 
         def set_earth_visibility(enable: bool):
             for name in ["Earth", "Clouds", "Atmo"]:
@@ -116,7 +122,7 @@ class BlenderRenderer:
         vb.bool_save_segmentation_masks = True  # needs object pass_index > 0
         vb.bool_save_obj_poses = True
 
-        vprint("Vision Blender addon configured", self.verbose)
+        self._log_info("Vision Blender addon configured")
         cam = bpy.data.objects.get("Camera")
         cam.rotation_mode = "QUATERNION"
         cam.data.lens = self.config.camera.focal_length
@@ -233,16 +239,12 @@ class BlenderRenderer:
         # print(f"\n[Model] {model.name} (in inertial frame)")
         # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
-        # print(f"  Rotation E:  ({model_euler_deg[0]:8.3f}°, {model_euler_deg[1]:8.3f}°, {model_euler_deg[2]:8.3f}°)")
         # print(f"  Distance from origin: {p_G_I.length:.6f} m")
 
         # Camera pose
         # print(f"\n[Camera] {cam.name} (in inertial frame)")
         # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
         # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
-        # print(f"  Rotation E:  ({cam_euler_deg[0]:8.3f}°, {cam_euler_deg[1]:8.3f}°, {cam_euler_deg[2]:8.3f}°)")
-        # print(f"  Look dir:    ({cam_to_model.x:8.6f}, {cam_to_model.y:8.6f}, {cam_to_model.z:8.6f})")
-        # print(f"  Distance to model: {distance_cam_model:.6f} m")
         # print(f"  Focal length: {cam.data.lens:.2f} mm")
 
         # Trajectory info
