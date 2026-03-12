@@ -126,14 +126,21 @@ def generate_trajectories_dynamical(
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
-    # Separate illumination RNG so sun angles can be reproduced independently.
-    if config.illumination_seed is not None:
-        ss_illum = np.random.SeedSequence(config.illumination_seed)
-        child_ss_illum = ss_illum.spawn(config.num_mc)
-        rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
-        logger.info("[INITIALIZATION]: illumination seed: %s", config.illumination_seed)
+    # Illumination uses its own RNG stream. If no explicit illumination seed was
+    # provided, resolve a fresh one so the same trajectory seed can be rendered
+    # under multiple independent lighting conditions and still be reproducible.
+    if config.illumination_seed is None:
+        config.illumination_seed = int(np.random.SeedSequence().entropy) & 0x7FFFFFFF
+        logger.info(
+            "[INITIALIZATION]: no pre defined illumination seed detected, generating new seed: %s",
+            config.illumination_seed,
+        )
     else:
-        rngs_illum = None
+        logger.info("[INITIALIZATION]: illumination seed: %s", config.illumination_seed)
+
+    ss_illum = np.random.SeedSequence(config.illumination_seed)
+    child_ss_illum = ss_illum.spawn(config.num_mc)
+    rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
 
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
@@ -426,6 +433,10 @@ def generate_trajectories_dynamical(
                 omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
 
         # Sun alignment
+        # When illumination_seed is provided, all sun-related randomness should
+        # come from the illumination RNG so the final aligned sun remains
+        # reproducible independently from the trajectory seed.
+        rng_sun = rngs_illum[mc_trial] if rngs_illum is not None else rngs_mc[mc_trial]
         if config.EARTH_BACKGROUND_ENABLE:
             # Earth-in-background alignment: Sun -> Camera -> Target -> Earth
             # Sun direction should be opposite to Earth direction from camera
@@ -439,7 +450,7 @@ def generate_trajectories_dynamical(
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
                 # Add small jitter if desired
                 if config.SUN_ALIGN_JITTER_D > 0:
-                    jitter_rad = np.deg2rad((rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
+                    jitter_rad = np.deg2rad((rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
                     up = np.array([0.0, 0.0, 1.0])
                     if abs(u_sun_I @ up) > 0.95:
                         up = np.array([0.0, 1.0, 0.0])
@@ -456,9 +467,7 @@ def generate_trajectories_dynamical(
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
-                cone_deg = (
-                    config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
-                )
+                cone_deg = config.SUN_ALIGN_CONE_DEG + (rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
                 if abs(u_LOS_G @ up) > 0.95:
@@ -845,6 +854,7 @@ def generate_trajectories_dynamical(
                 camera_obj=camera_obj,
                 tstep_eff=tstep_eff,
                 child_ss=child_ss[mc_trial],
+                illumination_seed=config.illumination_seed,
                 path_mode=config.path_mode,
                 rotMode_Gframe=config.rotMode_Gframe,
                 agent_idx=agent_idx,

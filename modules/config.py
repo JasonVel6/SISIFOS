@@ -171,7 +171,7 @@ class TrajectoryConfig(BaseModel):
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
     seed: int | None = None  # For reproducibility
-    illumination_seed: int | None = None  # Separate seed for sun angles only
+    illumination_seed: int | None = None  # Separate seed for sun angles; None auto-generates a fresh one
     num_agents: int = 1
     num_mc: int = 1
 

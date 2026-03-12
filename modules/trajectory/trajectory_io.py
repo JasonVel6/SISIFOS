@@ -393,6 +393,7 @@ def write_config(
     camera_obj: dict,
     tstep_eff: float,
     child_ss: np.random.SeedSequence,
+    illumination_seed: int | None,
     path_mode: str,
     rotMode_Gframe: str,
     agent_idx: int,
@@ -601,6 +602,7 @@ def write_config(
         f.write("# Trajectory Generation Metadata (for reference only)\n")
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write(f"# master_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# illumination_seed: {int(illumination_seed)}\n")
         f.write(f"# mc_index: {child_ss.spawn_key[0]}\n")
         f.write(f"# path_mode: {path_mode.title()}\n")
         f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")
