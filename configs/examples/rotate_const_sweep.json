@@ -69,7 +69,6 @@
     "save_segmentation": false,
     "save_obj_poses": false,
     "frame_ids": null,
-    "model_rotation_z_deg": 45.0
   },
   "sweep_parameters": {
     "selected_model": ["RF_Hubble", "RF_Integral"],

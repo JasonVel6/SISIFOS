@@ -113,7 +113,6 @@
     "scene_plot_max_frames": 100,
     "frame_ids": null,
     "selected_model": "RF_Integral",
-    "model_rotation_z_deg": 45.0
   },
   "sweep_parameters": {
     "trajectory.camera_lookat_mode": ["I", "G", "hybrid-strong"]

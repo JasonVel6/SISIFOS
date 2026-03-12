@@ -115,9 +115,6 @@ list of ints for what to render
 string to determine what model to render
 Default: ```"RF_Hubble"```
 
-#### model_rotation_z_deg
-float initial z rotation
-
 ### ObjectConfig
 Basic config to describe objects that are loaded in
 #### name
