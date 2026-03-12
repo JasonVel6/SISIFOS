@@ -126,6 +126,15 @@ def generate_trajectories_dynamical(
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
+    # Separate illumination RNG so sun angles can be reproduced independently.
+    if config.illumination_seed is not None:
+        ss_illum = np.random.SeedSequence(config.illumination_seed)
+        child_ss_illum = ss_illum.spawn(config.num_mc)
+        rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
+        logger.info("[INITIALIZATION]: illumination seed: %s", config.illumination_seed)
+    else:
+        rngs_illum = None
+
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
 
@@ -212,11 +221,17 @@ def generate_trajectories_dynamical(
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
         ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
+        # Always draw from the main RNG to preserve downstream state.
         el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
         az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
         roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
+
+        if rngs_illum is not None:
+            rng_il = rngs_illum[mc_trial]
+            el_I[mc_trial] = float(np.arcsin(rng_il.uniform(-1.0, 1.0)))
+            az_I[mc_trial] = float(rng_il.uniform(0.0, 2.0 * np.pi))
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, config.tend, config.tstep, dtype=float)
@@ -465,6 +480,7 @@ def generate_trajectories_dynamical(
         scan_amp = config.pointing_scan_amplitude
         scan_T = config.pointing_scan_period
         has_scan = (not is_tumbling) and (scan_amp > 0) and (scan_T > 0)
+        lookat_mode = config.camera_lookat_mode
         pitchyaw_follow_gain = float(np.clip(config.camera_pitchyaw_follow_gain, 0.0, 1.0))
         roll_follow_gain = float(np.clip(config.camera_roll_follow_gain, 0.0, 1.0))
 
@@ -533,18 +549,21 @@ def generate_trajectories_dynamical(
                     sin_thr=0.03,
                 )
 
-                if pitchyaw_follow_gain > 0.0 or roll_follow_gain > 0.0:
-                    # Express the same off-center look-at vector in the target body frame
-                    # so the follow attitude co-rotates about the selected body point.
-                    fwd_G = R_IG[mc_trial, j].T @ lookat_vec_I
-                    R_GC_follow, x_right_prev_follow[agent_idx] = _lookat_continuous(
-                        fwd_I=fwd_G,
-                        world_up_I=np.array([0.0, 0.0, 1.0]),
-                        x_prev=x_right_prev_follow[agent_idx],
-                        cos_thr=0.9995,
-                        sin_thr=0.03,
-                    )
-                    R_IC_follow = R_IG[mc_trial, j] @ R_GC_follow
+                # Express the same off-center look-at vector in the target body frame
+                # so the follow attitude co-rotates about the selected body point.
+                fwd_G = R_IG[mc_trial, j].T @ lookat_vec_I
+                R_GC_follow, x_right_prev_follow[agent_idx] = _lookat_continuous(
+                    fwd_I=fwd_G,
+                    world_up_I=np.array([0.0, 0.0, 1.0]),
+                    x_prev=x_right_prev_follow[agent_idx],
+                    cos_thr=0.9995,
+                    sin_thr=0.03,
+                )
+                R_IC_follow = R_IG[mc_trial, j] @ R_GC_follow
+
+                if lookat_mode == "G":
+                    R_IC[mc_trial, agent_idx, j] = R_IC_follow
+                elif lookat_mode == "hybrid":
                     R_IC[mc_trial, agent_idx, j] = _blend_camera_attitude(
                         R_IC_lookat=R_IC_lookat,
                         R_IC_follow=R_IC_follow,

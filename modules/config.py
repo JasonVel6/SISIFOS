@@ -171,6 +171,7 @@ class TrajectoryConfig(BaseModel):
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
     seed: int | None = None  # For reproducibility
+    illumination_seed: int | None = None  # Separate seed for sun angles only
     num_agents: int = 1
     num_mc: int = 1
 
@@ -219,6 +220,11 @@ class TrajectoryConfig(BaseModel):
     # A*sin(2*pi*t/T + phase_i). Ignored when pointing_offset_G is zero or tumbling.
     pointing_scan_amplitude: float = 0.0  # [m]
     pointing_scan_period: float = 60.0  # [s]
+    # Camera look-at mode:
+    #   I      = inertial look-at only
+    #   G      = body-frame look-at only
+    #   hybrid = blend inertial and body-frame look-at using follow gains
+    camera_lookat_mode: Literal["I", "G", "hybrid"] = "hybrid"
     # Camera target-follow gains for passive inspection.
     # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
     camera_pitchyaw_follow_gain: float = 0.0
