@@ -4,10 +4,13 @@ Module for reading and writing trajectory related files
 
 import csv
 import os
-import subprocess
 
 import numpy as np
 from mathutils import Quaternion
+
+from modules.log_utils import get_logger
+
+logger = get_logger()
 
 # Target model
 SHAPE_MODEL_FILENAME = "../models/integral.obj"
@@ -380,7 +383,7 @@ def write_gtvalues(
         np.savetxt(f, r_GO_I, fmt="%f %f %f")
         f.write("v_GO_I = \n")
         np.savetxt(f, v_GO_I, fmt="%f %f %f")
-    print(f"  [GTVAL]   {gtvalues_filepath}")
+    logger.info("  [GTVAL]   %s", gtvalues_filepath)
     return gtvalues_filepath
 
 
@@ -609,7 +612,7 @@ def write_config(
         f.write(f"# inc: {inc}\n")
         f.write(f"# ecc: {ecc}\n")
 
-    print(f"  [CONFIG]  {config_filepath}")
+    logger.info("  [CONFIG]  %s", config_filepath)
 
 
 def write_sensormeasurements(
@@ -647,7 +650,7 @@ def write_sensormeasurements(
         r_SA_I_meas = state_C_I[:, 0:3] - state_A_I[:, 0:3]
         f.write("r_SA_I_meas = \n")
         np.savetxt(f, r_SA_I_meas, fmt="%f %f %f")
-    print(f"  [SENSOR]  {sensor_filepath}")
+    logger.info("  [SENSOR]  %s", sensor_filepath)
 
 
 def rename_imgs_in_folder(folder):
@@ -666,35 +669,3 @@ def rename_imgs_in_folder(folder):
 
             # Rename the file
             os.rename(old_file, new_file)
-
-
-def create_ffmpeg(gt_output, filename):
-    parent_directory = os.path.dirname(gt_output)
-    output_video = os.path.join(parent_directory, filename + ".mp4")
-    print(f"Creating video {output_video} from images in {gt_output}")
-
-    ffmpeg_command = [
-        # ffmpeg
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-        "-framerate",
-        str(30),
-        "-i",
-        os.path.join(gt_output, "img_%04d.png"),
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        output_video,
-    ]
-
-    my_env = os.environ.copy()
-
-    try:
-        # Set working directory to ensure correct relative paths
-        subprocess.run(ffmpeg_command, check=True, env=my_env, capture_output=True, text=True)
-        print(f"Video created successfully: {output_video}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"Error creating video: {e}")
-        print(f"ffmpeg stderr: {e.stderr}")
-        return False

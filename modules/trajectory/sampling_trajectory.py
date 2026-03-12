@@ -6,6 +6,7 @@ import numpy as np
 from mathutils import Quaternion, Vector
 
 from modules.io_utils import ensure_dir
+from modules.log_utils import get_logger
 from modules.trajectory.trajectory_io import write_camera_trajectory
 from modules.trajectory.trajectory_math import (
     _rand_quat_uniform,
@@ -14,6 +15,8 @@ from modules.trajectory.trajectory_math import (
     fibonacci_sphere,
     quat_to_wxyz,
 )
+
+logger = get_logger()
 
 
 def make_fake_frame_from_frame0(
@@ -210,7 +213,7 @@ def write_camera_trajectory_fib(
     )
 
     if verbose:
-        print(f"Trajectory (v2 - inertial orbital) written to: {out_path}")
+        logger.info("Trajectory (v2 - inertial orbital) written to: %s", out_path)
 
     return [out_dir]
 
@@ -242,10 +245,10 @@ def write_camera_approach(
         rpo_list = [float(R_RPO_start + (R_RPO_end - R_RPO_start) * (i / (N - 1))) for i in range(N)]
 
     if verbose:
-        print(f"R_RPO evolution: start={rpo_list[0]:.3f}, end={rpo_list[-1]:.3f}")
+        logger.info("R_RPO evolution: start=%.3f, end=%.3f", rpo_list[0], rpo_list[-1])
         if N >= 6:
-            print("  first 3:", [round(x, 3) for x in rpo_list[:3]])
-            print("  last  3:", [round(x, 3) for x in rpo_list[-3:]])
+            logger.info("  first 3: %s", [round(x, 3) for x in rpo_list[:3]])
+            logger.info("  last  3: %s", [round(x, 3) for x in rpo_list[-3:]])
 
     lines = [
         "# camera_traj_orbit_approach.txt (inertial frame reference)",
@@ -336,5 +339,5 @@ def write_camera_approach(
         f.write("\n".join(lines) + "\n")
 
     if verbose:
-        print(f"Trajectory (orbit + approach) written to: {out_path}")
+        logger.info("Trajectory (orbit + approach) written to: %s", out_path)
     return [out_path]

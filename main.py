@@ -10,10 +10,12 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
+import datetime
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -27,8 +29,8 @@ from modules.io_utils import (
     get_timestamp_folder,
     handle_gt_from_npz,
     images_to_video_blender_sequence,
-    vprint,
 )
+from modules.log_utils import get_logger, setup_logger
 from modules.renderer import BlenderRenderer
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 from modules.trajectory.sampling_trajectory import make_fake_frame_from_frame0, write_camera_trajectory_fib
@@ -103,8 +105,9 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
 
 
 def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
+    logger = get_logger()
     renderer = BlenderRenderer(config, verbose=True)
-    print(config.setup)
+    logger.info("%s", config.setup)
     cam, sun = renderer.setup_total()
 
     trajectory_file = renders_base_dir / "camera_traj.csv"
@@ -112,10 +115,11 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     trajectory = read_camera_trajectory(str(trajectory_file))
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
-    print(f"[Session] Renders output: {renders_base_dir}/")
+    logger.info("[Session] Renders output: %s/", renders_base_dir)
+    frame_start_time = time.time()
 
     model = renderer.select_model_to_render()
-    vprint(f"Rendering model: {model.name}", True)
+    logger.info(f"Rendering model: {model.name}")
     all_models = renderer.get_all_models()
 
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
@@ -149,7 +153,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         renderer.rotate_z(model, config.model_rotation_z_deg)
 
     total = len(frame_ids)
-    print("Enabling blur is: ", config.setup.enable_blur)
+    logger.info("Enabling blur is: %s", config.setup.enable_blur)
+
+    avg_frame_time = 0.0
 
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
         image_filenames = []
@@ -206,14 +212,26 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                     masked_images_dir=str(masked_out_dir),
                 )
 
+            current_frame_time = time.time() - frame_start_time
+            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
+            time_remaining_estimate = avg_frame_time * (total - i - 1)
+            time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
+            logger.info("Generated frame %d in %.2f seconds. Output: %s", i, current_frame_time, image_filename)
+            logger.info("Average frame time: %.2f seconds.", avg_frame_time)
+            logger.info("Estimated time remaining: %s", time_delta_str)
+            logger.info(
+                "Estimated time of completion: %s",
+                datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate)),
+            )
+
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 
-    print(f"Finished rendering frames for {model.name}. Output directory: {renders_base_dir}")
+    logger.info("Finished rendering frames for %s. Output directory: %s", model.name, renders_base_dir)
     if config.setup.generate_video:
-        print("Saving video")
+        logger.info("Saving video")
         images_to_video_blender_sequence(
             image_dir=image_out_dir,
             image_filenames=image_filenames,
@@ -227,7 +245,10 @@ def run_sweep(sweep_config: SweepConfig):
 
     output_dir = Path("./renders") / get_timestamp_folder()
     ensure_dir(output_dir)
-    print(f"Running sweep with {len(configs)} configurations. Output base dir: {output_dir}")
+
+    setup_logger(log_file=output_dir / "run.log")
+    logger = get_logger()
+    logger.info("Running sweep with %d configurations. Output base dir: %s", len(configs), output_dir)
 
     # Save the config for reproducibility
     with open(output_dir / "sweep_configs.json", "w") as f:
@@ -284,12 +305,10 @@ if __name__ == "__main__":
                 "Cannot specify --sweep_config_path together with --config_path. Please provide only one of these options."
             )
 
-        print(f"[SISFOS] Loading sweep config from: {args.sweep_config_path}")
         sweep_config_json = json.load(open(args.sweep_config_path))
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 
     elif args.config_path:
-        print(f"[SISFOS] Loading config from: {args.config_path}")
         base_config_json = json.load(open(args.config_path))
 
         sweep_config_json = {}

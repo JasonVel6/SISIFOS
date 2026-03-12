@@ -1,7 +1,12 @@
+import logging
 import os
 
 import bpy
 from mathutils import Vector
+
+logger = logging.getLogger("sisifos")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 
 # =========================================================
 # USER CONFIG
@@ -93,8 +98,8 @@ def recenter_model_to_com(root_obj, verbose=True):
     """Move all geometry so RF origin coincides with the model COM."""
     com = compute_center_of_mass(root_obj)
     if verbose:
-        print(f"[Recenter] {root_obj.name}")
-        print(f"  COM (world): {com}")
+        logger.info("[Recenter] %s", root_obj.name)
+        logger.info("  COM (world): %s", com)
 
     # Shift children so COM moves to origin
     for obj in root_obj.children_recursive:
@@ -121,8 +126,8 @@ def normalize_model(root_obj, verbose=True):
     if scale < 0.001:
         scale = 5 / max_dim
     if verbose:
-        print(f"  Max dim before scale: {max_dim:.4f}")
-        print(f"  Scale factor:         {scale}")
+        logger.info("  Max dim before scale: %.4f", max_dim)
+        logger.info("  Scale factor:         %s", scale)
 
     root_obj.scale *= scale
     root_obj.location = Vector((0.0, 0.0, 0.0))
@@ -130,7 +135,7 @@ def normalize_model(root_obj, verbose=True):
 
     dims_after = get_root_world_dimensions(root_obj)
     if verbose:
-        print(f"  Max dim after scale:  {max(dims_after):.4f}")
+        logger.info("  Max dim after scale:  %.4f", max(dims_after))
 
 
 def assign_segmentation_ids(imported_objects, start_id=1):
@@ -298,7 +303,7 @@ for idx, fbx_name in enumerate(fbx_files):
     model_label = model_names[idx]
     fbx_path = os.path.join(FBX_FOLDER, fbx_name)
 
-    print(f"\nImporting FBX {fbx_name} → {model_label}")
+    logger.info("Importing FBX %s -> %s", fbx_name, model_label)
 
     rf = create_reference_frame(f"RF_{model_label}")
     imported_objects = import_fbx(fbx_path)
@@ -308,7 +313,7 @@ for idx, fbx_name in enumerate(fbx_files):
 
     normalize_model(rf)
     assign_segmentation_ids(imported_objects)
-    print(f"  Attached {len(imported_objects)} objects with segmentation IDs")
+    logger.info("  Attached %d objects with segmentation IDs", len(imported_objects))
 
 # =========================================================
 # MAIN: GLB/GLTF (NASA)
@@ -319,7 +324,7 @@ for glb_name in glb_files:
     glb_path = os.path.join(GLB_FOLDER, glb_name)
     model_label = file_stem(glb_path)  # default: use filename
 
-    print(f"\nImporting GLB {glb_name} → {model_label}")
+    logger.info("Importing GLB %s -> %s", glb_name, model_label)
 
     rf = create_reference_frame(f"RF_{model_label}")
     imported_objects = import_glb(glb_path)
@@ -329,15 +334,15 @@ for glb_name in glb_files:
 
     normalize_model(rf)
     assign_segmentation_ids(imported_objects)
-    print(f"  Attached {len(imported_objects)} objects with segmentation IDs")
+    logger.info("  Attached %d objects with segmentation IDs", len(imported_objects))
 
 # =========================================================
 # PACK + SAVE
 # =========================================================
-print("\nPacking all external resources...")
+logger.info("Packing all external resources...")
 bpy.ops.file.pack_all()
 
-print(f"\nSaving blend file to: {OUTPUT_BLEND}")
+logger.info("Saving blend file to: %s", OUTPUT_BLEND)
 bpy.ops.wm.save_as_mainfile(filepath=OUTPUT_BLEND)
 
-print("\n✔ Done.")
+logger.info("Done.")
