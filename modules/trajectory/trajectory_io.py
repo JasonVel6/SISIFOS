@@ -61,8 +61,11 @@ def write_camera_trajectory(
     q_I_G = np.asarray(q_IG[:nbSteps], dtype=float)
     p_C_I = -np.asarray(r_CO_I[:nbSteps], dtype=float)
     q_I_C = np.asarray(q_IC[:nbSteps], dtype=float)
-    sun_az = np.asarray(sun_az_I[:nbSteps], dtype=float)
-    sun_el = np.asarray(sun_el_I[:nbSteps], dtype=float)
+    # Sun angles are scene-lighting metadata rather than high-precision
+    # dynamics states. Round to millidegrees so numerically equivalent aligned
+    # solutions remain stable across runs and serialize consistently.
+    sun_az = np.mod(np.round(np.asarray(sun_az_I[:nbSteps], dtype=float), 3), 360.0)
+    sun_el = np.round(np.asarray(sun_el_I[:nbSteps], dtype=float), 3)
 
     header = [
         "timestamp",
