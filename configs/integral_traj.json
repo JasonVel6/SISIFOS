@@ -36,7 +36,7 @@
     },
     "render": {
       "engine": "CYCLES",
-      "samples": 4,
+      "samples": 32,
       "bg_color": [
         0.0,
         0.0,
