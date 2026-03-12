@@ -91,6 +91,13 @@ DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
 logger = get_logger()
 
 
+def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
+    """Blend inertial look-at and body-follow attitudes in the camera frame."""
+    delta_cam = so3_log_vec(R_IC_lookat.T @ R_IC_follow)
+    gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
+    return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
+
+
 # ============================================================================
 # MAIN Function
 # ============================================================================
@@ -447,6 +454,7 @@ def generate_trajectories_dynamical(
 
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents
+        x_right_prev_follow = [None] * config.num_agents
         q_IC_prev = [None] * config.num_agents
 
         # Pointing offset: body-frame offset from geometric center G
@@ -457,6 +465,8 @@ def generate_trajectories_dynamical(
         scan_amp = config.pointing_scan_amplitude
         scan_T = config.pointing_scan_period
         has_scan = (not is_tumbling) and (scan_amp > 0) and (scan_T > 0)
+        pitchyaw_follow_gain = float(np.clip(config.camera_pitchyaw_follow_gain, 0.0, 1.0))
+        roll_follow_gain = float(np.clip(config.camera_roll_follow_gain, 0.0, 1.0))
 
         for j in range(nbSteps):
             q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
@@ -512,14 +522,36 @@ def generate_trajectories_dynamical(
                     omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j]
                 )
 
-                fwd_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
-                R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
-                    fwd_I=fwd_I,
+                lookat_vec_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
+                R_IC_lookat, x_right_prev[agent_idx] = _lookat_continuous(
+                    fwd_I=lookat_vec_I,
                     world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev[agent_idx],
                     cos_thr=0.9995,
                     sin_thr=0.03,
                 )
+
+                if pitchyaw_follow_gain > 0.0 or roll_follow_gain > 0.0:
+                    # Express the same off-center look-at vector in the target body frame
+                    # so the follow attitude co-rotates about the selected body point.
+                    fwd_G = R_IG[mc_trial, j].T @ lookat_vec_I
+                    R_GC_follow, x_right_prev_follow[agent_idx] = _lookat_continuous(
+                        fwd_I=fwd_G,
+                        world_up_I=np.array([0.0, 0.0, 1.0]),
+                        x_prev=x_right_prev_follow[agent_idx],
+                        cos_thr=0.9995,
+                        sin_thr=0.03,
+                    )
+                    R_IC_follow = R_IG[mc_trial, j] @ R_GC_follow
+                    R_IC[mc_trial, agent_idx, j] = _blend_camera_attitude(
+                        R_IC_lookat=R_IC_lookat,
+                        R_IC_follow=R_IC_follow,
+                        pitchyaw_gain=pitchyaw_follow_gain,
+                        roll_gain=roll_follow_gain,
+                    )
+                else:
+                    R_IC[mc_trial, agent_idx, j] = R_IC_lookat
+
                 q_raw = R2q(R_IC[mc_trial, agent_idx, j])
                 q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
                 q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
