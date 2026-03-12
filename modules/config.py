@@ -52,7 +52,6 @@ class CameraConfig(BaseModel):
         """Pixel focal length derived from mm focal length, sensor width, and resolution."""
         return self.focal_length / self.sensor_width * self.resolution[0]
 
-
 class RenderConfig(BaseModel):
     """Render settings"""
 
@@ -60,7 +59,6 @@ class RenderConfig(BaseModel):
     samples: int = 32
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
-
 
 class SetupConfig(BaseModel):
     """Environment Setup"""
@@ -88,7 +86,6 @@ class SamplingTrajectoryConfig(BaseModel):
     sun_az: float = 0.0
     sun_el: float = 0.0
 
-
 class ConstantRotationConfig(BaseModel):
     """Configuration for the constant-rotation-based trajectory generator"""
 
@@ -110,7 +107,7 @@ class InertiaConfig(BaseModel):
     Z - Lowest inertial axis
     """
 
-    inertia_type: Literal["box", "cylinder", "custom"]
+    inertia_type: Literal["box", "cylinder", "custom", "sphere"]
     m: float | None = None
     # following spatial dimensions are in meters
     l: float | None = None
@@ -144,6 +141,11 @@ class InertiaConfig(BaseModel):
             if self.Jx is None or self.Jy is None or self.Jz is None:
                 raise ValueError("Custom inertia requires Jx, Jy, and Jz to be defined")
             return np.array([[self.Jx, 0, 0], [0, self.Jy, 0], [0, 0, self.Jz]])
+        elif self.inertia_type == "sphere":
+            if self.r is None or self.m is None:
+                raise ValueError("Sphere inertia requires r and m to be defined")
+            J = (2.0 / 5.0) * self.m * self.r**2
+            return np.array([[J, 0, 0], [0, J, 0], [0, 0, J]])
         else:
             raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
 

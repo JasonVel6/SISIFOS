@@ -51,7 +51,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, TrajectoryConfig, default_inertia_config
+from modules.config import CameraConfig, TrajectoryConfig, InertiaConfig
 from modules.trajectory.motion_cases import (
     init_hill,
     init_inertial,
@@ -832,7 +832,7 @@ def main():
         raise ValueError("Mode must be 1, 2, or 3.")
 
     config = TrajectoryConfig(
-        inertia_config=default_inertia_config("RF_Hubble"),
+        inertia_config=InertiaConfig(inertia_type="sphere", r=1.0, m=1.0),
         path_mode=path_mode,
         num_agents=num_agents,
         num_mc=num_mc,
