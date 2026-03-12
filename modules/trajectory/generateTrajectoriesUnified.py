@@ -99,7 +99,7 @@ def generate_trajectories_dynamical(
     base_output_file: str,
     config_prefix: str = "Config_1",
     model_name: str = "",
-    camera_config: CameraConfig = None,
+    camera_config: CameraConfig | None = None,
     save_scene_plots: bool = True,
     scene_plot_max_frames: int | None = 100,
 ) -> list[str]:
@@ -166,7 +166,7 @@ def generate_trajectories_dynamical(
             R0_const=config.R0_const,
             omega_min_deg=3.0,
             omega_max_deg=5.0,
-            J=config.J,
+            J=config.inertia_config.J,
             min_asymmetry_component=0.4,
         )
 
@@ -370,7 +370,7 @@ def generate_trajectories_dynamical(
 
             for omega_retry in range(MAX_OMEGA_RETRIES):
                 omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(
-                    nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.J
+                    nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.inertia_config.J
                 )
 
                 # Validate omega timeseries has sufficient excitation
@@ -387,7 +387,7 @@ def generate_trajectories_dynamical(
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
                         omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.J, min_asymmetry_component=0.4, off_axis_min=0.3
+                            rngs_mc[mc_trial], config.inertia_config.J, min_asymmetry_component=0.4, off_axis_min=0.3
                         )
                         omega_GI_G_0[mc_trial] = omega_mag * d_new
 
@@ -456,7 +456,7 @@ def generate_trajectories_dynamical(
             r_GO_I[mc_trial, j] = r_AO_I + R_IG[mc_trial, j] @ r_AG_G
             v_GO_I[mc_trial, j] = v_AO_I + R_IG[mc_trial, j] @ np.cross(omega_GI_G[mc_trial, j], r_AG_G)
 
-            H_GI_G[mc_trial, j] = config.J @ omega_GI_G[mc_trial, j]
+            H_GI_G[mc_trial, j] = config.inertia_config.J @ omega_GI_G[mc_trial, j]
             H_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ H_GI_G[mc_trial, j]
 
             r_OG_G[mc_trial, j] = -R_IG[mc_trial, j].T @ r_GO_I[mc_trial, j]
@@ -615,8 +615,8 @@ def generate_trajectories_dynamical(
                     omega_dot = (omega_CI_C[mc_trial, agent_idx, j + 1] - omega_CI_C[mc_trial, agent_idx, j - 1]) / (
                         2 * tstep_eff
                     )
-                J_omega = config.J @ omega_CI_C[mc_trial, agent_idx, j]
-                tau_specific_S[mc_trial, agent_idx, j] = config.J @ omega_dot + np.cross(
+                J_omega = config.inertia_config.J @ omega_CI_C[mc_trial, agent_idx, j]
+                tau_specific_S[mc_trial, agent_idx, j] = config.inertia_config.J @ omega_dot + np.cross(
                     omega_CI_C[mc_trial, agent_idx, j], J_omega
                 )
 
@@ -731,7 +731,7 @@ def generate_trajectories_dynamical(
                 output_dir=agent_folder,
                 nbSteps=nbSteps,
                 timestamps=timestamps,
-                J=config.J,
+                J=config.inertia_config.J,
                 r_AG_G=r_AG_G,
                 q_GC=q_GC_mc_ag,
                 q_IG=q_IG_mc,
@@ -831,7 +831,9 @@ def main():
     else:
         raise ValueError("Mode must be 1, 2, or 3.")
 
-    config = TrajectoryConfig(path_mode=path_mode, num_agents=num_agents, num_mc=num_mc, seed=seed)
+    config = TrajectoryConfig(
+        selected_model="RF_Hubble", path_mode=path_mode, num_agents=num_agents, num_mc=num_mc, seed=seed
+    )
 
     logger.info("[INFO] Master seed: %s", seed)
     logger.info("[INFO] Mode: %s", path_mode)

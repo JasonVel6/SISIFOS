@@ -1,0 +1,43 @@
+RF_Integral:
+    # Inertia (ESA INTEGRAL satellite, box approximation)
+    # Dimensions: 2.8 x 3.2 x 5.0 m, mass ~4000 kg
+    inertia:
+        inertia_type: box
+        m: 4000.0
+        l: 5.0
+        w: 3.2
+        h: 2.8
+    # See image in PR
+    # z -> y 
+    # rotate by -90 around x
+    model_rotation_euler:
+        x: -90.0
+        y: 0.0
+        z: 0.0
+RF_Hubble:
+    #https://science.nasa.gov/mission/hubble/overview/hubble-by-the-numbers/
+    inertia:
+        inertia_type: cylinder
+        m: 12200.0
+        r: 4.2
+        h: 13.0
+    # No rotation needed x is long axis
+    # See image in PR
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+RF_Target:
+    # Inertia (ESA Target satellite, box approximation)
+    # Dimensions: 1.0 x 1.0 x 1.0 m, mass ~100 kg
+    inertia:
+        inertia_type: custom
+        Jx: 1
+        Jy: 1
+        Jz: 1
+    # No rotation needed, z is long axis
+    # See image in PR
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0

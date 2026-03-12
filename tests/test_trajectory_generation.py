@@ -13,7 +13,14 @@ class TestTrajectoryGenerationSmoke:
         for run in range(2):
             run_dir = tmp_path / f"run{run}"
             config = TrajectoryConfig(
-                path_mode="tumbling", seed=77777, num_agents=1, num_mc=1, tend=3.0, tstep=1.0, MIN_F2F_PX_MED=1.0
+                selected_model="RF_Hubble",
+                path_mode="tumbling",
+                seed=77777,
+                num_agents=1,
+                num_mc=1,
+                tend=3.0,
+                tstep=1.0,
+                MIN_F2F_PX_MED=1.0,
             )
             folders = generate_trajectories_dynamical(
                 config=config,

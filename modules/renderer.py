@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Quaternion
+from mathutils import Euler, Quaternion
 
 from .blender_utils import (
     append_blend_objects,
@@ -31,6 +31,30 @@ class BlenderRenderer:
         self.world = self.scene.world
         self._target_blend_object_names = None
         self.logger = get_logger()
+
+        # Calculate rotation quaternions for spacecraft models based on config defaults
+        if not config.model_rotation_A_model_euler:
+            raise ValueError("model_rotation_A_model_euler must be provided in config for each spacecraft")
+        euler_A_model = Euler(
+            (
+                math.radians(float(config.model_rotation_A_model_euler[0])),
+                math.radians(float(config.model_rotation_A_model_euler[1])),
+                math.radians(float(config.model_rotation_A_model_euler[2])),
+            ),
+            "XYZ",
+        )
+        self.quat_A_model = euler_A_model.to_quaternion()
+        self._log_info(
+            "Initialized BlenderRenderer with model rotation (Euler XYZ in degrees): %s",
+            config.model_rotation_A_model_euler,
+        )
+        self._log_info(
+            "Calculated model rotation quaternion: (w: %.6f, x: %.6f, y: %.6f, z: %.6f)",
+            self.quat_A_model.w,
+            self.quat_A_model.x,
+            self.quat_A_model.y,
+            self.quat_A_model.z,
+        )
 
     def _log_info(self, message: str, *args):
         if self.verbose:
@@ -308,13 +332,6 @@ class BlenderRenderer:
         """Get all RF_* models."""
         return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
 
-    def rotate_z(self, obj, deg: float):
-        """Rotate object around local Z axis."""
-        obj.rotation_mode = "QUATERNION"
-        q_rot = Quaternion((0, 0, 1), math.radians(deg))
-        obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
-        bpy.context.view_layer.update()
-
     def render_frame_v2(
         self,
         cam: bpy.types.Object,
@@ -354,7 +371,8 @@ class BlenderRenderer:
 
         # Target (model) pose in inertial frame
         model.location = p_G_I
-        model.rotation_quaternion = q_I_G
+        model.rotation_quaternion = Quaternion(q_I_G) @ self.quat_A_model
+        self.logger.info(model.rotation_quaternion)
 
         # Camera pose in inertial frame
         cam.location = p_C_I
@@ -456,7 +474,7 @@ class BlenderRenderer:
         p_C_I = frame_dict1["p_C_I"]
         q_I_C = frame_dict1["q_I_C"]
         model.location = p_G_I
-        model.rotation_quaternion = q_I_G
+        model.rotation_quaternion = Quaternion(q_I_G) @ self.quat_A_model
         cam.location = p_C_I
         cam.rotation_quaternion = q_I_C
         bpy.context.view_layer.update()
@@ -468,7 +486,7 @@ class BlenderRenderer:
         p_C_I = frame_dict2["p_C_I"]
         q_I_C = frame_dict2["q_I_C"]
         model.location = p_G_I
-        model.rotation_quaternion = q_I_G
+        model.rotation_quaternion = Quaternion(q_I_G) @ self.quat_A_model
         cam.location = p_C_I
         cam.rotation_quaternion = q_I_C
         bpy.context.view_layer.update()
