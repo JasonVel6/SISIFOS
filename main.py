@@ -279,6 +279,8 @@ def run_sweep(sweep_config: SweepConfig):
 
     PROJECT_ROOT = Path(__file__).parent.resolve()
 
+    render_jobs: list[tuple[SceneConfig, Path]] = []
+
     for i, config in enumerate(configs):
         config_prefix = f"Config_{i + 1}"
 
@@ -297,8 +299,10 @@ def run_sweep(sweep_config: SweepConfig):
                 obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
 
         agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
-        for agent_folder in agent_folders:
-            run_sisfos_with_config(config, Path(agent_folder))
+        render_jobs.extend((config, Path(agent_folder)) for agent_folder in agent_folders)
+
+    for config, agent_folder in render_jobs:
+        run_sisfos_with_config(config, agent_folder)
 
 
 if __name__ == "__main__":

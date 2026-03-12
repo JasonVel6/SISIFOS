@@ -206,9 +206,10 @@ class TrajectoryConfig(BaseModel):
 
     # Distance to target
     R0_const: float = 30.0
-    # CRO out-of-plane amplitude for tumbling mode.
-    # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
-    # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
+    # CRO range half-width for tumbling mode, centered about R0_const.
+    # R0_const is the nominal midpoint standoff used for imaging/processing.
+    # The CRO family used here cannot realize a centered span below 1/3, so
+    # smaller requested values are clamped upward internally.
     tumbling_span_frac: float = 0.20
     # Camera pointing offset — look at a point offset from geometric center G
     # in body frame. For tumbling targets, the tumble sweeps this offset through
@@ -224,7 +225,20 @@ class TrajectoryConfig(BaseModel):
     #   I      = inertial look-at only
     #   G      = body-frame look-at only
     #   hybrid = blend inertial and body-frame look-at using follow gains
-    camera_lookat_mode: Literal["I", "G", "hybrid"] = "hybrid"
+    #   h      = alias for hybrid
+    #   h-cro  = hybrid pointing with tumbling CRO translation
+    #   h-nmc  = hybrid pointing with tumbling NMC translation
+    #   hybrid-weak/medium/strong = preset hybrid follow strengths
+    camera_lookat_mode: Literal[
+        "I",
+        "G",
+        "hybrid",
+        "h-cro",
+        "h-nmc",
+        "hybrid-weak",
+        "hybrid-medium",
+        "hybrid-strong",
+    ] = "hybrid"
     # Camera target-follow gains for passive inspection.
     # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
     camera_pitchyaw_follow_gain: float = 0.0
@@ -280,6 +294,62 @@ class TrajectoryConfig(BaseModel):
             return "3"
         else:
             raise ValueError(f"Invalid path_mode: {self.path_mode}")
+
+    @property
+    def camera_pointing_mode(self) -> str:
+        if self.camera_lookat_mode in {
+            "h-cro",
+            "h-nmc",
+            "hybrid-weak",
+            "hybrid-medium",
+            "hybrid-strong",
+        }:
+            return "hybrid"
+        return self.camera_lookat_mode
+
+    @property
+    def tumbling_translation_mode(self) -> str:
+        if self.camera_lookat_mode == "h-nmc":
+            return "nmc"
+        return "cro"
+
+    @property
+    def resolved_camera_pitchyaw_follow_gain(self) -> float:
+        if self.camera_lookat_mode == "hybrid-weak":
+            return 0.25
+        if self.camera_lookat_mode == "hybrid-medium":
+            return 0.40
+        if self.camera_lookat_mode == "hybrid-strong":
+            return 0.70
+        return self.camera_pitchyaw_follow_gain
+
+    @property
+    def resolved_camera_roll_follow_gain(self) -> float:
+        if self.camera_lookat_mode == "hybrid-weak":
+            return 0.10
+        if self.camera_lookat_mode == "hybrid-medium":
+            return 0.15
+        if self.camera_lookat_mode == "hybrid-strong":
+            return 0.35
+        return self.camera_roll_follow_gain
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_camera_lookat_mode(cls, data: Any):
+        if not isinstance(data, dict):
+            return data
+
+        data = data.copy()
+        lookat_mode = data.get("camera_lookat_mode")
+        if not isinstance(lookat_mode, str):
+            return data
+
+        normalized = lookat_mode.strip()
+        if normalized == "h":
+            normalized = "hybrid"
+
+        data["camera_lookat_mode"] = normalized
+        return data
 
 
 class SceneConfig(BaseModel):

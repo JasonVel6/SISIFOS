@@ -28,8 +28,8 @@
       "clip_start": 1e-05,
       "clip_end": 5000000.0,
       "resolution": [
-        512,
-        512
+        1024,
+        1024
       ],
       "lens_flare": 0.01,
       "exposure_time_s": 0.016666666666666666
@@ -82,23 +82,23 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
+      "R0_const": 40.0,
+      "tumbling_span_frac": 0.5,
       "pointing_offset_G": [0.8, 0.5, 0.2],
-      "camera_lookat_mode": "hybrid",
-      "camera_pitchyaw_follow_gain": 0.55,
-      "camera_roll_follow_gain": 0.2,
-      "SUN_ALIGN_ENABLE": false,
+      "camera_lookat_mode": "hybrid-strong",
+      "camera_pitchyaw_follow_gain": 0.4,
+      "camera_roll_follow_gain": 0.15,
+      "SUN_ALIGN_ENABLE": true,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
-      "EARTH_BACKGROUND_ENABLE": false,
+      "EARTH_BACKGROUND_ENABLE": true,
       "mu_ref": 398600441800000.0,
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
-      "IMAGE_MAX_DT_S": 1.0,
-      "tend": 10.0,
+      "IMAGE_MAX_DT_S": 0.1,
+      "tend": 75.0,
       "tstep": 0.1,
-      "MIN_F2F_PX_MED": 3.0,
+      "MIN_F2F_PX_MED": 0.75,
       "m": 4000.0,
       "l": 5.0,
       "w": 3.2,
@@ -115,5 +115,7 @@
     "selected_model": "RF_Integral",
     "model_rotation_z_deg": 45.0
   },
-  "sweep_parameters": {}
+  "sweep_parameters": {
+    "trajectory.camera_lookat_mode": ["I", "G", "hybrid-strong"]
+  }
 }

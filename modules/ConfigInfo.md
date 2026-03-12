@@ -234,7 +234,7 @@ float for accel bias
 #### ACCEL_BIAS_TAU_S:
 float for accel bias
 #### R0_const:
-initial dist from target
+nominal midpoint standoff from target
 #### SUN_ALIGN_ENABLE:
 bool if we align with the sun 
 #### SUN_ALIGN_CONE_DEG:

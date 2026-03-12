@@ -81,6 +81,55 @@ def _resolve_gtvalues(path_str: str) -> Path:
     return path
 
 
+def _discover_sweep_gtvalues(root: Path) -> list[tuple[str, Path]]:
+    entries: list[tuple[str, Path]] = []
+    for traj_json in sorted(root.glob("Config_*_trajectory.json")):
+        config_prefix = traj_json.stem.removesuffix("_trajectory")
+        payload = json.loads(traj_json.read_text())
+        lookat_mode = str(payload.get("camera_lookat_mode", config_prefix))
+
+        config_dirs = sorted(path for path in root.glob(f"{config_prefix}_*") if path.is_dir())
+        if not config_dirs:
+            continue
+
+        for config_dir in config_dirs:
+            agent_dirs = sorted(path for path in config_dir.glob("Agent_*") if path.is_dir())
+            if not agent_dirs:
+                continue
+            multi_agent = len(agent_dirs) > 1
+            for agent_dir in agent_dirs:
+                gt_path = agent_dir / "gtValues.txt"
+                if gt_path.exists():
+                    label = lookat_mode if not multi_agent else f"{lookat_mode}:{agent_dir.name}"
+                    entries.append((label, gt_path))
+
+    return entries
+
+
+def _expand_inputs(paths: list[str]) -> list[tuple[str, Path]]:
+    expanded: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+
+    for raw_path in paths:
+        path = Path(raw_path).expanduser()
+        if path.is_dir() and not (path / "gtValues.txt").exists():
+            discovered = _discover_sweep_gtvalues(path)
+            if discovered:
+                for label, gt_path in discovered:
+                    if gt_path not in seen:
+                        expanded.append((label, gt_path))
+                        seen.add(gt_path)
+                continue
+
+        gt_path = _resolve_gtvalues(raw_path)
+        if gt_path not in seen:
+            default_label = gt_path.parent.name if gt_path.name == "gtValues.txt" else gt_path.stem
+            expanded.append((default_label, gt_path))
+            seen.add(gt_path)
+
+    return expanded
+
+
 def _subset_indices(timestamps: list[float], end_time_s: float) -> list[int]:
     return [idx for idx, ts in enumerate(timestamps) if abs(ts - round(ts)) < 1e-9 and 0.0 <= ts < end_time_s]
 
@@ -269,7 +318,7 @@ def main() -> None:
     parser.add_argument(
         "gtvalues",
         nargs="+",
-        help="One or more gtValues.txt files or directories containing gtValues.txt",
+        help="One or more gtValues.txt files, agent directories, or sweep root directories",
     )
     parser.add_argument(
         "--label",
@@ -298,9 +347,8 @@ def main() -> None:
         label_overrides[_resolve_gtvalues(raw_path)] = label
 
     results: dict[str, dict[str, object]] = {}
-    for raw_path in args.gtvalues:
-        path = _resolve_gtvalues(raw_path)
-        label = label_overrides.get(path, path.parent.name if path.name == "gtValues.txt" else path.stem)
+    for default_label, path in _expand_inputs(args.gtvalues):
+        label = label_overrides.get(path, default_label)
         results[label] = analyze_gtvalues(path, subset_end_time_s=args.subset_end_time)
 
     if args.json:
