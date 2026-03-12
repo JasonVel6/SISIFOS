@@ -630,6 +630,10 @@ def _vecI_to_azel(v_I):
     r = np.linalg.norm(v_I) + 1e-12
     el = np.arcsin(np.clip(z / r, -1.0, 1.0))
     az = np.arctan2(y, x) % (2.0 * np.pi)
+    # Canonicalize angles at the wrap boundary so numerically equivalent
+    # directions do not flip between ~0 and ~2*pi across runs.
+    if np.isclose(az, 0.0, atol=1e-5) or np.isclose(az, 2.0 * np.pi, atol=1e-5):
+        az = 0.0
     return az, el
 
 
