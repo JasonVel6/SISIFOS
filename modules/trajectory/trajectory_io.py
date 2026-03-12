@@ -61,8 +61,11 @@ def write_camera_trajectory(
     q_I_G = np.asarray(q_IG[:nbSteps], dtype=float)
     p_C_I = -np.asarray(r_CO_I[:nbSteps], dtype=float)
     q_I_C = np.asarray(q_IC[:nbSteps], dtype=float)
-    sun_az = np.asarray(sun_az_I[:nbSteps], dtype=float)
-    sun_el = np.asarray(sun_el_I[:nbSteps], dtype=float)
+    # Sun angles are scene-lighting metadata rather than high-precision
+    # dynamics states. Round to millidegrees so numerically equivalent aligned
+    # solutions remain stable across runs and serialize consistently.
+    sun_az = np.mod(np.round(np.asarray(sun_az_I[:nbSteps], dtype=float), 3), 360.0)
+    sun_el = np.round(np.asarray(sun_el_I[:nbSteps], dtype=float), 3)
 
     header = [
         "timestamp",
@@ -393,6 +396,7 @@ def write_config(
     camera_obj: dict,
     tstep_eff: float,
     child_ss: np.random.SeedSequence,
+    illumination_seed: int | None,
     path_mode: str,
     rotMode_Gframe: str,
     agent_idx: int,
@@ -601,6 +605,7 @@ def write_config(
         f.write("# Trajectory Generation Metadata (for reference only)\n")
         f.write("#--------------------------------------------------------------------------------------------\n")
         f.write(f"# master_seed: {int(child_ss.entropy)}\n")
+        f.write(f"# illumination_seed: {int(illumination_seed)}\n")
         f.write(f"# mc_index: {child_ss.spawn_key[0]}\n")
         f.write(f"# path_mode: {path_mode.title()}\n")
         f.write(f"# rotMode_Gframe: {rotMode_Gframe}\n")

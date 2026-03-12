@@ -91,6 +91,13 @@ DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
 logger = get_logger()
 
 
+def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
+    """Blend inertial look-at and body-follow attitudes in the camera frame."""
+    delta_cam = so3_log_vec(R_IC_lookat.T @ R_IC_follow)
+    gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
+    return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
+
+
 # ============================================================================
 # MAIN Function
 # ============================================================================
@@ -118,6 +125,22 @@ def generate_trajectories_dynamical(
     ss_master = np.random.SeedSequence(master_seed)
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
+
+    # Illumination uses its own RNG stream. If no explicit illumination seed was
+    # provided, resolve a fresh one so the same trajectory seed can be rendered
+    # under multiple independent lighting conditions and still be reproducible.
+    if config.illumination_seed is None:
+        config.illumination_seed = int(np.random.SeedSequence().entropy) & 0x7FFFFFFF
+        logger.info(
+            "[INITIALIZATION]: no pre defined illumination seed detected, generating new seed: %s",
+            config.illumination_seed,
+        )
+    else:
+        logger.info("[INITIALIZATION]: illumination seed: %s", config.illumination_seed)
+
+    ss_illum = np.random.SeedSequence(config.illumination_seed)
+    child_ss_illum = ss_illum.spawn(config.num_mc)
+    rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
 
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
@@ -205,11 +228,17 @@ def generate_trajectories_dynamical(
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
         ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
+        # Always draw from the main RNG to preserve downstream state.
         el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
         az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
         roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
+
+        if rngs_illum is not None:
+            rng_il = rngs_illum[mc_trial]
+            el_I[mc_trial] = float(np.arcsin(rng_il.uniform(-1.0, 1.0)))
+            az_I[mc_trial] = float(rng_il.uniform(0.0, 2.0 * np.pi))
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, config.tend, config.tstep, dtype=float)
@@ -404,6 +433,10 @@ def generate_trajectories_dynamical(
                 omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
 
         # Sun alignment
+        # When illumination_seed is provided, all sun-related randomness should
+        # come from the illumination RNG so the final aligned sun remains
+        # reproducible independently from the trajectory seed.
+        rng_sun = rngs_illum[mc_trial] if rngs_illum is not None else rngs_mc[mc_trial]
         if config.EARTH_BACKGROUND_ENABLE:
             # Earth-in-background alignment: Sun -> Camera -> Target -> Earth
             # Sun direction should be opposite to Earth direction from camera
@@ -417,7 +450,7 @@ def generate_trajectories_dynamical(
                 u_sun_I = r_cam_I / np.linalg.norm(r_cam_I)
                 # Add small jitter if desired
                 if config.SUN_ALIGN_JITTER_D > 0:
-                    jitter_rad = np.deg2rad((rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
+                    jitter_rad = np.deg2rad((rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D)
                     up = np.array([0.0, 0.0, 1.0])
                     if abs(u_sun_I @ up) > 0.95:
                         up = np.array([0.0, 1.0, 0.0])
@@ -434,9 +467,7 @@ def generate_trajectories_dynamical(
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
                 u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
-                cone_deg = (
-                    config.SUN_ALIGN_CONE_DEG + (rngs_mc[mc_trial].random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
-                )
+                cone_deg = config.SUN_ALIGN_CONE_DEG + (rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
                 if abs(u_LOS_G @ up) > 0.95:
@@ -447,6 +478,7 @@ def generate_trajectories_dynamical(
 
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents
+        x_right_prev_follow = [None] * config.num_agents
         q_IC_prev = [None] * config.num_agents
 
         # Pointing offset: body-frame offset from geometric center G
@@ -457,6 +489,9 @@ def generate_trajectories_dynamical(
         scan_amp = config.pointing_scan_amplitude
         scan_T = config.pointing_scan_period
         has_scan = (not is_tumbling) and (scan_amp > 0) and (scan_T > 0)
+        lookat_mode = config.camera_lookat_mode
+        pitchyaw_follow_gain = float(np.clip(config.camera_pitchyaw_follow_gain, 0.0, 1.0))
+        roll_follow_gain = float(np.clip(config.camera_roll_follow_gain, 0.0, 1.0))
 
         for j in range(nbSteps):
             q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
@@ -514,14 +549,39 @@ def generate_trajectories_dynamical(
                     omega_GI_G[mc_trial, j], r_CG_G[mc_trial, agent_idx, j]
                 )
 
-                fwd_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
-                R_IC[mc_trial, agent_idx, j], x_right_prev[agent_idx] = _lookat_continuous(
-                    fwd_I=fwd_I,
+                lookat_vec_I = lookat_I - state_C_I[mc_trial, agent_idx, j, 0:3]
+                R_IC_lookat, x_right_prev[agent_idx] = _lookat_continuous(
+                    fwd_I=lookat_vec_I,
                     world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev[agent_idx],
                     cos_thr=0.9995,
                     sin_thr=0.03,
                 )
+
+                # Express the same off-center look-at vector in the target body frame
+                # so the follow attitude co-rotates about the selected body point.
+                fwd_G = R_IG[mc_trial, j].T @ lookat_vec_I
+                R_GC_follow, x_right_prev_follow[agent_idx] = _lookat_continuous(
+                    fwd_I=fwd_G,
+                    world_up_I=np.array([0.0, 0.0, 1.0]),
+                    x_prev=x_right_prev_follow[agent_idx],
+                    cos_thr=0.9995,
+                    sin_thr=0.03,
+                )
+                R_IC_follow = R_IG[mc_trial, j] @ R_GC_follow
+
+                if lookat_mode == "G":
+                    R_IC[mc_trial, agent_idx, j] = R_IC_follow
+                elif lookat_mode == "hybrid":
+                    R_IC[mc_trial, agent_idx, j] = _blend_camera_attitude(
+                        R_IC_lookat=R_IC_lookat,
+                        R_IC_follow=R_IC_follow,
+                        pitchyaw_gain=pitchyaw_follow_gain,
+                        roll_gain=roll_follow_gain,
+                    )
+                else:
+                    R_IC[mc_trial, agent_idx, j] = R_IC_lookat
+
                 q_raw = R2q(R_IC[mc_trial, agent_idx, j])
                 q_IC[mc_trial, agent_idx, j] = _quat_hemi_continuous(q_raw, q_IC_prev[agent_idx])
                 q_IC_prev[agent_idx] = q_IC[mc_trial, agent_idx, j]
@@ -794,6 +854,7 @@ def generate_trajectories_dynamical(
                 camera_obj=camera_obj,
                 tstep_eff=tstep_eff,
                 child_ss=child_ss[mc_trial],
+                illumination_seed=config.illumination_seed,
                 path_mode=config.path_mode,
                 rotMode_Gframe=config.rotMode_Gframe,
                 agent_idx=agent_idx,

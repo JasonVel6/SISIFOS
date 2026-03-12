@@ -886,27 +886,47 @@ def init_tumbling(
                     bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
 
                     if bad2:
-                        # z-repair failed (likely LOS ~ z-axis). Try phase shift to get
-                        # better in-plane geometry. Shift phase by 90° to maximize
-                        # transverse in-plane velocity component.
-                        phi_new = phi + np.pi / 2.0
-                        x0_new = A * np.cos(phi_new)
-                        y0_new = -2.0 * A * np.sin(phi_new)
-                        vx0_new = -n_scalar * A * np.sin(phi_new)
-                        vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
+                        # z-repair failed (likely LOS close to the z axis for this phase).
+                        # Try a small set of phase shifts and recompute the minimal z-boost
+                        # for each candidate instead of reusing the original vz correction.
+                        phase_offsets = [k * (np.pi / 6.0) for k in range(1, 12)]
+                        repaired = False
+                        best_stats = stats2
+                        px_target = 1.02 * float(px_min)
 
-                        x_0[i, a], y_0[i, a] = x0_new, y0_new
-                        xdot_0[i, a], ydot_0[i, a] = vx0_new, vy0_new
-                        # Reset z to quadrature with boosted B
-                        z_0[i, a] = 0.0
-                        zdot_0[i, a] = vzN  # keep the boosted vz
+                        for phase_offset in phase_offsets:
+                            phi_new = phi + phase_offset
+                            x0_new = A * np.cos(phi_new)
+                            y0_new = -2.0 * A * np.sin(phi_new)
+                            vx0_new = -n_scalar * A * np.sin(phi_new)
+                            vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
 
-                        r2 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
-                        v2 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
-                        bad3, stats3 = detect_degeneracy(r2, v2, focal_length_px, float(kf_dt), px_min, rho_max)
-                        if bad3:
+                            r_try = np.array([x0_new, y0_new, 0.0], float)
+                            v_try = np.array([vx0_new, vy0_new, vz0], float)
+                            z_try, vz_try = repair_inertial_cro(
+                                r_try, v_try, focal_length_px, float(kf_dt), n_scalar, px_target, vz0=vz0
+                            )
+                            r_fix = np.array([x0_new, y0_new, z_try], float)
+                            v_fix = np.array([vx0_new, vy0_new, vz_try], float)
+                            bad3, stats3 = detect_degeneracy(
+                                r_fix, v_fix, focal_length_px, float(kf_dt), px_min, rho_max
+                            )
+
+                            if (not repaired) and (
+                                stats3["px"] > best_stats["px"]
+                                or (np.isclose(stats3["px"], best_stats["px"]) and stats3["rho"] < best_stats["rho"])
+                            ):
+                                best_stats = stats3
+
+                            if not bad3:
+                                x_0[i, a], y_0[i, a], z_0[i, a] = x0_new, y0_new, z_try
+                                xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0_new, vy0_new, vz_try
+                                repaired = True
+                                break
+
+                        if not repaired:
                             raise RuntimeError(
-                                f"Tumbling IC unrecoverable after phase shift: px={stats3['px']:.2f}, rho={stats3['rho']:.3f}"
+                                f"Tumbling IC unrecoverable after phase search: px={best_stats['px']:.2f}, rho={best_stats['rho']:.3f}"
                             )
 
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
