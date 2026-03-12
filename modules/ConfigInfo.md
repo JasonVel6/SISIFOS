@@ -101,6 +101,9 @@ bool option to save the segmentation
 #### save_obj_poses
 bool option to save object poses
 
+#### save_scene_plots
+bool option to save trajectory scene graphs
+
 #### frame_ids
 list of ints for what to render
 

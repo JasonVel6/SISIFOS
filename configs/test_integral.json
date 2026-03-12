@@ -103,6 +103,7 @@
     "save_optical_flow": false,
     "save_segmentation": false,
     "save_obj_poses": false,
+    "save_scene_plots": false,
     "frame_ids": null,
     "selected_model": "RF_Integral",
     "model_rotation_z_deg": 45.0

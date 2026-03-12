@@ -58,6 +58,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             config_prefix=config_prefix,
             model_name=model_token,
             camera_config=config.camera,
+            save_scene_plots=config.save_scene_plots,
         )
 
     elif config.trajectory_type == "sampling_trajectory":
