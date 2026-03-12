@@ -89,17 +89,22 @@ def handle_gt_from_npz(
         flow = data["optical_flow"].astype(np.float32)
         plt.imsave(str(gt_flow_dir / f"{base}_Flow.png"), _flow_to_rgb(flow))
 
+    mask = None
+
     # --------- SEGMENTATION (addon-provided) ---------
     if "segmentation_masks" in data:
         seg = data["segmentation_masks"]
         plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
+        mask = seg == 1
 
     # Create masked images
     ensure_dir(Path(masked_images_dir))
     rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
     rendered_img = plt.imread(rendered_img_path)
     masked_img = np.zeros_like(rendered_img)
-    masked_img[near_mask] = rendered_img[near_mask]
+    if mask is None:
+        mask = near_mask
+    masked_img[mask] = rendered_img[mask]
     masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
     plt.imsave(masked_img_path, masked_img)
 

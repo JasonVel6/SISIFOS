@@ -27,6 +27,23 @@ class BlenderRenderer:
         if self.verbose:
             self.logger.info(message, *args)
 
+    def _set_pass_index_recursive(self, root_name: str, pass_index: int) -> None:
+        root = bpy.data.objects.get(root_name)
+        if root is None:
+            self._log_info("Segmentation pass index skipped; object '%s' not found", root_name)
+            return
+
+        root.pass_index = pass_index
+        for child in root.children_recursive:
+            child.pass_index = pass_index
+
+        self._log_info(
+            "Segmentation pass_index=%d assigned to '%s' (+ %d children)",
+            pass_index,
+            root_name,
+            len(list(root.children_recursive)),
+        )
+
     def setup_total(self):
         self._log_info("Loading scene: %s", self.config.scene_blend_path)
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
@@ -176,6 +193,11 @@ class BlenderRenderer:
         vb.bool_save_opt_flow = True  # needs Cycles' Vector pass
         vb.bool_save_segmentation_masks = True  # needs object pass_index > 0
         vb.bool_save_obj_poses = True
+
+        # Cycles' IndexOB pass reads pass_index per object, not via parent inheritance.
+        self._set_pass_index_recursive("Target", 1)
+        for pass_index, object_name in enumerate(["Earth", "Clouds", "Atmo"], start=2):
+            self._set_pass_index_recursive(object_name, pass_index)
 
         self._log_info("Vision Blender addon configured")
         cam = bpy.data.objects.get("Camera")
