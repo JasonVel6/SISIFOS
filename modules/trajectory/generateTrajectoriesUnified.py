@@ -168,6 +168,7 @@ def generate_trajectories_dynamical(
             omega_max_deg=5.0,
             J=config.J,
             min_asymmetry_component=0.4,
+            span_frac=config.tumbling_span_frac,
         )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])

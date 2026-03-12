@@ -753,6 +753,7 @@ def init_tumbling(
     max_omega_retries=100,
     J=None,
     min_asymmetry_component=0.4,
+    span_frac=2.0,
 ):
     """Initialize tumbling case with CRO trajectory.
 
@@ -813,8 +814,6 @@ def init_tumbling(
     # A sets in-plane amplitude, B sets out-of-plane amplitude
     # r_min = 2A = R0_const, r_max = sqrt((2A)^2 + B^2)
     # Therefore: B = sqrt(r_max^2 - (2A)^2) = sqrt(r_max^2 - R0_const^2)
-    # Use span_frac=0.20 (20% range variation) as baseline - repair will boost B if needed
-    span_frac = 0.20
     A_base = 0.5 * float(R0_const)  # so 2*A_base = R0_const
     r_max_in = (1.0 + span_frac) * float(R0_const)
     B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
