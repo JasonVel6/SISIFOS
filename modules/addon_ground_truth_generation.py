@@ -35,6 +35,12 @@ from bpy.types import Panel, PropertyGroup
 
 """ Defining fuctions to obtain ground truth data """
 
+_SCENE_RENDER_CACHE = {}
+
+
+def _scene_cache_key(scene) -> int:
+    return int(scene.as_pointer())
+
 
 # Trimesh depth pipeline helpers
 def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
@@ -74,28 +80,70 @@ def _transform_points(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
     return out[:, :3]
 
 
-def _mesh_from_scene(scene) -> trimesh.Trimesh:
+def _get_scene_cache(scene) -> dict:
+    return _SCENE_RENDER_CACHE.setdefault(_scene_cache_key(scene), {})
+
+
+def _clear_scene_cache(scene) -> None:
+    _SCENE_RENDER_CACHE.pop(_scene_cache_key(scene), None)
+
+
+_ENVIRONMENT_OBJECTS = {"Earth", "Clouds", "Atmo"}
+
+
+def _extract_target_mesh(scene):
     depsgraph = bpy.context.evaluated_depsgraph_get()
-    meshes = []
+    all_verts = []
+    all_faces = []
+    vert_offset = 0
+    ref_obj_name = None
+    ref_mat_inv = None
     for obj in scene.objects:
         if obj.type != "MESH" or obj.hide_render:
+            continue
+        if obj.name in _ENVIRONMENT_OBJECTS:
             continue
         obj_eval = obj.evaluated_get(depsgraph)
         mesh = obj_eval.to_mesh()
         mesh.calc_loop_triangles()
-        verts = np.array([obj_eval.matrix_world @ v.co for v in mesh.vertices], dtype=float)
-        faces = np.array([[lt.vertices[0], lt.vertices[1], lt.vertices[2]] for lt in mesh.loop_triangles], dtype=int)
-        if verts.size == 0 or faces.size == 0:
+        n_verts = len(mesh.vertices)
+        n_tris = len(mesh.loop_triangles)
+        if n_verts == 0 or n_tris == 0:
             obj_eval.to_mesh_clear()
             continue
-        meshes.append(trimesh.Trimesh(vertices=verts, faces=faces, process=False))
+        co = np.empty(n_verts * 3, dtype=float)
+        mesh.vertices.foreach_get("co", co)
+        tri = np.empty(n_tris * 3, dtype=int)
+        mesh.loop_triangles.foreach_get("vertices", tri)
+        local_verts = co.reshape(n_verts, 3)
+        if ref_obj_name is None:
+            ref_obj_name = obj.name
+            ref_mat_inv = np.array(obj_eval.matrix_world.inverted(), dtype=float)
+            verts = local_verts
+        else:
+            # This cache assumes all target geometry is rigid relative to the
+            # first target object. If another independently moving satellite is
+            # added to the scene, this combined BVH becomes invalid and the BVH
+            # strategy must be revised or rebuilt when relative poses change.
+            mat = np.array(obj_eval.matrix_world, dtype=float)
+            rel = ref_mat_inv @ mat
+            verts = (rel[:3, :3] @ local_verts.T).T + rel[:3, 3]
+        faces = tri.reshape(n_tris, 3)
+        all_verts.append(verts)
+        all_faces.append(faces + vert_offset)
+        vert_offset += verts.shape[0]
         obj_eval.to_mesh_clear()
-
-    if not meshes:
-        return trimesh.Trimesh()
-    if len(meshes) == 1:
-        return meshes[0]
-    return trimesh.util.concatenate(meshes)
+    if not all_verts:
+        return {
+            "ref_obj_name": None,
+            "vertices": np.zeros((0, 3), dtype=float),
+            "faces": np.zeros((0, 3), dtype=int),
+        }
+    return {
+        "ref_obj_name": ref_obj_name,
+        "vertices": np.concatenate(all_verts, axis=0),
+        "faces": np.concatenate(all_faces, axis=0),
+    }
 
 
 def _make_ray_intersector(mesh: trimesh.Trimesh):
@@ -104,45 +152,82 @@ def _make_ray_intersector(mesh: trimesh.Trimesh):
     return RayMeshIntersector(mesh)
 
 
-def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
-    from modules.addon_ground_truth_generation import get_camera_parameters_intrinsic, get_scene_resolution
+def _build_depth_cache(scene) -> dict:
+    target_mesh = _extract_target_mesh(scene)
+    mesh = trimesh.Trimesh(vertices=target_mesh["vertices"], faces=target_mesh["faces"], process=False)
+    return {
+        "ref_obj_name": target_mesh["ref_obj_name"],
+        "is_empty": mesh.is_empty,
+        "intersector": None if mesh.is_empty else _make_ray_intersector(mesh),
+    }
 
+
+def _ensure_depth_cache(scene) -> dict:
+    scene_cache = _get_scene_cache(scene)
+    depth_cache = scene_cache.get("depth_cache")
+    if depth_cache is None:
+        depth_cache = _build_depth_cache(scene)
+        scene_cache["depth_cache"] = depth_cache
+    return depth_cache
+
+
+def _ensure_camera_ray_cache(scene) -> dict:
+    scene_cache = _get_scene_cache(scene)
     res_x, res_y = get_scene_resolution(scene)
     f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
-    K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
+    signature = (res_x, res_y, float(f_x), float(f_y), float(c_x), float(c_y))
+    ray_cache = scene_cache.get("ray_cache")
+    if ray_cache is None or ray_cache["signature"] != signature:
+        K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
+        ray_cache = {
+            "signature": signature,
+            "res_x": res_x,
+            "res_y": res_y,
+            "dirs_C": _camera_rays_in_camera_frame(res_x, res_y, K),
+        }
+        scene_cache["ray_cache"] = ray_cache
+    return ray_cache
 
+
+def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
+    ray_cache = _ensure_camera_ray_cache(scene)
+    depth_cache = _ensure_depth_cache(scene)
+    res_x = ray_cache["res_x"]
+    res_y = ray_cache["res_y"]
     T_CW = _make_T_from_extrinsic(extrinsic_mat)
-    T_WC = _invert_T(T_CW)
+    dirs_C = ray_cache["dirs_C"]
 
-    dirs_C = _camera_rays_in_camera_frame(res_x, res_y, K)
-    origins_W = np.repeat(T_WC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
-    dirs_W = (T_WC[:3, :3] @ dirs_C.T).T
-
-    mesh = _mesh_from_scene(scene)
-    if mesh.is_empty:
+    if depth_cache["is_empty"] or depth_cache["ref_obj_name"] is None:
         return np.zeros((res_y, res_x), dtype=np.float32)
 
-    intersector = _make_ray_intersector(mesh)
-    locs_W, ray_idx, _tri_idx = intersector.intersects_location(origins_W, dirs_W, multiple_hits=False)
+    ref_obj = scene.objects.get(depth_cache["ref_obj_name"])
+    if ref_obj is None or ref_obj.hide_render:
+        return np.zeros((res_y, res_x), dtype=np.float32)
+
+    T_WO = np.array(ref_obj.matrix_world, dtype=float)
+    T_OW = _invert_T(T_WO)
+    T_WC = _invert_T(T_CW)
+    T_OC = T_OW @ T_WC
+
+    origins_O = np.repeat(T_OC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
+    dirs_O = (T_OC[:3, :3] @ dirs_C.T).T
+
+    locs_O, ray_idx, _tri_idx = depth_cache["intersector"].intersects_location(
+        origins_O,
+        dirs_O,
+        multiple_hits=False,
+    )
 
     depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
-    if locs_W.shape[0] == 0:
+    if locs_O.shape[0] == 0:
         return depth_z.reshape(res_y, res_x)
 
-    locs_C = _transform_points(T_CW, locs_W)
+    T_CO = T_CW @ T_WO
+    locs_C = _transform_points(T_CO, locs_O)
     z = locs_C[:, 2]
-    earth_obj = scene.objects.get("Earth")
-    if earth_obj is not None:
-        earth_pos = np.array(earth_obj.matrix_world.translation[:], dtype=float)
-        cam_pos = T_WC[:3, 3]
-        earth_radius = 0.5 * float(max(earth_obj.dimensions))
-        max_dist = max(0.0, float(np.linalg.norm(cam_pos - earth_pos)) - earth_radius)
-    else:
-        max_dist = float(scene.camera.data.clip_end)
+    max_dist = float(scene.camera.data.clip_end)
     valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
-    ray_idx = ray_idx[valid]
-    z = z[valid]
-    depth_z[ray_idx] = z.astype(np.float32)
+    depth_z[ray_idx[valid]] = z[valid].astype(np.float32)
     return depth_z.reshape(res_y, res_x)
 
 
@@ -338,8 +423,11 @@ def get_transf0to1(scene):
 def load_file_data_to_numpy(scene, tmp_file_path, data_map):
     if not os.path.isfile(tmp_file_path):
         return None
-    out_data = bpy.data.images.load(tmp_file_path)
-    pixels_numpy = np.array(out_data.pixels[:])
+    out_data = bpy.data.images.load(tmp_file_path, check_existing=False)
+    try:
+        pixels_numpy = np.array(out_data.pixels[:], dtype=np.float32)
+    finally:
+        bpy.data.images.remove(out_data)
     res_x, res_y = get_scene_resolution(scene)
     pixels_numpy.resize((res_y, res_x, 4))  # Numpy works with (y, x, channels)
     pixels_numpy = np.flip(pixels_numpy, 0)  # flip vertically (in Blender y in the image points up instead of down)
@@ -467,6 +555,10 @@ def load_handler_render_init(scene):
                 bpy.context.view_layer.use_pass_normal = True
         ## Segmentation masks and optical flow only work in Cycles
         if scene.render.engine == "CYCLES":
+            scene_cache = _get_scene_cache(scene)
+            has_non_zero_obj_idx = check_any_obj_with_non_zero_index()
+            scene_cache["has_non_zero_obj_idx"] = has_non_zero_obj_idx
+            scene_cache["seg_masks_indexes"] = get_struct_array_of_obj_indexes() if has_non_zero_obj_idx else None
             if vision_blender.bool_save_segmentation_masks:
                 if not bpy.context.view_layer.use_pass_object_index:
                     bpy.context.view_layer.use_pass_object_index = True
@@ -511,7 +603,7 @@ def load_handler_render_init(scene):
             """Segmentation masks"""
             if vision_blender.bool_save_segmentation_masks:
                 # We can only generate segmentation masks if that are any labeled objects (objects w/ index set)
-                non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
+                non_zero_obj_ind_found = scene_cache["has_non_zero_obj_idx"]
                 if non_zero_obj_ind_found:
                     slot_seg_mask = _new_slot(node_output, "####_Segmentation_Mask")
                     links.new(rl.outputs["IndexOB"], slot_seg_mask)
@@ -568,6 +660,11 @@ def load_handler_render_init(scene):
         with open(out_path, "w") as tmp_file:
             json.dump(dict_cam_info, tmp_file)
 
+        scene_cache = _get_scene_cache(scene)
+        if vision_blender.bool_save_depth:
+            _ensure_camera_ray_cache(scene)
+            _ensure_depth_cache(scene)
+
 
 @persistent
 def load_handler_after_rend_frame(
@@ -579,6 +676,7 @@ def load_handler_after_rend_frame(
     # print("Entered load_handler")
     if scene.vision_blender.bool_save_gt_data:
         vision_blender = scene.vision_blender
+        scene_cache = _get_scene_cache(scene)
         is_stereo_activated = scene.render.use_multiview
         if is_stereo_activated:
             suffix0 = scene.render.views[0].file_suffix  # By default '_L'
@@ -646,8 +744,8 @@ def load_handler_after_rend_frame(
                     disp1 = None
             if scene.render.engine == "CYCLES":
                 """Segmentation masks"""
-                if vision_blender.bool_save_segmentation_masks and check_any_obj_with_non_zero_index():
-                    seg_masks_indexes = get_struct_array_of_obj_indexes()
+                if vision_blender.bool_save_segmentation_masks and scene_cache.get("has_non_zero_obj_idx", False):
+                    seg_masks_indexes = scene_cache.get("seg_masks_indexes")
                     if is_stereo_activated:
                         tmp_file_path1 = os.path.join(
                             TMP_FILES_PATH,
@@ -708,6 +806,7 @@ def load_handler_after_rend_frame(
 
 @persistent
 def load_handler_after_rend_finish(scene):
+    _clear_scene_cache(scene)
     if scene.node_tree and check_if_node_exists(scene.node_tree, "output_vision_blender"):
         node_output = scene.node_tree.nodes["output_vision_blender"]
         TMP_FILES_PATH = node_output.base_path
@@ -879,13 +978,15 @@ def register():
         register_class(cls)
     # register the properties
     bpy.types.Scene.vision_blender = PointerProperty(type=MyAddonProperties)
-    # register the function being called when rendering starts
-    bpy.app.handlers.render_init.append(load_handler_render_init)
-    # register the function being called after rendering each frame
-    bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
-    # register the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    # register handlers idempotently to avoid duplicates across repeated setup calls
+    if load_handler_render_init not in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.append(load_handler_render_init)
+    if load_handler_after_rend_frame not in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
 
 
 def unregister():
@@ -895,12 +996,16 @@ def unregister():
     # unregister the properties
     del bpy.types.Scene.vision_blender
     # unregister the function being called when rendering starts
-    bpy.app.handlers.render_init.remove(load_handler_render_init)
+    if load_handler_render_init in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.remove(load_handler_render_init)
     # unregister the function being called after rendering each frame
-    bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
+    if load_handler_after_rend_frame in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
     # unregister the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.remove(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.remove(load_handler_after_rend_finish)
 
 
 if __name__ == "__main__":  # only for live edit.
