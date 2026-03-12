@@ -18,6 +18,19 @@ with open(spacecraft_default_filepath) as f:
     spacecraft_defaults = yaml.safe_load(f)
 
 
+def require_spacecraft_defaults(selected_model: str) -> dict[str, Any]:
+    if not selected_model:
+        raise ValueError("selected_model must be specified")
+
+    if selected_model not in spacecraft_defaults:
+        available_models = ", ".join(sorted(spacecraft_defaults))
+        raise ValueError(
+            f"Unknown selected_model '{selected_model}'. Available models: {available_models}"
+        )
+
+    return spacecraft_defaults[selected_model]
+
+
 class ObjectConfig(BaseModel):
     name: str
     blend_path: str | None = None
@@ -100,7 +113,7 @@ class InertiaConfig(BaseModel):
     """
 
     inertia_type: Literal["box", "cylinder", "custom"]
-    m: float = 4000.0  # kg
+    m: float | None = None
     # following spatial dimensions are in meters
     l: float | None = None
     w: float | None = None
@@ -114,7 +127,7 @@ class InertiaConfig(BaseModel):
     @property
     def J(self) -> np.ndarray:
         if self.inertia_type == "box":
-            if self.l is None or self.w is None or self.h is None:
+            if self.l is None or self.w is None or self.h is None or self.m is None:
                 raise ValueError("Box inertia requires l, w, and h to be defined")
             J_xx = (1.0 / 12.0) * self.m * (self.w**2 + self.h**2)  # rotation about x (longest)
             J_yy = (1.0 / 12.0) * self.m * (self.l**2 + self.h**2)  # rotation about y
@@ -123,7 +136,7 @@ class InertiaConfig(BaseModel):
         elif self.inertia_type == "cylinder":
             # From https://scienceworld.wolfram.com/physics/MomentofInertiaCylinder.html
             # Simplified cylinder inertia (assuming rotation about central axis)
-            if self.r is None or self.h is None:
+            if self.r is None or self.h is None or self.m is None:
                 raise ValueError("Cylinder inertia requires r and h to be defined")
             J_xx = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2  # rotation about x (longitudinal)
             J_yy = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2  # rotation about y
@@ -138,17 +151,15 @@ class InertiaConfig(BaseModel):
 
 
 def default_inertia_config(selected_model: str) -> InertiaConfig:
-    if not selected_model:
-        raise ValueError("model_name must be specified if inertia_config is not provided")
-
-    if selected_model not in spacecraft_defaults:
-        raise ValueError(f"Couldn't find default for model_name: {selected_model} in spacecraft_defaults.yaml")
-
-    model_defaults = spacecraft_defaults[selected_model]
-    # Default to integral inertia if not specified
+    model_defaults = require_spacecraft_defaults(selected_model)
     default_inertia = model_defaults["inertia"]
-    return InertiaConfig(**default_inertia)
+    return InertiaConfig.model_validate(default_inertia)
 
+
+def default_model_rotation(selected_model: str) -> tuple[float, float, float]:
+    model_defaults = require_spacecraft_defaults(selected_model)
+    model_rotation = model_defaults["model_rotation_euler"]
+    return (model_rotation["x"], model_rotation["y"], model_rotation["z"])
 
 class TrajectoryConfig(BaseModel):
     """Trajectory generation settings"""
@@ -208,14 +219,6 @@ class TrajectoryConfig(BaseModel):
 
     inertia_config: InertiaConfig | None = None
 
-    @model_validator(mode="after")
-    def populate_default_inertia_config(self):
-        if self.inertia_config is None:
-            if self.selected_model is None:
-                raise ValueError("selected_model must be specified if inertia_config is not provided")
-            self.inertia_config = default_inertia_config(self.selected_model)
-        return self
-
     @property
     def a_ref(self) -> float:
         return self.R_earth + self.h_orbit
@@ -248,15 +251,6 @@ class TrajectoryConfig(BaseModel):
             return "3"
         else:
             raise ValueError(f"Invalid path_mode: {self.path_mode}")
-
-
-def default_trajectory(data: dict):
-    # if not data.get("selected_model"):
-    #     raise ValueError("model_name must be specified if trajectory_config is not provided")
-    raise (ValueError(f"data dict {data}"))
-
-    return TrajectoryConfig(selected_model=data["selected_model"])
-
 
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
@@ -293,27 +287,33 @@ class SceneConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def populate_trajectory_selected_model(cls, data: Any):
+    def normalize_selected_model_inputs(cls, data: Any):
         if not isinstance(data, dict):
             return data
 
+        data = data.copy()
         selected_model = data.get("selected_model")
         trajectory = data.get("trajectory")
 
-        if selected_model and isinstance(trajectory, dict) and "selected_model" not in trajectory:
-            data = data.copy()
-            data["trajectory"] = trajectory.copy()
-            data["trajectory"]["selected_model"] = selected_model
+        if trajectory is None:
+            return data
+
+        if isinstance(trajectory, dict):
+            nested_selected_model = trajectory.get("selected_model")
+            if nested_selected_model is not None and nested_selected_model != selected_model:
+                raise ValueError("trajectory.selected_model must match selected_model when both are provided")
+
+            if "selected_model" in trajectory:
+                trajectory = trajectory.copy()
+                trajectory.pop("selected_model")
+                data["trajectory"] = trajectory
 
         return data
 
     @model_validator(mode="after")
-    def default_trajectory_config(self):
+    def resolve_selected_model_dependents(self):
         if not self.selected_model:
-            raise ValueError("model_name must be specified if trajectory_config is not provided")
-
-        if self.trajectory.selected_model and self.trajectory.selected_model != self.selected_model:
-            raise ValueError("trajectory.selected_model must match selected_model when both are provided")
+            raise ValueError("selected_model must be specified")
 
         self.trajectory.selected_model = self.selected_model
         if self.trajectory.inertia_config is None:
@@ -325,17 +325,9 @@ class SceneConfig(BaseModel):
     def default_model_rotation(self):
         if not self.selected_model:
             self.model_rotation_A_model_euler = (0.0, 0.0, 0.0)
-            return self  # No rotation
+            return self
 
-        if self.selected_model not in spacecraft_defaults:
-            self.model_rotation_A_model_euler = (0.0, 0.0, 0.0)
-            return self  # No rotation
-
-        model_defaults = spacecraft_defaults[self.selected_model]
-        model_rotation = model_defaults.get("model_rotation_euler")
-        model_rotation = (model_rotation["x"], model_rotation["y"], model_rotation["z"])
-        # Default to identity rotation if not specified
-        self.model_rotation_A_model_euler = model_rotation
+        self.model_rotation_A_model_euler = default_model_rotation(self.selected_model)
         return self
 
 
@@ -379,6 +371,16 @@ class SweepConfig(BaseModel):
                 raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
             setattr(target, last, value)
 
+    @staticmethod
+    def _sync_selected_model_dependents(config: SceneConfig, combo: dict[str, Any]) -> None:
+        if "selected_model" not in combo:
+            return
+
+        config.trajectory.selected_model = None
+
+        if "trajectory.inertia_config" not in combo:
+            config.trajectory.inertia_config = None
+
     def generate_sweep_configs(self) -> list[SceneConfig]:
         """Generate a list of SceneConfig instances for each combination of sweep parameters"""
         # Generate all combinations of sweep parameters
@@ -393,7 +395,8 @@ class SweepConfig(BaseModel):
             config_copy = copy.deepcopy(self.base_config)
             for param_path, value in combo.items():
                 self._set_nested_attr(config_copy, param_path, value)
-            SceneConfig.model_validate(config_copy)  # Validate the modified config
-            sweep_configs.append(config_copy)
+            self._sync_selected_model_dependents(config_copy, combo)
+            validated_config = SceneConfig.model_validate(config_copy.model_dump())
+            sweep_configs.append(validated_config)
 
         return sweep_configs
