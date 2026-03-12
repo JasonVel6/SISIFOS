@@ -37,6 +37,60 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
+        # Enable GPU rendering using the best available Cycles backend.
+        if self.config.render.engine == "CYCLES":
+            try:
+                # Reuse scene/mesh data across frames for faster sequence renders.
+                self.scene.render.use_persistent_data = True
+                prefs = bpy.context.preferences.addons["cycles"].preferences
+                # Prefer OptiX, fallback to CUDA.
+                selected_backend = None
+                gpu_found = False
+                for backend in ("OPTIX", "CUDA"):
+                    try:
+                        # Refresh twice; Blender 4.x sometimes needs a second
+                        # get_devices() after open_mainfile to populate devices.
+                        prefs.compute_device_type = backend
+                        prefs.get_devices()
+                        prefs.compute_device_type = backend
+                        prefs.get_devices()
+                    except Exception:
+                        continue
+
+                    for device in prefs.devices:
+                        vprint(
+                            f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}",
+                            self.verbose,
+                        )
+
+                    backend_devices = [d for d in prefs.devices if d.type == backend]
+                    if backend_devices:
+                        for device in prefs.devices:
+                            device.use = device.type == backend
+                        selected_backend = backend
+                        gpu_found = True
+                        break
+
+                if gpu_found:
+                    self.scene.cycles.device = "GPU"
+                    vprint(f"Cycles rendering on GPU ({selected_backend})", self.verbose)
+                else:
+                    vprint("No OPTIX/CUDA GPU found, using CPU rendering", self.verbose)
+
+                # Confirm final state
+                vprint(f"  [GPU confirm] scene.cycles.device = {self.scene.cycles.device}", self.verbose)
+                vprint(f"  [GPU confirm] compute_device_type = {prefs.compute_device_type}", self.verbose)
+                for device in prefs.devices:
+                    vprint(
+                        f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}",
+                        self.verbose,
+                    )
+            except Exception as e:
+                import traceback
+
+                vprint(f"GPU setup failed: {e}", self.verbose)
+                traceback.print_exc()
+
         append_blend_objects(self.config.objects["Earth"].blend_path)
         append_blend_objects(self.config.objects["Target"].blend_path)
 
