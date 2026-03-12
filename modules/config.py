@@ -52,6 +52,7 @@ class CameraConfig(BaseModel):
         """Pixel focal length derived from mm focal length, sensor width, and resolution."""
         return self.focal_length / self.sensor_width * self.resolution[0]
 
+
 class RenderConfig(BaseModel):
     """Render settings"""
 
@@ -59,6 +60,7 @@ class RenderConfig(BaseModel):
     samples: int = 32
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
+
 
 class SetupConfig(BaseModel):
     """Environment Setup"""
@@ -85,6 +87,7 @@ class SamplingTrajectoryConfig(BaseModel):
     R_LEO: float = 8000000.0
     sun_az: float = 0.0
     sun_el: float = 0.0
+
 
 class ConstantRotationConfig(BaseModel):
     """Configuration for the constant-rotation-based trajectory generator"""
