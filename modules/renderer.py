@@ -58,9 +58,11 @@ class BlenderRenderer:
                         continue
 
                     for device in prefs.devices:
-                        vprint(
-                            f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}",
-                            self.verbose,
+                        self._log_info(
+                            "  [GPU probe] device: %s, type: %s, use: %s",
+                            device.name,
+                            device.type,
+                            device.use,
                         )
 
                     backend_devices = [d for d in prefs.devices if d.type == backend]
@@ -73,23 +75,22 @@ class BlenderRenderer:
 
                 if gpu_found:
                     self.scene.cycles.device = "GPU"
-                    vprint(f"Cycles rendering on GPU ({selected_backend})", self.verbose)
+                    self._log_info("Cycles rendering on GPU (%s)", selected_backend)
                 else:
-                    vprint("No OPTIX/CUDA GPU found, using CPU rendering", self.verbose)
+                    self._log_info("No OPTIX/CUDA GPU found, using CPU rendering")
 
                 # Confirm final state
-                vprint(f"  [GPU confirm] scene.cycles.device = {self.scene.cycles.device}", self.verbose)
-                vprint(f"  [GPU confirm] compute_device_type = {prefs.compute_device_type}", self.verbose)
+                self._log_info("  [GPU confirm] scene.cycles.device = %s", self.scene.cycles.device)
+                self._log_info("  [GPU confirm] compute_device_type = %s", prefs.compute_device_type)
                 for device in prefs.devices:
-                    vprint(
-                        f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}",
-                        self.verbose,
+                    self._log_info(
+                        "  [GPU confirm] %s: type=%s, use=%s",
+                        device.name,
+                        device.type,
+                        device.use,
                     )
             except Exception as e:
-                import traceback
-
-                vprint(f"GPU setup failed: {e}", self.verbose)
-                traceback.print_exc()
+                self.logger.exception("GPU setup failed: %s", e)
 
         append_blend_objects(self.config.objects["Earth"].blend_path)
         append_blend_objects(self.config.objects["Target"].blend_path)
