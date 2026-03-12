@@ -7,7 +7,16 @@ from pathlib import Path
 import bpy
 from mathutils import Quaternion
 
-from .blender_utils import append_blend_objects, clear_anim, keyframe_pose, scale_object_by_factor, set_sun_direction
+from .blender_utils import (
+    append_blend_objects,
+    append_blend_objects_filtered,
+    clear_anim,
+    keyframe_pose,
+    list_blend_object_names,
+    remove_objects_from_scene,
+    scale_object_by_factor,
+    set_sun_direction,
+)
 from .config import SceneConfig
 from .log_utils import get_logger
 
@@ -110,7 +119,6 @@ class BlenderRenderer:
                 self.logger.exception("GPU setup failed: %s", e)
 
         append_blend_objects(self.config.objects["Earth"].blend_path)
-        append_blend_objects(self.config.objects["Target"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -186,13 +194,22 @@ class BlenderRenderer:
         else:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
         vb = self.scene.vision_blender
-        vb.bool_save_gt_data = True
-        vb.bool_save_depth = True
-        vb.bool_save_normals = True
+        vb.bool_save_depth = self.config.save_depth
+        vb.bool_save_normals = self.config.save_normals
         vb.bool_save_cam_param = True
-        vb.bool_save_opt_flow = True  # needs Cycles' Vector pass
-        vb.bool_save_segmentation_masks = True  # needs object pass_index > 0
-        vb.bool_save_obj_poses = True
+        vb.bool_save_opt_flow = self.config.save_optical_flow
+        vb.bool_save_segmentation_masks = self.config.save_segmentation
+        vb.bool_save_obj_poses = self.config.save_obj_poses
+        vb.bool_save_gt_data = any(
+            [
+                vb.bool_save_depth,
+                vb.bool_save_normals,
+                vb.bool_save_cam_param,
+                vb.bool_save_opt_flow,
+                vb.bool_save_segmentation_masks,
+                vb.bool_save_obj_poses,
+            ]
+        )
 
         # Cycles' IndexOB pass reads pass_index per object, not via parent inheritance.
         self._set_pass_index_recursive("Target", 1)
@@ -218,32 +235,78 @@ class BlenderRenderer:
         scale_object_by_factor(atmo, self.config.objects["Atmo"].scale_factor)
         return cam, sun
 
-    def select_model_to_render(self) -> bpy.types.Object:
-        """Get RF_* model to render."""
+    def _get_target_blend_object_names(self) -> list[str]:
+        """Cache object-name scan of target blend to avoid repeated library loads."""
+        if self._target_blend_object_names is None:
+            blend_path = self.config.objects["Target"].blend_path
+            self._target_blend_object_names = list_blend_object_names(blend_path)
+        return self._target_blend_object_names
 
-        models = [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
-        selected_model = None
-        for model in models:
-            if model.name == self.config.selected_model:
-                selected_model = model
+    def _remove_existing_spacecraft(self) -> None:
+        """Remove RF_* roots (and descendants) already present in the current scene."""
+        roots = [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
+        if not roots:
+            return
+        to_remove = set()
+        for root in roots:
+            to_remove.add(root)
+            to_remove.update(root.children_recursive)
+        remove_objects_from_scene(list(to_remove))
 
-        if not selected_model:
-            raise ValueError(f"Selected model '{self.config.selected_model}' not found among RF_* objects.")
+    def get_models_in_blend(self) -> list[str]:
+        """Inspect the blend file and return RF_* root names to render (without loading)."""
+        all_names = self._get_target_blend_object_names()
+        rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
+        return rf_names
 
-        return selected_model
+    def load_spacecraft(self, model_name: str) -> bpy.types.Object:
+        """Load a single spacecraft (root + descendants) into the scene and return the root."""
+        blend_path = self.config.objects["Target"].blend_path
+        all_names = self._get_target_blend_object_names()
+        rf_names = {n for n in all_names if n.startswith("RF_")}
+        if model_name not in rf_names:
+            raise ValueError(
+                f"Selected model '{model_name}' is not a valid RF_* root in '{blend_path}'. "
+                f"Available: {sorted(rf_names)}"
+            )
+
+        # Ensure scene starts with zero spacecraft roots.
+        self._remove_existing_spacecraft()
+        names_to_load = [model_name] + [n for n in all_names if not n.startswith("RF_")]
+        loaded_objs = append_blend_objects_filtered(blend_path, names_to_load)
+
+        root = bpy.data.objects.get(model_name)
+        if root is None:
+            raise RuntimeError(f"Spacecraft root '{model_name}' not found after append")
+
+        # Keep only root and its actual descendants; remove orphans
+        keep = set([root] + list(root.children_recursive))
+        orphans = [o for o in loaded_objs if o not in keep]
+        if orphans:
+            remove_objects_from_scene(orphans)
+
+        # Hard guard: keep exactly one RF_* root in scene.
+        rf_roots_in_scene = self.get_all_models()
+        extras = [o for o in rf_roots_in_scene if o.name != model_name]
+        if extras:
+            to_remove = set()
+            for extra in extras:
+                to_remove.add(extra)
+                to_remove.update(extra.children_recursive)
+            remove_objects_from_scene(list(to_remove))
+            rf_roots_in_scene = self.get_all_models()
+        if len(rf_roots_in_scene) != 1 or rf_roots_in_scene[0].name != model_name:
+            raise RuntimeError(
+                f"Expected exactly one loaded spacecraft root '{model_name}', found: "
+                f"{[o.name for o in rf_roots_in_scene]}"
+            )
+
+        self._log_info("Loaded spacecraft '%s' (%d objects)", model_name, 1 + len(list(root.children_recursive)))
+        return root
 
     def get_all_models(self) -> list[bpy.types.Object]:
         """Get all RF_* models."""
         return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
-
-    def hide_all_except(self, target_root, all_roots):
-        """Hide all models except target."""
-        for r in all_roots:
-            hide = r != target_root
-            r.hide_render = hide
-            for c in r.children_recursive:
-                c.hide_render = hide
-        bpy.context.view_layer.update()
 
     def rotate_z(self, obj, deg: float):
         """Rotate object around local Z axis."""

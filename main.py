@@ -112,6 +112,14 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("%s", config.setup)
     cam, sun = renderer.setup_total()
 
+    all_models = renderer.get_models_in_blend()
+    logger.info(f"Available models in the blend: {all_models}")
+
+    model = renderer.load_spacecraft(model_name=config.selected_model)
+
+    all_models = renderer.get_all_models()
+    logger.info(f"Models loaded in scene: {[m.name for m in all_models]}")
+
     trajectory_file = renders_base_dir / "camera_traj.csv"
 
     trajectory = read_camera_trajectory(str(trajectory_file))
@@ -120,19 +128,13 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("[Session] Renders output: %s/", renders_base_dir)
     frame_start_time = time.time()
 
-    model = renderer.select_model_to_render()
-    logger.info(f"Rendering model: {model.name}")
-    all_models = renderer.get_all_models()
-
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
-    res_x, res_y = config.camera.resolution
 
     # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
     N_digits = max(4, int(math.log10(len(frames))) + 1)
 
     gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-    renderer.hide_all_except(model, all_models)
     image_out_dir = renders_base_dir / "images_raw"
     masked_out_dir = renders_base_dir / "images"
     if str(config.setup.stars_mode).casefold() == "off":
@@ -159,9 +161,12 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     avg_frame_time = 0.0
 
+    avg_frame_time = 0.0
+
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
         image_filenames = []
         for i in frame_ids:
+            frame_start_time = time.time()
             fr = frames[i]
             fake_fr2 = None
             if str(config.setup.enable_blur).casefold() == "on":
