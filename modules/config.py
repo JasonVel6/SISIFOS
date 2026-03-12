@@ -219,6 +219,10 @@ class TrajectoryConfig(BaseModel):
     # A*sin(2*pi*t/T + phase_i). Ignored when pointing_offset_G is zero or tumbling.
     pointing_scan_amplitude: float = 0.0  # [m]
     pointing_scan_period: float = 60.0  # [s]
+    # Camera target-follow gains for passive inspection.
+    # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
+    camera_pitchyaw_follow_gain: float = 0.0
+    camera_roll_follow_gain: float = 0.0
 
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
