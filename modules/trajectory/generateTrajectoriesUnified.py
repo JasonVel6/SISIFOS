@@ -100,6 +100,8 @@ def generate_trajectories_dynamical(
     config_prefix: str = "Config_1",
     model_name: str = "",
     camera_config: CameraConfig = None,
+    save_scene_plots: bool = True,
+    scene_plot_max_frames: int | None = 100,
 ) -> list[str]:
     if camera_config is None:
         camera_config = CameraConfig()
@@ -774,17 +776,19 @@ def generate_trajectories_dynamical(
                 ecc=ecc[mc_trial],
             )
 
-            generate_scene_plots(
-                output_dir=agent_folder,
-                p_C_I=state_C_I_mc_ag[:, 0:3],
-                p_G_I=r_GO_I_mc,
-                sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
-                sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
-                timestamps=timestamps,
-                r_CG_arr=r_CG_G_mc_ag,
-                q_IG_arr=q_IG_mc,
-                q_IC_arr=q_IC_mc_ag,
-            )
+            if save_scene_plots:
+                generate_scene_plots(
+                    output_dir=agent_folder,
+                    p_C_I=state_C_I_mc_ag[:, 0:3],
+                    p_G_I=r_GO_I_mc,
+                    sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
+                    sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                    timestamps=timestamps,
+                    r_CG_arr=r_CG_G_mc_ag,
+                    q_IG_arr=q_IG_mc,
+                    q_IC_arr=q_IC_mc_ag,
+                    max_frames=scene_plot_max_frames,
+                )
 
     logger.info("[DONE] Output written to: %s", base_output_file)
     logger.info("       Master seed: %s", config.seed)
