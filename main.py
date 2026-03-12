@@ -33,7 +33,11 @@ from modules.io_utils import (
 from modules.log_utils import get_logger, setup_logger
 from modules.renderer import BlenderRenderer
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
-from modules.trajectory.sampling_trajectory import make_fake_frame_from_frame0, write_camera_trajectory_fib
+from modules.trajectory.sampling_trajectory import (
+    make_fake_frame_from_frame0,
+    write_camera_trajectory_const_rotation,
+    write_camera_trajectory_fib,
+)
 from modules.trajectory.trajectory_io import (
     get_scaled_trajectory_in_ECI,
     make_frames_from_trajectory,
@@ -72,6 +76,20 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             sun_az=config.trajectory_sampling.sun_az,
             sun_el=config.trajectory_sampling.sun_el,
         )
+
+    elif config.trajectory_type == "const_rotate":
+        agent_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
+        agent_folders = write_camera_trajectory_const_rotation(
+            str(agent_folder),
+            R_LEO=config.trajectory_const_rotate.R_LEO,
+            R_RPO=config.trajectory_const_rotate.R_RPO,
+            tstep=config.trajectory_const_rotate.tstep,
+            tend=config.trajectory_const_rotate.tend,
+            angular_velocity=config.trajectory_const_rotate.angular_velocity,
+            sun_az=config.trajectory_const_rotate.sun_az,
+            sun_el=config.trajectory_const_rotate.sun_el,
+        )
+
     elif config.trajectory_type == "filepath":
         if not config.trajectory_filepath:
             raise ValueError(
@@ -152,9 +170,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         "gt_flow": ensure_dir(gt_root / "Flow"),
         "gt_seg": ensure_dir(gt_root / "Seg"),
     }
-
-    if config.model_rotation_z_deg != 0:
-        renderer.rotate_z(model, config.model_rotation_z_deg)
 
     total = len(frame_ids)
     logger.info("Enabling blur is: %s", config.setup.enable_blur)
