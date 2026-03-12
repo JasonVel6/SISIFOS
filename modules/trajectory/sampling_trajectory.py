@@ -298,7 +298,7 @@ def write_camera_trajectory_const_rotation(
         sun_el_I=sun_el_arr,
     )
 
-    plot_out_path = Path(out_dir) / "trajectory_plot.png"
+    plot_out_path = Path(out_dir) / "trajectory_plot"
     generate_scene_plots(
         output_dir=str(plot_out_path),
         p_G_I=p_G_I,
