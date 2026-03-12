@@ -198,6 +198,7 @@ class SceneConfig(BaseModel):
     save_segmentation: bool = True
     save_obj_poses: bool = True
     save_scene_plots: bool = True
+    scene_plot_max_frames: int | None = Field(default=100, ge=1)
 
     # Rendering control
     frame_ids: list[int] | None = None  # If None, use all frames

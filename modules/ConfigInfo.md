@@ -104,6 +104,10 @@ bool option to save object poses
 #### save_scene_plots
 bool option to save trajectory scene graphs
 
+#### scene_plot_max_frames
+int or null controlling the maximum number of scene-plot frames generated when `save_scene_plots` is true.
+Set to `null` to remove the cap.
+
 #### frame_ids
 list of ints for what to render
 

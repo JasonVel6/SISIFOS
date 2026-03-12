@@ -101,6 +101,7 @@ def generate_trajectories_dynamical(
     model_name: str = "",
     camera_config: CameraConfig = None,
     save_scene_plots: bool = True,
+    scene_plot_max_frames: int | None = 100,
 ) -> list[str]:
     if camera_config is None:
         camera_config = CameraConfig()
@@ -786,6 +787,7 @@ def generate_trajectories_dynamical(
                     r_CG_arr=r_CG_G_mc_ag,
                     q_IG_arr=q_IG_mc,
                     q_IC_arr=q_IC_mc_ag,
+                    max_frames=scene_plot_max_frames,
                 )
 
     logger.info("[DONE] Output written to: %s", base_output_file)

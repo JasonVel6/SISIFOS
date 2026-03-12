@@ -735,7 +735,7 @@ def generate_scene_plots(
     q_IG_arr: np.ndarray,
     q_IC_arr: np.ndarray,
     every_n_frames=1,
-    max_frames=None,
+    max_frames=100,
 ):
     """
     Generate two plot sets for multiple frames in the INERTIAL FRAME:
@@ -772,7 +772,7 @@ def generate_scene_plots(
     every_n_frames : int
         Generate plot every N frames (1 = every frame)
     max_frames : int or None
-        Maximum number of frames to process
+        Maximum number of frames to process (uniformly subsampled across the trajectory)
     """
     n_frames = min(
         len(p_C_I),
@@ -785,12 +785,25 @@ def generate_scene_plots(
         len(q_IC_arr),
     )
 
-    if max_frames is not None:
-        n_frames = min(n_frames, max_frames)
     if n_frames <= 0:
         raise ValueError("No frames available to plot scene figures.")
     if every_n_frames <= 0:
         raise ValueError("every_n_frames must be >= 1.")
+
+    frame_step = max(1, int(every_n_frames))
+    if max_frames is not None and n_frames > max_frames:
+        frame_step = max(frame_step, n_frames // int(max_frames))
+    frames_to_process = list(range(0, n_frames, frame_step))
+
+    if max_frames is not None and n_frames > max_frames:
+        logger.info(
+            "Processing %d frames (every %d frames) out of %d total.",
+            len(frames_to_process),
+            frame_step,
+            n_frames,
+        )
+    else:
+        logger.info("Processing all %d frames.", n_frames)
 
     # Compute STATIC sun direction in inertial frame from frame 0
     az0_rad = np.radians(sun_az_I[0])
@@ -818,7 +831,7 @@ def generate_scene_plots(
     rendered_scene_frames = []
     rendered_pose_frames = []
     rendered_indices = []
-    for i in range(0, n_frames, every_n_frames):
+    for processed_idx, i in enumerate(frames_to_process, start=1):
         # Get rotation from Inertial to Body frame at this timestep
         qw, qx, qy, qz = q_IG_arr[i]
         rot_IG = Rotation.from_quat([qx, qy, qz, qw])
@@ -862,8 +875,14 @@ def generate_scene_plots(
         rendered_pose_frames.append(pose_rgb)
         rendered_indices.append(i)
 
-        if i % 50 == 0:
-            logger.info("  Generated scene plot for frame %d/%d", i, n_frames)
+        if processed_idx == 1 or processed_idx % 50 == 0 or processed_idx == len(frames_to_process):
+            logger.info(
+                "  Generated scene plot %d/%d (frame %d of %d)",
+                processed_idx,
+                len(frames_to_process),
+                i,
+                n_frames,
+            )
 
     scene_video = _save_animation_from_frames(
         rendered_frames=rendered_scene_frames,
