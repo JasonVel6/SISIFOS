@@ -346,13 +346,13 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
             avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
             time_remaining_estimate = avg_frame_time * (total - i - 1)
             time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
-            logger.info("Generated frame %d in %.2f seconds. Output: %s", i, current_frame_time, image_filename)
-            logger.info("Average frame time: %.2f seconds.", avg_frame_time)
-            logger.info("Estimated time remaining: %s", time_delta_str)
-            logger.info(
-                "Estimated time of completion: %s",
-                datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate)),
-            )
+
+            if i == 0 or i % 5 == 0 or i == total - 1:
+                logger.info("============================================================================================")
+                logger.info(f"Finished rendering frame {i}/{total - 1} in {current_frame_time:.2f} seconds.")
+                logger.info(f"Average frame time so far: {avg_frame_time:.2f} seconds.")
+                logger.info(f"Estimated time remaining: {time_delta_str}")
+                logger.info(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
 
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]

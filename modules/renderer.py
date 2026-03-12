@@ -372,7 +372,6 @@ class BlenderRenderer:
         # Target (model) pose in inertial frame
         model.location = p_G_I
         model.rotation_quaternion = Quaternion(q_I_G) @ self.quat_A_model
-        self.logger.info(model.rotation_quaternion)
 
         # Camera pose in inertial frame
         cam.location = p_C_I
