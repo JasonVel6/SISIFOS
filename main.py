@@ -10,18 +10,12 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
-import sys
-import os
-import math
-from pathlib import Path
-import time
 import datetime
-from tqdm import tqdm
-import argparse
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -135,7 +129,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     vprint(f"Rendering model: {model.name}", True)
     all_models = renderer.get_all_models()
 
-    
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
     res_x, res_y = config.camera.resolution
 
@@ -167,7 +160,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     total = len(frame_ids)
     print("Enabling blur is: ", config.setup.enable_blur)
-    
+
     avg_frame_time = 0.0
 
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
@@ -239,7 +232,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
             print(f"  - Post-process time: {post_process_time_s:.2f} seconds.")
             print(f"Average frame time: {avg_frame_time:.2f} seconds.")
             print(f"Estimated time remaining: {time_delta_str}")
-            print(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
+            print(
+                f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}"
+            )
 
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]

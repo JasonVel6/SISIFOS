@@ -7,14 +7,19 @@ from pathlib import Path
 import bpy
 from mathutils import Quaternion
 
-from .blender_utils import append_blend_objects, clear_anim, keyframe_pose, scale_object_by_factor, set_sun_direction
+from .blender_utils import (
+    append_blend_objects,
+    append_blend_objects_filtered,
+    clear_anim,
+    keyframe_pose,
+    list_blend_object_names,
+    remove_objects_from_scene,
+    scale_object_by_factor,
+    set_sun_direction,
+)
 from .config import SceneConfig
 from .io_utils import vprint
 
-from .blender_utils import (
-    append_blend_objects, append_blend_objects_filtered, list_blend_object_names,
-    remove_objects_from_scene, scale_object_by_factor, set_sun_direction, 
-)
 
 class BlenderRenderer:
     """Main renderer class for image generation."""
@@ -42,21 +47,21 @@ class BlenderRenderer:
                 # Set device type and refresh twice — Blender 4.x sometimes
                 # needs a second get_devices() after open_mainfile to populate
                 # the device list correctly.
-                prefs.compute_device_type = 'CUDA'
+                prefs.compute_device_type = "CUDA"
                 prefs.get_devices()
-                prefs.compute_device_type = 'CUDA'
+                prefs.compute_device_type = "CUDA"
                 prefs.get_devices()
                 gpu_found = False
                 for device in prefs.devices:
                     vprint(f"  [GPU probe] device: {device.name}, type: {device.type}, use: {device.use}", self.verbose)
-                    if device.type == 'CUDA':
+                    if device.type == "CUDA":
                         device.use = True
                         gpu_found = True
                     else:
                         device.use = False  # disable CPU compute when GPU available
                 if gpu_found:
-                    self.scene.cycles.device = 'GPU'
-                    vprint(f"Cycles rendering on GPU (CUDA)", self.verbose)
+                    self.scene.cycles.device = "GPU"
+                    vprint("Cycles rendering on GPU (CUDA)", self.verbose)
                 else:
                     vprint("No CUDA GPU found, using CPU rendering", self.verbose)
                 # Confirm final state
@@ -66,10 +71,11 @@ class BlenderRenderer:
                     vprint(f"  [GPU confirm] {device.name}: type={device.type}, use={device.use}", self.verbose)
             except Exception as e:
                 import traceback
+
                 vprint(f"GPU setup failed: {e}", self.verbose)
                 traceback.print_exc()
 
-        new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
+        append_blend_objects(self.config.objects["Earth"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -171,8 +177,8 @@ class BlenderRenderer:
         scale_object_by_factor(clouds, self.config.objects["Clouds"].scale_factor)
         scale_object_by_factor(atmo, self.config.objects["Atmo"].scale_factor)
         return cam, sun
-    
-    def get_models_in_blend(self) -> List[str]:
+
+    def get_models_in_blend(self) -> list[str]:
         """Inspect the blend file and return RF_* root names to render (without loading)."""
         blend_path = self.config.objects["Target"].blend_path
         all_names = list_blend_object_names(blend_path)
@@ -200,11 +206,10 @@ class BlenderRenderer:
         vprint(f"Loaded spacecraft '{model_name}' ({1 + len(list(root.children_recursive))} objects)", self.verbose)
         return root
 
-    def get_all_models(self) -> List[bpy.types.Object]:
+    def get_all_models(self) -> list[bpy.types.Object]:
         """Get all RF_* models."""
-        return [o for o in bpy.data.objects
-                 if o.parent is None and o.name.startswith("RF_")]
-    
+        return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
+
     def rotate_z(self, obj, deg: float):
         """Rotate object around local Z axis."""
         obj.rotation_mode = "QUATERNION"

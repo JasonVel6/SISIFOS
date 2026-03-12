@@ -199,7 +199,7 @@ class SceneConfig(BaseModel):
     save_obj_poses: bool = True
 
     save_scene_plots: bool = True
-    
+
     # Rendering control
     frame_ids: list[int] | None = None  # If None, use all frames
     selected_model: str = "RF_Hubble"

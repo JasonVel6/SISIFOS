@@ -678,7 +678,7 @@ def generate_trajectories_dynamical(
                 rotMode_Gframe=config.rotMode_Gframe,
                 show=False,
                 save=True,
-                mc_idx=mc_trial
+                mc_idx=mc_trial,
             )
 
         for agent_idx in range(config.num_agents):
@@ -765,7 +765,7 @@ def generate_trajectories_dynamical(
                 inc=inc[mc_trial],
                 ecc=ecc[mc_trial],
             )
-            
+
             if save_scene_plots:
                 generate_scene_plots(
                     output_dir=agent_folder,
@@ -776,7 +776,8 @@ def generate_trajectories_dynamical(
                     timestamps=timestamps,
                     r_CG_arr=r_CG_G_mc_ag,
                     q_IG_arr=q_IG_mc,
-                    q_IC_arr=q_IC_mc_ag)
+                    q_IC_arr=q_IC_mc_ag,
+                )
 
     print(f"\n[DONE] Output written to: {base_output_file}")
     print(f"       Master seed: {config.seed}")

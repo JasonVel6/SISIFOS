@@ -89,11 +89,13 @@ def append_blend_objects(filepath):
 
     return new_objs
 
+
 def list_blend_object_names(filepath):
     """Return the list of object names inside a .blend file without loading them."""
     with bpy.data.libraries.load(filepath, link=False) as (data_from, _data_to):
         names = list(data_from.objects)
     return names
+
 
 def append_blend_objects_filtered(filepath, names):
     """Append only the objects whose names are in *names* from a .blend file."""
@@ -108,6 +110,7 @@ def append_blend_objects_filtered(filepath, names):
             new_objs.append(obj)
     return new_objs
 
+
 def remove_objects_from_scene(objects):
     """Unlink and remove a list of Blender objects (and their data) from the scene."""
     collection = bpy.context.collection
@@ -117,6 +120,7 @@ def remove_objects_from_scene(objects):
         bpy.data.objects.remove(obj, do_unlink=True)
     # Purge orphan data-blocks to free memory
     bpy.ops.outliner.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
 
 def get_world_bounds(obj) -> tuple[Vector, Vector]:
     """Return min and max corners of object and children in world coordinates."""

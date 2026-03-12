@@ -720,16 +720,19 @@ def _save_animation_from_frames(
     plt.close(anim_fig)
     return out_path
 
-def generate_scene_plots(output_dir: str,
-                            p_C_I: np.ndarray,
-                            p_G_I: np.ndarray,
-                            sun_az_I: np.ndarray,
-                            sun_el_I: np.ndarray,
-                            timestamps: np.ndarray,
-                            r_CG_arr: np.ndarray,
-                            q_IG_arr: np.ndarray,
-                            q_IC_arr: np.ndarray,
-                            max_frames=500):
+
+def generate_scene_plots(
+    output_dir: str,
+    p_C_I: np.ndarray,
+    p_G_I: np.ndarray,
+    sun_az_I: np.ndarray,
+    sun_el_I: np.ndarray,
+    timestamps: np.ndarray,
+    r_CG_arr: np.ndarray,
+    q_IG_arr: np.ndarray,
+    q_IC_arr: np.ndarray,
+    max_frames=500,
+):
     """
     Generate two plot sets for multiple frames in the INERTIAL FRAME:
     1) Existing world/lighting scene plots.
@@ -778,7 +781,7 @@ def generate_scene_plots(output_dir: str,
 
     if n_frames <= 0:
         raise ValueError("No frames available to plot scene figures.")
-    
+
     if max_frames is not None and n_frames > max_frames:
         frame_step = max(1, n_frames // max_frames)
         frames_to_process = list(range(0, n_frames, frame_step))
