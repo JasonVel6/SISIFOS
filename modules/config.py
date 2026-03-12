@@ -163,7 +163,6 @@ def default_model_rotation(selected_model: str) -> tuple[float, float, float]:
 class TrajectoryConfig(BaseModel):
     """Trajectory generation settings"""
 
-    selected_model: str | None = None
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
     seed: int | None = None  # For reproducibility
@@ -217,7 +216,7 @@ class TrajectoryConfig(BaseModel):
     tstep: float = 0.5
     MIN_F2F_PX_MED: float = 3.0
 
-    inertia_config: InertiaConfig | None = None
+    inertia_config: InertiaConfig = Field(default_factory=InertiaConfig.model_construct)
 
     @property
     def a_ref(self) -> float:
@@ -281,33 +280,26 @@ class SceneConfig(BaseModel):
     )
     trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
     trajectory_const_rotate: ConstantRotationConfig = Field(default_factory=ConstantRotationConfig)
-    trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig)
+    trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig.model_construct)
     trajectory_filepath: str | None = ""
 
     model_rotation_A_model_euler: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_selected_model_inputs(cls, data: Any):
+    def reject_trajectory_selected_model(cls, data: Any):
         if not isinstance(data, dict):
             return data
 
         data = data.copy()
-        selected_model = data.get("selected_model")
         trajectory = data.get("trajectory")
 
         if trajectory is None:
             return data
 
         if isinstance(trajectory, dict):
-            nested_selected_model = trajectory.get("selected_model")
-            if nested_selected_model is not None and nested_selected_model != selected_model:
-                raise ValueError("trajectory.selected_model must match selected_model when both are provided")
-
             if "selected_model" in trajectory:
-                trajectory = trajectory.copy()
-                trajectory.pop("selected_model")
-                data["trajectory"] = trajectory
+                raise ValueError("trajectory.selected_model is not supported; use top-level selected_model")
 
         return data
 
@@ -316,8 +308,7 @@ class SceneConfig(BaseModel):
         if not self.selected_model:
             raise ValueError("selected_model must be specified")
 
-        self.trajectory.selected_model = self.selected_model
-        if self.trajectory.inertia_config is None:
+        if getattr(self.trajectory.inertia_config, "inertia_type", None) is None:
             self.trajectory.inertia_config = default_inertia_config(self.selected_model)
 
         return self
@@ -377,10 +368,8 @@ class SweepConfig(BaseModel):
         if "selected_model" not in combo:
             return
 
-        config.trajectory.selected_model = None
-
         if "trajectory.inertia_config" not in combo:
-            config.trajectory.inertia_config = None
+            config.trajectory.inertia_config = InertiaConfig.model_construct()
 
     def generate_sweep_configs(self) -> list[SceneConfig]:
         """Generate a list of SceneConfig instances for each combination of sweep parameters"""
@@ -397,7 +386,7 @@ class SweepConfig(BaseModel):
             for param_path, value in combo.items():
                 self._set_nested_attr(config_copy, param_path, value)
             self._sync_selected_model_dependents(config_copy, combo)
-            validated_config = SceneConfig.model_validate(config_copy.model_dump())
+            validated_config = SceneConfig.model_validate(config_copy.model_dump(exclude_unset=True))
             sweep_configs.append(validated_config)
 
         return sweep_configs

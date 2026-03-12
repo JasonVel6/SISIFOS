@@ -56,8 +56,8 @@ def test_scene_config_preserves_explicit_inertia_override():
     assert config.model_rotation_A_model_euler == (-90.0, 0.0, 0.0)
 
 
-def test_scene_config_rejects_conflicting_nested_selected_model():
-    with pytest.raises(ValueError, match="trajectory.selected_model must match selected_model"):
+def test_scene_config_rejects_nested_trajectory_selected_model():
+    with pytest.raises(ValueError, match="trajectory.selected_model is not supported"):
         SceneConfig.model_validate(
             {
                 "selected_model": "RF_Integral",

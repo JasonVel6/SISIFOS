@@ -51,7 +51,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, TrajectoryConfig
+from modules.config import CameraConfig, TrajectoryConfig, default_inertia_config
 from modules.trajectory.motion_cases import (
     init_hill,
     init_inertial,
@@ -832,7 +832,11 @@ def main():
         raise ValueError("Mode must be 1, 2, or 3.")
 
     config = TrajectoryConfig(
-        selected_model="RF_Hubble", path_mode=path_mode, num_agents=num_agents, num_mc=num_mc, seed=seed
+        inertia_config=default_inertia_config("RF_Hubble"),
+        path_mode=path_mode,
+        num_agents=num_agents,
+        num_mc=num_mc,
+        seed=seed,
     )
 
     logger.info("[INFO] Master seed: %s", seed)
