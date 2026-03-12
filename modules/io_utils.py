@@ -9,6 +9,11 @@ import numpy as np
 from .log_utils import get_logger
 from .vis_utils import _depth_vis_and_mask_from_rrpo, _flow_to_rgb, _id_to_color, _norm_to_rgb
 
+try:
+    import bpy
+except ImportError:  # pragma: no cover - exercised outside Blender.
+    bpy = None
+
 logger = get_logger()
 
 
@@ -137,6 +142,9 @@ def images_to_video_blender_sequence(
         output_path: Target .mp4 filepath.
         fps: Output frames per second.
     """
+    if bpy is None:
+        raise RuntimeError("Blender Python API 'bpy' is required for video assembly.")
+
     if not image_filenames:
         raise ValueError("Cannot generate video: no image filenames provided.")
 
