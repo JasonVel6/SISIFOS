@@ -119,15 +119,6 @@ def generate_trajectories_dynamical(
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
-    # Separate illumination RNG so sun angles can be reproduced independently.
-    if config.illumination_seed is not None:
-        ss_illum = np.random.SeedSequence(config.illumination_seed)
-        child_ss_illum = ss_illum.spawn(config.num_mc)
-        rngs_illum = [np.random.default_rng(cs) for cs in child_ss_illum]
-        logger.info("[INITIALIZATION]: illumination seed: %s", config.illumination_seed)
-    else:
-        rngs_illum = None
-
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
 
@@ -214,17 +205,11 @@ def generate_trajectories_dynamical(
         rng = rngs_mc[mc_trial]
         inc[mc_trial] = float(rng.uniform(0.0, np.pi))
         ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
-        # Always draw from the main RNG to preserve downstream state.
         el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
         az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
         pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
         roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
-
-        if rngs_illum is not None:
-            rng_il = rngs_illum[mc_trial]
-            el_I[mc_trial] = float(np.arcsin(rng_il.uniform(-1.0, 1.0)))
-            az_I[mc_trial] = float(rng_il.uniform(0.0, 2.0 * np.pi))
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, config.tend, config.tstep, dtype=float)
