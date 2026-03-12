@@ -24,9 +24,7 @@ def require_spacecraft_defaults(selected_model: str) -> dict[str, Any]:
 
     if selected_model not in spacecraft_defaults:
         available_models = ", ".join(sorted(spacecraft_defaults))
-        raise ValueError(
-            f"Unknown selected_model '{selected_model}'. Available models: {available_models}"
-        )
+        raise ValueError(f"Unknown selected_model '{selected_model}'. Available models: {available_models}")
 
     return spacecraft_defaults[selected_model]
 
@@ -161,8 +159,10 @@ def default_model_rotation(selected_model: str) -> tuple[float, float, float]:
     model_rotation = model_defaults["model_rotation_euler"]
     return (model_rotation["x"], model_rotation["y"], model_rotation["z"])
 
+
 class TrajectoryConfig(BaseModel):
     """Trajectory generation settings"""
+
     selected_model: str | None = None
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
@@ -251,6 +251,7 @@ class TrajectoryConfig(BaseModel):
             return "3"
         else:
             raise ValueError(f"Invalid path_mode: {self.path_mode}")
+
 
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
