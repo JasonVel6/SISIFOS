@@ -51,7 +51,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, TrajectoryConfig, InertiaConfig
+from modules.config import CameraConfig, InertiaConfig, TrajectoryConfig
 from modules.trajectory.motion_cases import (
     init_hill,
     init_inertial,
