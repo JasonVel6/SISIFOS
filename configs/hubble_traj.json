@@ -61,7 +61,7 @@
     "trajectory": {
       "path_mode": "tumbling",
       "seed": null,
-      "illumination_seed": null,
+      "illumination_seed": 1,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
