@@ -7,13 +7,17 @@ blender -b -P scripts/continue_render.py -- --render_path <path-to-render>
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
 from pathlib import Path
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from main import (
     _resolve_frame_ids,
@@ -22,11 +26,12 @@ from main import (
     run_sisfos_with_config,
 )
 from modules.config import SceneConfig
-from modules.io_utils import create_image_list, get_timestamp_folder, images_to_video_blender_sequence
+from modules.io_utils import create_image_list, get_timestamp_folder, handle_gt_from_npz, images_to_video_blender_sequence
 from modules.log_utils import get_logger, setup_logger
-from modules.trajectory.trajectory_io import read_camera_trajectory
+from modules.trajectory.trajectory_io import get_scaled_trajectory_in_ECI, make_frames_from_trajectory, read_camera_trajectory
 
-FRAME_FILE_RE = re.compile(r"frame_(\d+)\.png$")
+FRAME_FILE_RE = re.compile(r"frame_(\d+)(?:_blurred)?\.png$")
+NPZ_FILE_RE = re.compile(r"(\d+)(?:_.*)?\.npz$")
 CONFIG_TAG_RE = re.compile(r"^(Config_\d+)")
 
 
@@ -106,22 +111,71 @@ def collect_existing_frame_ids(image_dir: Path) -> list[int]:
     return frame_ids
 
 
+def collect_npz_frame_ids(npz_dir: Path) -> list[int]:
+    if not npz_dir.exists():
+        return []
+
+    frame_ids = []
+    for path in sorted(npz_dir.glob("*.npz")):
+        match = NPZ_FILE_RE.fullmatch(path.name)
+        if match:
+            frame_ids.append(int(match.group(1)))
+    return frame_ids
+
+
+def get_frame_filename(frame_id: int, num_digits: int, enable_blur: bool) -> str:
+    suffix = "_blurred" if enable_blur else ""
+    return f"frame_{frame_id:0{num_digits}d}{suffix}.png"
+
+
 def rebuild_outputs(config: SceneConfig, render_dir: Path, intended_frame_ids: list[int]) -> None:
     logger = get_logger()
     trajectory = read_camera_trajectory(str(render_dir / "camera_traj.csv"))
-    image_out_dir, _masked_out_dir = get_render_output_dirs(config, render_dir)
-    num_digits = max(4, len(str(int(trajectory["N"]) - 1)))
+    timestamps = trajectory["timestamps"]
+    scaled_trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
+    frames = make_frames_from_trajectory(scaled_trajectory)
+    image_out_dir, masked_out_dir = get_render_output_dirs(config, render_dir)
+    gt_root = render_dir / "GTAnnotations"
+    gt_npz_dir = gt_root / "NPZ"
+    num_digits = max(4, int(math.log10(len(frames))) + 1)
+    enable_blur = str(config.setup.enable_blur).casefold() == "on"
+
+    available_npz_ids = set(collect_npz_frame_ids(gt_npz_dir))
+
+    rebuilt_masked = 0
+    for frame_id in intended_frame_ids:
+        raw_image_filename = get_frame_filename(frame_id, num_digits, enable_blur)
+        raw_image_path = image_out_dir / raw_image_filename
+        npz_path = gt_npz_dir / f"{frame_id:04d}.npz"
+        if frame_id not in available_npz_ids or not raw_image_path.exists():
+            continue
+
+        fr = frames[frame_id]
+        target_dist = float(np.linalg.norm(fr["p_G_I"] - fr["p_C_I"]))
+        handle_gt_from_npz(
+            npz_src=npz_path,
+            gt_npz_dir=gt_npz_dir,
+            gt_depth_dir=gt_root / "Depth",
+            gt_norm_dir=gt_root / "Normal",
+            gt_flow_dir=gt_root / "Flow",
+            gt_seg_dir=gt_root / "Seg",
+            target_dist=target_dist,
+            raw_image_filename=raw_image_filename,
+            raw_images_dir=str(image_out_dir),
+            masked_images_dir=str(masked_out_dir),
+        )
+        rebuilt_masked += 1
 
     image_filenames = []
-    timestamps = []
+    image_timestamps = []
     for frame_id in intended_frame_ids:
-        filename = f"frame_{frame_id:0{num_digits}d}.png"
-        if (image_out_dir / filename).exists():
+        filename = get_frame_filename(frame_id, num_digits, enable_blur)
+        if (masked_out_dir / filename).exists():
             image_filenames.append(filename)
-            timestamps.append(float(trajectory["timestamps"][frame_id]))
+            image_timestamps.append(float(timestamps[frame_id]))
 
-    create_image_list(str(render_dir), timestamps, [f"images/{name}" for name in image_filenames])
-    logger.info("Rebuilt imgList.txt with %d frames", len(image_filenames))
+    create_image_list(str(render_dir), image_timestamps, [f"images/{name}" for name in image_filenames])
+    logger.info("Rebuilt derived outputs for %d frames and imgList.txt with %d frames", rebuilt_masked, len(image_filenames))
 
     if config.setup.generate_video:
         images_to_video_blender_sequence(
@@ -143,29 +197,39 @@ def resume_render_job(config_path: Path, render_dir: Path) -> None:
 
     trajectory = read_camera_trajectory(str(render_dir / "camera_traj.csv"))
     intended_frame_ids = _resolve_frame_ids(config, int(trajectory["N"]))
-    image_out_dir, _masked_out_dir = get_render_output_dirs(config, render_dir)
-    existing_frame_ids = collect_existing_frame_ids(image_out_dir)
+    image_out_dir, masked_out_dir = get_render_output_dirs(config, render_dir)
+    gt_npz_dir = render_dir / "GTAnnotations" / "NPZ"
+    raw_frame_ids = collect_existing_frame_ids(image_out_dir)
+    masked_frame_ids = collect_existing_frame_ids(masked_out_dir)
+    npz_frame_ids = collect_npz_frame_ids(gt_npz_dir)
 
-    rendered_in_scope = sorted(set(existing_frame_ids).intersection(intended_frame_ids))
-    if rendered_in_scope:
-        resume_from = rendered_in_scope[-1]
-        rerender_frame_ids = [frame_id for frame_id in intended_frame_ids if frame_id >= resume_from]
-    else:
-        resume_from = None
-        rerender_frame_ids = intended_frame_ids
+    raw_in_scope = sorted(set(raw_frame_ids).intersection(intended_frame_ids))
+    masked_in_scope = sorted(set(masked_frame_ids).intersection(intended_frame_ids))
+    npz_in_scope = sorted(set(npz_frame_ids).intersection(intended_frame_ids))
+    completed_frame_ids = sorted(set(raw_in_scope).intersection(npz_in_scope))
+    completed_frame_id_set = set(completed_frame_ids)
+    rerender_frame_ids = [frame_id for frame_id in intended_frame_ids if frame_id not in completed_frame_id_set]
+    if completed_frame_ids:
+        safety_frame_id = completed_frame_ids[-1]
+        if safety_frame_id not in rerender_frame_ids:
+            rerender_frame_ids.insert(0, safety_frame_id)
 
     logger.info(
-        "Checked %d existing frame files in %s. Intended=%d [%s]. Existing in scope=%d [%s].",
-        len(existing_frame_ids),
+        "Checked outputs in %s. Intended=%d [%s]. Raw=%d [%s]. Masked=%d [%s]. NPZ=%d [%s]. Complete(raw+npz)=%d [%s].",
         image_out_dir,
         len(intended_frame_ids),
         summarize_frame_ids(intended_frame_ids),
-        len(rendered_in_scope),
-        summarize_frame_ids(rendered_in_scope),
+        len(raw_in_scope),
+        summarize_frame_ids(raw_in_scope),
+        len(masked_in_scope),
+        summarize_frame_ids(masked_in_scope),
+        len(npz_in_scope),
+        summarize_frame_ids(npz_in_scope),
+        len(completed_frame_ids),
+        summarize_frame_ids(completed_frame_ids),
     )
     logger.info(
-        "Resume start: %s. Re-rendering %d frames [%s].",
-        "none found" if resume_from is None else resume_from,
+        "Re-rendering %d frames including safety replay of the latest complete frame [%s].",
         len(rerender_frame_ids),
         summarize_frame_ids(rerender_frame_ids),
     )
@@ -177,8 +241,12 @@ def resume_render_job(config_path: Path, render_dir: Path) -> None:
 
     config.frame_ids = rerender_frame_ids
     config.from_frame_id = None
+    should_generate_video = config.setup.generate_video
     config.setup.generate_video = False
-    run_sisfos_with_config(config, render_dir)
+    try:
+        run_sisfos_with_config(config, render_dir)
+    finally:
+        config.setup.generate_video = should_generate_video
     rebuild_outputs(config, render_dir, intended_frame_ids)
 
 
