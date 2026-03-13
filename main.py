@@ -52,6 +52,46 @@ def _sanitize_folder_token(value: str) -> str:
     return token.strip("_") or "Unknown"
 
 
+def _resolve_frame_ids(config: SceneConfig, num_frames: int) -> list[int]:
+    if config.frame_ids is not None:
+        return config.frame_ids
+
+    start_frame = config.from_frame_id or 0
+    if start_frame < 0:
+        raise ValueError(f"from_frame_id must be non-negative, got {start_frame}")
+    if start_frame >= num_frames:
+        raise ValueError(f"from_frame_id={start_frame} is out of range for trajectory with {num_frames} frames")
+
+    return list(range(start_frame, num_frames))
+
+
+def resolve_config_asset_paths(config: SceneConfig, project_root: Path | None = None) -> SceneConfig:
+    project_root = project_root or Path(__file__).parent.resolve()
+
+    if not os.path.isabs(config.scene_blend_path):
+        config.scene_blend_path = str(project_root / config.scene_blend_path)
+    if config.hdri_path and not os.path.isabs(config.hdri_path):
+        config.hdri_path = str(project_root / config.hdri_path)
+    for _obj_name, obj_cfg in config.objects.items():
+        if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
+            obj_cfg.blend_path = str(project_root / obj_cfg.blend_path)
+
+    return config
+
+
+def get_render_output_dirs(config: SceneConfig, renders_base_dir: Path) -> tuple[Path, Path]:
+    image_out_dir = renders_base_dir / "images_raw"
+    masked_out_dir = renders_base_dir / "images"
+    if str(config.setup.stars_mode).casefold() == "off":
+        if str(config.setup.earth_mode).casefold() == "off":
+            image_out_dir = image_out_dir / "Earth_Stars_OFF"
+        image_out_dir = image_out_dir / "Stars_OFF"
+    elif str(config.setup.earth_mode).casefold() == "off":
+        image_out_dir = image_out_dir / "Earth_OFF"
+
+    return image_out_dir, masked_out_dir
+
+
 def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: str) -> list[str]:
     model_token = _sanitize_folder_token(config.selected_model)
 
@@ -146,21 +186,14 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("[Session] Renders output: %s/", renders_base_dir)
     frame_start_time = time.time()
 
-    frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
+    frame_ids = _resolve_frame_ids(config, len(frames))
 
     # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
     N_digits = max(4, int(math.log10(len(frames))) + 1)
 
     gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-    image_out_dir = renders_base_dir / "images_raw"
-    masked_out_dir = renders_base_dir / "images"
-    if str(config.setup.stars_mode).casefold() == "off":
-        if str(config.setup.earth_mode).casefold() == "off":
-            image_out_dir = image_out_dir / "Earth_Stars_OFF"
-        image_out_dir = image_out_dir / "Stars_OFF"
-    elif str(config.setup.earth_mode).casefold() == "off":
-        image_out_dir = image_out_dir / "Earth_OFF"
+    image_out_dir, masked_out_dir = get_render_output_dirs(config, renders_base_dir)
 
     # Prepare GT folders
     gt_dirs = {
@@ -176,11 +209,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     avg_frame_time = 0.0
 
-    avg_frame_time = 0.0
-
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
         image_filenames = []
-        for i in frame_ids:
+        for rendered_idx, i in enumerate(frame_ids):
             frame_start_time = time.time()
             fr = frames[i]
             fake_fr2 = None
@@ -235,13 +266,13 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                 )
 
             current_frame_time = time.time() - frame_start_time
-            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
-            time_remaining_estimate = avg_frame_time * (total - i - 1)
+            avg_frame_time = (avg_frame_time * rendered_idx + current_frame_time) / (rendered_idx + 1)
+            time_remaining_estimate = avg_frame_time * (total - rendered_idx - 1)
             time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
 
-            if i == 0 or i % 5 == 0 or i == total - 1:
+            if rendered_idx == 0 or rendered_idx % 5 == 0 or rendered_idx == total - 1:
                 logger.info("============================================================================================")
-                logger.info(f"Finished rendering frame {i}/{total - 1} in {current_frame_time:.2f} seconds.")
+                logger.info(f"Finished rendering frame {i} ({rendered_idx + 1}/{total}) in {current_frame_time:.2f} seconds.")
                 logger.info(f"Average frame time so far: {avg_frame_time:.2f} seconds.")
                 logger.info(f"Estimated time remaining: {time_delta_str}")
                 logger.info(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
@@ -289,14 +320,7 @@ def run_sweep(sweep_config: SweepConfig):
             payload = config.model_dump()
             json.dump(payload, f, indent=2)
 
-        # Ensure paths are absolute
-        if not os.path.isabs(config.scene_blend_path):
-            config.scene_blend_path = str(PROJECT_ROOT / config.scene_blend_path)
-        if config.hdri_path and not os.path.isabs(config.hdri_path):
-            config.hdri_path = str(PROJECT_ROOT / config.hdri_path)
-        for _obj_name, obj_cfg in config.objects.items():
-            if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
-                obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
+        resolve_config_asset_paths(config, PROJECT_ROOT)
 
         agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
         render_jobs.extend((config, Path(agent_folder)) for agent_folder in agent_folders)

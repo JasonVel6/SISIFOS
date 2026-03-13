@@ -112,6 +112,7 @@
     "save_scene_plots": false,
     "scene_plot_max_frames": 100,
     "frame_ids": null,
+    "from_frame_id": null,
     "selected_model": "RF_Integral"
   },
   "sweep_parameters": {

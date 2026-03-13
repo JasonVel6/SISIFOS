@@ -109,7 +109,13 @@ int or null controlling the maximum number of scene-plot frames generated when `
 Set to `null` to remove the cap.
 
 #### frame_ids
-list of ints for what to render
+optional list of explicit frame indices to render.
+If this is provided, SISIFOS renders exactly these frames and ignores `from_frame_id`.
+
+#### from_frame_id
+optional int for the first frame to render when `frame_ids` is `null`.
+This value is inclusive, so `from_frame_id: 10` renders frames 10 through the end of the trajectory.
+Default behavior when both `frame_ids` and `from_frame_id` are `null` is to render all frames starting at 0.
 
 #### selected_model
 string to determine what model to render
