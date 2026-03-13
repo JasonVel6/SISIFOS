@@ -433,6 +433,7 @@ class SceneConfig(BaseModel):
 
     # Rendering control
     frame_ids: list[int] | None = None  # If None, use all frames
+    from_frame_id: int | None = None  # If frame ids not specified, use this as the starting frame (inclusive)
     selected_model: str = "RF_Hubble"
     model_rotation_quat: float | None = None  # To align model with propper inertia calculation
 
