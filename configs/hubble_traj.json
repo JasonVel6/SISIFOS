@@ -60,7 +60,7 @@
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 1462526110,
+      "seed": null,
       "illumination_seed": null,
       "num_agents": 1,
       "num_mc": 1,
@@ -112,7 +112,7 @@
     "save_scene_plots": true,
     "scene_plot_max_frames": 100,
     "frame_ids": null,
-    "selected_model": "RF_Integral"
+    "selected_model": "RF_Hubble"
   },
   "sweep_parameters": {
     "trajectory.camera_lookat_mode": ["I", "G", "hybrid-strong"]
