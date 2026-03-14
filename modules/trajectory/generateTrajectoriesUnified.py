@@ -154,7 +154,7 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
+            rho_max=config.MAX_INIT_RADIAL_DOMINANCE,
             R0_const=config.R0_const,
             variant="cro",
             rngs_mc=rngs_mc,
@@ -169,7 +169,7 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
+            rho_max=config.MAX_INIT_RADIAL_DOMINANCE,
         )
     elif config.rotMode_Gframe == "3":
         tumbling_variant = config.tumbling_translation_mode
@@ -186,12 +186,13 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.95,
+            rho_max=config.TUMBLING_MAX_INIT_RADIAL_DOMINANCE,
             R0_const=config.R0_const,
-            omega_min_deg=3.0,
-            omega_max_deg=5.0,
+            omega_min_deg=config.tumbling_omega_min_deg,
+            omega_max_deg=config.tumbling_omega_max_deg,
+            off_axis_min=config.tumbling_off_axis_min,
             J=config.inertia_config.J,
-            min_asymmetry_component=0.4,
+            min_asymmetry_component=config.tumbling_min_asymmetry_component,
             span_frac=config.tumbling_span_frac,
             variant=tumbling_variant,
         )
@@ -419,7 +420,10 @@ def generate_trajectories_dynamical(
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
                         omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.inertia_config.J, min_asymmetry_component=0.4, off_axis_min=0.3
+                            rngs_mc[mc_trial],
+                            config.inertia_config.J,
+                            min_asymmetry_component=config.tumbling_min_asymmetry_component,
+                            off_axis_min=config.tumbling_off_axis_min,
                         )
                         omega_GI_G_0[mc_trial] = omega_mag * d_new
 

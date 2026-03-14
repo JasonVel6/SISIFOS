@@ -36,15 +36,7 @@
     },
     "render": {
       "engine": "CYCLES",
-      "samples": 16,
-      "bg_color": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
-      "motion_blur": 0.0,
-      "noise_strength": 0.0
+      "samples": 16
     },
     "setup": {
       "earth_mode": "on",
@@ -58,9 +50,29 @@
       "glare_size": 6
     },
     "trajectory_type": "trajectory_generator",
+    "screening": {
+      "enabled": true,
+      "max_attempts": 20,
+      "resample_on_reject": true,
+      "require_all_agents_pass": true,
+      "horizon_frames": 5,
+      "min_target_diameter_p10_px": 220.0,
+      "min_image_motion_p25_px": 1.8,
+      "min_los_parallax_p25_deg": 0.035,
+      "min_body_view_change_p25_deg": 0.05,
+      "min_transverse_baseline_ratio_p25": 0.0007,
+      "max_radial_dominance_p75": 0.9,
+      "min_relative_rotation_p25_deg": 0.8,
+      "min_tilt_component_p25_deg": 0.25,
+      "max_optical_axis_spin_fraction_p75": 0.35,
+      "warn_los_parallax_p25_deg": 0.06,
+      "warn_transverse_baseline_ratio_p25": 0.0012,
+      "warn_radial_dominance_p75": 0.75,
+      "warn_optical_axis_spin_fraction_p75": 0.2
+    },
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 1462526110,
+      "seed": null,
       "illumination_seed": null,
       "num_agents": 1,
       "num_mc": 1,
@@ -82,12 +94,16 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 40.0,
-      "tumbling_span_frac": 0.5,
-      "pointing_offset_G": [0.8, 0.5, 0.2],
-      "camera_lookat_mode": "hybrid-strong",
-      "camera_pitchyaw_follow_gain": 0.4,
-      "camera_roll_follow_gain": 0.15,
+      "R0_const": 28.0,
+      "tumbling_span_frac": 0.7,
+      "pointing_offset_G": [
+        0.35,
+        0.2,
+        0.15
+      ],
+      "camera_lookat_mode": "G",
+      "camera_pitchyaw_follow_gain": 0.0,
+      "camera_roll_follow_gain": 0.0,
       "SUN_ALIGN_ENABLE": true,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -96,9 +112,15 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 75.0,
+      "tend": 100.0,
       "tstep": 0.1,
-      "MIN_F2F_PX_MED": 0.75,
+      "MIN_F2F_PX_MED": 1.6,
+      "MAX_INIT_RADIAL_DOMINANCE": 0.78,
+      "TUMBLING_MAX_INIT_RADIAL_DOMINANCE": 0.82,
+      "tumbling_omega_min_deg": 2.5,
+      "tumbling_omega_max_deg": 4.5,
+      "tumbling_off_axis_min": 0.4,
+      "tumbling_min_asymmetry_component": 0.5,
       "m": 4000.0,
       "l": 5.0,
       "w": 3.2,
@@ -115,7 +137,5 @@
     "selected_model": "RF_Integral",
     "model_rotation_z_deg": 45.0
   },
-  "sweep_parameters": {
-    "trajectory.camera_lookat_mode": ["I", "G", "hybrid-strong"]
-  }
+  "sweep_parameters": {}
 }

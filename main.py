@@ -10,10 +10,12 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
+import copy
 import datetime
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -38,6 +40,7 @@ from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_const_rotation,
     write_camera_trajectory_fib,
 )
+from modules.trajectory.seed_screening import evaluate_seed_candidate, write_screening_report
 from modules.trajectory.trajectory_io import (
     get_scaled_trajectory_in_ECI,
     make_frames_from_trajectory,
@@ -122,6 +125,111 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
         )
 
     return agent_folders
+
+
+def _derive_attempt_seed(base_seed: int, attempt_idx: int) -> int:
+    if attempt_idx == 0:
+        return int(base_seed) & 0x7FFFFFFF
+    seed_seq = np.random.SeedSequence(base_seed)
+    child_state = seed_seq.generate_state(attempt_idx + 1, dtype=np.uint32)
+    return int(child_state[attempt_idx]) & 0x7FFFFFFF
+
+
+def _resolve_screening_seed(config: SceneConfig) -> int:
+    if config.trajectory.seed is not None:
+        return int(config.trajectory.seed) & 0x7FFFFFFF
+    return int(time.time_ns()) & 0x7FFFFFFF
+
+
+def _promote_candidate_outputs(staging_dir: Path, output_dir: Path, candidate_prefix: str, final_prefix: str) -> None:
+    trajectory_json = staging_dir / f"{candidate_prefix}_trajectory.json"
+    if trajectory_json.exists():
+        shutil.move(str(trajectory_json), str(output_dir / f"{final_prefix}_trajectory.json"))
+
+    for path in staging_dir.glob(f"{candidate_prefix}*"):
+        if path.name == f"{candidate_prefix}_trajectory.json":
+            continue
+        destination = output_dir / path.name.replace(candidate_prefix, final_prefix, 1)
+        if destination.exists():
+            raise FileExistsError(f"Cannot promote candidate output '{destination}'; destination already exists.")
+        shutil.move(str(path), str(destination))
+
+
+def _generate_screened_trajectories(
+    config: SceneConfig, output_dir: Path, config_prefix: str, screening_root: Path
+) -> tuple[list[Path], dict]:
+    logger = get_logger()
+    screening_cfg = config.screening
+    attempts_payload: list[dict] = []
+
+    if not screening_cfg.enabled:
+        agent_folders = [Path(folder) for folder in generate_trajectories(config, output_dir, config_prefix=config_prefix)]
+        return agent_folders, {"status": "disabled", "attempts": attempts_payload}
+
+    if config.trajectory_type != "trajectory_generator":
+        raise ValueError("Seed screening currently supports only trajectory_generator runs.")
+
+    max_attempts = max(int(screening_cfg.max_attempts), 1)
+    if not screening_cfg.resample_on_reject:
+        max_attempts = 1
+    base_seed = _resolve_screening_seed(config)
+    last_report = None
+
+    for attempt_idx in range(max_attempts):
+        attempt_config = copy.deepcopy(config)
+        attempt_config.trajectory.seed = _derive_attempt_seed(base_seed, attempt_idx)
+        if attempt_idx > 0 and screening_cfg.resample_on_reject:
+            attempt_config.trajectory.illumination_seed = None
+
+        candidate_prefix = f"{config_prefix}_attempt_{attempt_idx + 1}"
+        agent_folders = [Path(folder) for folder in generate_trajectories(attempt_config, screening_root, config_prefix=candidate_prefix)]
+        report = evaluate_seed_candidate(agent_folders, attempt_config, config_prefix=config_prefix)
+        report.attempts_used = attempt_idx + 1
+        last_report = report
+
+        attempt_record = report.model_dump()
+        attempt_record["attempt_idx"] = attempt_idx + 1
+        attempts_payload.append(attempt_record)
+
+        report_path = screening_root / f"{candidate_prefix}_screening.json"
+        write_screening_report(report, report_path)
+
+        if report.verdict == "ACCEPT":
+            config.trajectory.seed = attempt_config.trajectory.seed
+            config.trajectory.illumination_seed = attempt_config.trajectory.illumination_seed
+            _promote_candidate_outputs(screening_root, output_dir, candidate_prefix, config_prefix)
+            final_agent_folders = [
+                Path(str(agent_folder).replace(str(screening_root / candidate_prefix), str(output_dir / config_prefix)))
+                for agent_folder in agent_folders
+            ]
+            logger.info(
+                "Accepted seed %s for %s after %d attempt(s).",
+                config.trajectory.seed,
+                config_prefix,
+                attempt_idx + 1,
+            )
+            return final_agent_folders, {
+                "status": "accepted",
+                "base_seed": base_seed,
+                "attempts": attempts_payload,
+                "accepted_seed": config.trajectory.seed,
+            }
+
+        logger.warning(
+            "Rejected seed %s for %s on attempt %d/%d: %s",
+            attempt_config.trajectory.seed,
+            config_prefix,
+            attempt_idx + 1,
+            max_attempts,
+            "; ".join(report.diagnosis) if report.diagnosis else "screening checks failed",
+        )
+
+    if last_report is not None:
+        raise ValueError(
+            f"{config_prefix} failed screening after {max_attempts} attempts. "
+            f"Last rejection reasons: {'; '.join(last_report.diagnosis) if last_report.diagnosis else 'unknown'}"
+        )
+    raise ValueError(f"{config_prefix} failed screening before any candidate report was produced.")
 
 
 def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
@@ -278,16 +386,13 @@ def run_sweep(sweep_config: SweepConfig):
         json.dump(payload, f, indent=2)
 
     PROJECT_ROOT = Path(__file__).parent.resolve()
+    screening_root = ensure_dir(output_dir / "_screening")
 
     render_jobs: list[tuple[SceneConfig, Path]] = []
+    screening_summary: dict[str, dict] = {}
 
     for i, config in enumerate(configs):
         config_prefix = f"Config_{i + 1}"
-
-        # Save each expanded config at the sweep root for reproducibility.
-        with open(output_dir / f"{config_prefix}.json", "w") as f:
-            payload = config.model_dump()
-            json.dump(payload, f, indent=2)
 
         # Ensure paths are absolute
         if not os.path.isabs(config.scene_blend_path):
@@ -298,8 +403,20 @@ def run_sweep(sweep_config: SweepConfig):
             if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
                 obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
 
-        agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
+        agent_folders, screening_info = _generate_screened_trajectories(
+            config, output_dir, config_prefix=config_prefix, screening_root=screening_root
+        )
+        screening_summary[config_prefix] = screening_info
+
+        # Save each expanded config after seed screening so the accepted seed is recorded.
+        with open(output_dir / f"{config_prefix}.json", "w") as f:
+            payload = config.model_dump()
+            json.dump(payload, f, indent=2)
+
         render_jobs.extend((config, Path(agent_folder)) for agent_folder in agent_folders)
+
+    with open(output_dir / "screening_summary.json", "w") as f:
+        json.dump(screening_summary, f, indent=2)
 
     for config, agent_folder in render_jobs:
         run_sisfos_with_config(config, agent_folder)
