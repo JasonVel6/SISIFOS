@@ -28,8 +28,8 @@
       "clip_start": 1e-05,
       "clip_end": 5000000.0,
       "resolution": [
-        512,
-        512
+        1024,
+        1024
       ],
       "lens_flare": 0.01,
       "exposure_time_s": 0.016666666666666666
@@ -72,8 +72,8 @@
     },
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": null,
-      "illumination_seed": null,
+      "seed": 1496588913,
+      "illumination_seed": 1122351798,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
