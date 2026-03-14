@@ -112,7 +112,7 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 100.0,
+      "tend": 500.0,
       "tstep": 0.1,
       "MIN_F2F_PX_MED": 1.6,
       "MAX_INIT_RADIAL_DOMINANCE": 0.78,
