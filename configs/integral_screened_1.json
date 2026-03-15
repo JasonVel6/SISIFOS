@@ -131,11 +131,10 @@
     "save_optical_flow": false,
     "save_segmentation": false,
     "save_obj_poses": false,
-    "save_scene_plots": false,
+    "save_scene_plots": true,
     "scene_plot_max_frames": 100,
     "frame_ids": null,
-    "selected_model": "RF_Integral",
-    "model_rotation_z_deg": 45.0
+    "selected_model": "RF_Integral"
   },
   "sweep_parameters": {}
 }
