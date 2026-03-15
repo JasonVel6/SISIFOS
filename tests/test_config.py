@@ -64,3 +64,57 @@ def test_scene_config_rejects_nested_trajectory_selected_model():
                 "trajectory": {"selected_model": "RF_Hubble"},
             }
         )
+
+
+def test_trajectory_config_normalizes_hybrid_alias():
+    config = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "h"},
+        }
+    )
+
+    assert config.trajectory.camera_lookat_mode == "hybrid"
+
+
+def test_trajectory_config_supports_hybrid_translation_submodes():
+    config_cro = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "h-cro"},
+        }
+    )
+    config_nmc = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "h-nmc"},
+        }
+    )
+
+    assert config_cro.trajectory.camera_pointing_mode == "hybrid"
+    assert config_cro.trajectory.tumbling_translation_mode == "cro"
+    assert config_nmc.trajectory.camera_pointing_mode == "hybrid"
+    assert config_nmc.trajectory.tumbling_translation_mode == "nmc"
+
+
+def test_trajectory_config_supports_hybrid_strength_presets():
+    weak = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "hybrid-weak"},
+        }
+    )
+    medium = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "hybrid-medium"},
+        }
+    )
+    strong = SceneConfig.model_validate(
+        {
+            "trajectory": {"camera_lookat_mode": "hybrid-strong"},
+        }
+    )
+
+    assert weak.trajectory.camera_pointing_mode == "hybrid"
+    assert weak.trajectory.resolved_camera_pitchyaw_follow_gain == 0.25
+    assert weak.trajectory.resolved_camera_roll_follow_gain == 0.10
+    assert medium.trajectory.resolved_camera_pitchyaw_follow_gain == 0.40
+    assert medium.trajectory.resolved_camera_roll_follow_gain == 0.15
+    assert strong.trajectory.resolved_camera_pitchyaw_follow_gain == 0.70
+    assert strong.trajectory.resolved_camera_roll_follow_gain == 0.35

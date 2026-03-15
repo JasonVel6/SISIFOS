@@ -1,4 +1,39 @@
+import warnings
+
 import numpy as np
+
+
+def _cro_midrange_envelope(R_mid, span_frac):
+    """
+    Return CRO parameters for a midpoint-centered range envelope.
+
+    For x=A cos(theta), y=-2A sin(theta), z=B sin(theta):
+      r_min = A
+      r_max = sqrt((2A)^2 + B^2)
+
+    A midpoint-centered envelope [R_mid*(1-s), R_mid*(1+s)] is only feasible
+    when s >= 1/3. Smaller requested spans are clamped to that minimum and
+    collapse to the in-plane CRO case with B=0.
+    """
+    R_mid = float(R_mid)
+    requested_span = max(0.0, float(span_frac))
+    min_span = 1.0 / 3.0
+    effective_span = max(requested_span, min_span)
+
+    r_min = R_mid * (1.0 - effective_span)
+    r_max = R_mid * (1.0 + effective_span)
+    A_base = r_min
+    B_base = float(np.sqrt(max(r_max**2 - (2.0 * A_base) ** 2, 0.0)))
+
+    return {
+        "A_base": A_base,
+        "B_base": B_base,
+        "r_min": r_min,
+        "r_max": r_max,
+        "requested_span": requested_span,
+        "effective_span": effective_span,
+        "span_was_clamped": not np.isclose(effective_span, requested_span),
+    }
 
 
 def _ic_geom_from_state(r0, v0, f_px, dt):
@@ -76,7 +111,7 @@ def repair_inertial_nmc(r0, n_scalar, A):
     return x, y, vx, vy
 
 
-def repair_inertial_cro(r0, v0, f_px, dt, n_scalar, px_min, vz0):
+def repair_inertial_cro(r0, v0, f_px, dt, n_scalar, px_min, vz0, r_max_cap=None):
     """
     Add the minimal ΔB (via zdot) needed to meet px_min at t0, keep x,y unchanged.
     Returns new (z0, vz0_new). Enforces z-quadrature at t0.
@@ -86,6 +121,10 @@ def repair_inertial_cro(r0, v0, f_px, dt, n_scalar, px_min, vz0):
         return 0.0, vz0  # no change possible/needed
     B_prev = abs(vz0) / max(n_scalar, 1e-12)
     B_new = B_prev + B_add
+    if r_max_cap is not None:
+        A_current = float(np.sqrt(max(r0[0] ** 2 + 0.25 * r0[1] ** 2, 0.0)))
+        B_cap = float(np.sqrt(max(float(r_max_cap) ** 2 - (2.0 * A_current) ** 2, 0.0)))
+        B_new = min(B_new, B_cap)
     z0_new = 0.0
     vz0_new = n_scalar * B_new
     return z0_new, vz0_new
@@ -520,10 +559,11 @@ def inertial_cro(
     Drift-free HCW bounded ellipse around the target:
       x =  A cos(n t + phi),   y = -2A sin(n t + phi),   z = B cos(n t + phi_z)
 
-    ***Tied-to-NMC sizing (recommended):***
-      Pass R_nom (equal to NMC's constant range) and span_frac.
-      We hold A = 0.5*R_nom (== NMC A), so r_min = 2A = R_nom (same as NMC),
-      and set r_max = (1+span_frac)*R_nom  ->  B = sqrt(r_max^2 - A^2).
+    ***Midpoint-centered sizing:***
+      Pass R_nom and span_frac. R_nom is treated as the midpoint of the nominal
+      range envelope, and span_frac controls the half-width fraction about that
+      midpoint. For the CRO family used here, the minimum feasible centered
+      half-width is 1/3, so smaller requests are clamped.
 
     We initialize at *z-quadrature* (z(0)=0, zdot(0)=n*B) to inject immediate cross-track
     velocity. In-plane (x,y) start at a seeded random phase phi for variability.
@@ -532,26 +572,24 @@ def inertial_cro(
     """
 
     # ---------- decide base A,B from inputs ----------
-    # Geometry: r_min = 2A, r_max = sqrt((2A)^2 + B^2)
-    # Therefore: B = sqrt(r_max^2 - (2A)^2)
     if (R_nom is not None) and (span_frac is not None):
-        # Tied-to-NMC (preferred)
-        A_base = 0.5 * float(R_nom)  # => r_min = 2A = R_nom
-        r_max_in = (1.0 + float(span_frac)) * float(R_nom)
-        B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
+        envelope = _cro_midrange_envelope(R_nom, span_frac)
+        A_base = envelope["A_base"]
+        B_base = envelope["B_base"]
+        r_max_in = envelope["r_max"]
     elif (r_min is not None) and (r_max is not None):
-        A_base = 0.5 * float(r_min)  # so 2*A_base = r_min
+        A_base = float(r_min)
         B_base = float(np.sqrt(max(float(r_max) ** 2 - (2.0 * A_base) ** 2, 0.0)))
+        r_max_in = float(r_max)
     elif (A_xy is not None) and (B_z is not None):
         A_base = float(A_xy)
         B_base = float(B_z)
+        r_max_in = float(np.sqrt((2.0 * A_base) ** 2 + B_base**2))
     else:
-        # Sensible tied-to-NMC default ~100 m with +20% upper swing
-        R_nom = 100.0
-        span_frac = 0.20
-        A_base = 0.5 * R_nom  # so 2*A_base = R_nom
-        r_max_in = (1.0 + span_frac) * R_nom
-        B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
+        envelope = _cro_midrange_envelope(100.0, 1.0 / 3.0)
+        A_base = envelope["A_base"]
+        B_base = envelope["B_base"]
+        r_max_in = envelope["r_max"]
 
     # ---------- allocate ----------
     x_0 = np.zeros((num_mc, num_agents), dtype=float)
@@ -597,7 +635,9 @@ def inertial_cro(
                 v0 = np.array([vx0, vy0, vz0], float)
                 bad, _ = detect_degeneracy(r0, v0, focal_length_px, float(kf_dt), px_min, rho_max)
                 if bad:
-                    zN, vzN = repair_inertial_cro(r0, v0, focal_length_px, float(kf_dt), n_scalar, px_min, vz0=vz0)
+                    zN, vzN = repair_inertial_cro(
+                        r0, v0, focal_length_px, float(kf_dt), n_scalar, px_min, vz0=vz0, r_max_cap=r_max_in
+                    )
                     z_0[i, a], zdot_0[i, a] = zN, vzN
                     # x,y unchanged — extra z-velocity injects usable v_perp
                     # Check if still degenerate
@@ -754,14 +794,18 @@ def init_tumbling(
     J=None,
     min_asymmetry_component=0.4,
     span_frac=2.0,
+    variant="cro",
 ):
-    """Initialize tumbling case with CRO trajectory.
+    """Initialize tumbling case with bounded single-burn trajectory + target tumbling.
 
-    Uses CRO (Cross-Range Oscillation) bounded HCW trajectory for the chaser,
-    combined with target tumbling. This provides:
-      - Translational parallax from CRO motion
+    Uses a bounded HCW trajectory for the chaser, combined with target tumbling.
+    Supported translation variants:
+      - "cro": stronger range/parallax variation
+      - "nmc": tighter near-constant-range motion
+
+    This provides:
+      - Translational parallax from bounded relative motion
       - Apparent feature motion from target tumbling
-      - Range variation for scale observability
       - Single-burn, fuel-optimal inspection trajectory
 
     Parameters
@@ -810,13 +854,22 @@ def init_tumbling(
     # Without J, omega is sampled uniformly with off-axis constraints.
     omega_GI_G_0 = np.zeros((num_mc, 3), dtype=float)
 
-    # CRO trajectory parameters (same as inertial_cro)
-    # A sets in-plane amplitude, B sets out-of-plane amplitude
-    # r_min = 2A = R0_const, r_max = sqrt((2A)^2 + B^2)
-    # Therefore: B = sqrt(r_max^2 - (2A)^2) = sqrt(r_max^2 - R0_const^2)
-    A_base = 0.5 * float(R0_const)  # so 2*A_base = R0_const
-    r_max_in = (1.0 + span_frac) * float(R0_const)
-    B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
+    if variant == "nmc":
+        A_base = max(1e-6, 0.5 * float(R0_const))
+        B_base = np.sqrt(3.0) * A_base
+        r_max_in = 2.0 * A_base
+    else:
+        envelope = _cro_midrange_envelope(R0_const, span_frac)
+        A_base = envelope["A_base"]
+        B_base = envelope["B_base"]
+        r_max_in = envelope["r_max"]
+        if envelope["span_was_clamped"]:
+            warnings.warn(
+                "init_tumbling: requested span_frac "
+                f"{envelope['requested_span']:.3f} is below the minimum feasible "
+                f"midpoint-centered CRO span (1/3); using {envelope['effective_span']:.3f} instead.",
+                stacklevel=2,
+            )
     amp_jitter = 0.10  # ±10% amplitude jitter
 
     for i in range(num_mc):
@@ -859,14 +912,22 @@ def init_tumbling(
             # Random in-plane phase for viewing geometry diversity
             phi = float(rng.uniform(0.0, 2.0 * np.pi))
 
-            # CRO ICs: x = A cos(phi), y = -2A sin(phi), z = 0 (z-quadrature)
-            # vx = -n A sin(phi), vy = -2 n A cos(phi), vz = n B
-            x0 = A * np.cos(phi)
-            y0 = -2.0 * A * np.sin(phi)
-            z0 = 0.0  # z-quadrature start
-            vx0 = -n_scalar * A * np.sin(phi)
-            vy0 = -2.0 * n_scalar * A * np.cos(phi)
-            vz0 = n_scalar * B  # immediate cross-track velocity
+            if variant == "nmc":
+                x0 = A * np.cos(phi)
+                y0 = -2.0 * A * np.sin(phi)
+                z0 = B * np.cos(phi)
+                vx0 = -n_scalar * A * np.sin(phi)
+                vy0 = -2.0 * n_scalar * A * np.cos(phi)
+                vz0 = -n_scalar * B * np.sin(phi)
+            else:
+                # CRO ICs: x = A cos(phi), y = -2A sin(phi), z = 0 (z-quadrature)
+                # vx = -n A sin(phi), vy = -2 n A cos(phi), vz = n B
+                x0 = A * np.cos(phi)
+                y0 = -2.0 * A * np.sin(phi)
+                z0 = 0.0  # z-quadrature start
+                vx0 = -n_scalar * A * np.sin(phi)
+                vy0 = -2.0 * n_scalar * A * np.cos(phi)
+                vz0 = n_scalar * B  # immediate cross-track velocity
 
             x_0[i, a], y_0[i, a], z_0[i, a] = x0, y0, z0
             xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0, vy0, vz0
@@ -877,56 +938,73 @@ def init_tumbling(
                 v0 = np.array([vx0, vy0, vz0], float)
                 bad, stats = detect_degeneracy(r0, v0, focal_length_px, float(kf_dt), px_min, rho_max)
                 if bad:
-                    # Try CRO repair first (boost B via zdot)
-                    zN, vzN = repair_inertial_cro(r0, v0, focal_length_px, float(kf_dt), n_scalar, px_min, vz0=vz0)
-                    z_0[i, a], zdot_0[i, a] = zN, vzN
-                    # Verify fix
-                    r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
-                    v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
-                    bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
-
-                    if bad2:
-                        # z-repair failed (likely LOS close to the z axis for this phase).
-                        # Try a small set of phase shifts and recompute the minimal z-boost
-                        # for each candidate instead of reusing the original vz correction.
-                        phase_offsets = [k * (np.pi / 6.0) for k in range(1, 12)]
-                        repaired = False
-                        best_stats = stats2
-                        px_target = 1.02 * float(px_min)
-
-                        for phase_offset in phase_offsets:
-                            phi_new = phi + phase_offset
-                            x0_new = A * np.cos(phi_new)
-                            y0_new = -2.0 * A * np.sin(phi_new)
-                            vx0_new = -n_scalar * A * np.sin(phi_new)
-                            vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
-
-                            r_try = np.array([x0_new, y0_new, 0.0], float)
-                            v_try = np.array([vx0_new, vy0_new, vz0], float)
-                            z_try, vz_try = repair_inertial_cro(
-                                r_try, v_try, focal_length_px, float(kf_dt), n_scalar, px_target, vz0=vz0
-                            )
-                            r_fix = np.array([x0_new, y0_new, z_try], float)
-                            v_fix = np.array([vx0_new, vy0_new, vz_try], float)
-                            bad3, stats3 = detect_degeneracy(
-                                r_fix, v_fix, focal_length_px, float(kf_dt), px_min, rho_max
-                            )
-
-                            if (not repaired) and (
-                                stats3["px"] > best_stats["px"]
-                                or (np.isclose(stats3["px"], best_stats["px"]) and stats3["rho"] < best_stats["rho"])
-                            ):
-                                best_stats = stats3
-
-                            if not bad3:
-                                x_0[i, a], y_0[i, a], z_0[i, a] = x0_new, y0_new, z_try
-                                xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0_new, vy0_new, vz_try
-                                repaired = True
-                                break
-
-                        if not repaired:
+                    if variant == "nmc":
+                        xn, yn, vxn, vyn = repair_inertial_nmc(r0, n_scalar, A)
+                        x_0[i, a], y_0[i, a], xdot_0[i, a], ydot_0[i, a] = xn, yn, vxn, vyn
+                        r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                        v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
+                        bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
+                        if bad2:
                             raise RuntimeError(
-                                f"Tumbling IC unrecoverable after phase search: px={best_stats['px']:.2f}, rho={best_stats['rho']:.3f}"
+                                f"Tumbling NMC IC unrecoverable: px={stats2['px']:.2f}, rho={stats2['rho']:.3f}"
                             )
+                    else:
+                        # Try CRO repair first (boost B via zdot)
+                        zN, vzN = repair_inertial_cro(
+                            r0, v0, focal_length_px, float(kf_dt), n_scalar, px_min, vz0=vz0, r_max_cap=r_max_in
+                        )
+                        z_0[i, a], zdot_0[i, a] = zN, vzN
+                        # Verify fix
+                        r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                        v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
+                        bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
+
+                        if bad2:
+                            phase_offsets = [k * (np.pi / 6.0) for k in range(1, 12)]
+                            repaired = False
+                            best_stats = stats2
+                            px_target = 1.02 * float(px_min)
+
+                            for phase_offset in phase_offsets:
+                                phi_new = phi + phase_offset
+                                x0_new = A * np.cos(phi_new)
+                                y0_new = -2.0 * A * np.sin(phi_new)
+                                vx0_new = -n_scalar * A * np.sin(phi_new)
+                                vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
+
+                                r_try = np.array([x0_new, y0_new, 0.0], float)
+                                v_try = np.array([vx0_new, vy0_new, vz0], float)
+                                z_try, vz_try = repair_inertial_cro(
+                                    r_try,
+                                    v_try,
+                                    focal_length_px,
+                                    float(kf_dt),
+                                    n_scalar,
+                                    px_target,
+                                    vz0=vz0,
+                                    r_max_cap=r_max_in,
+                                )
+                                r_fix = np.array([x0_new, y0_new, z_try], float)
+                                v_fix = np.array([vx0_new, vy0_new, vz_try], float)
+                                bad3, stats3 = detect_degeneracy(
+                                    r_fix, v_fix, focal_length_px, float(kf_dt), px_min, rho_max
+                                )
+
+                                if (not repaired) and (
+                                    stats3["px"] > best_stats["px"]
+                                    or (np.isclose(stats3["px"], best_stats["px"]) and stats3["rho"] < best_stats["rho"])
+                                ):
+                                    best_stats = stats3
+
+                                if not bad3:
+                                    x_0[i, a], y_0[i, a], z_0[i, a] = x0_new, y0_new, z_try
+                                    xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0_new, vy0_new, vz_try
+                                    repaired = True
+                                    break
+
+                            if not repaired:
+                                raise RuntimeError(
+                                    f"Tumbling IC unrecoverable after phase search: px={best_stats['px']:.2f}, rho={best_stats['rho']:.3f}"
+                                )
 
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode

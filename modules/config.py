@@ -79,6 +79,39 @@ class SetupConfig(BaseModel):
     video_fps: int = 10
 
 
+class SeedScreeningConfig(BaseModel):
+    """Geometry-based screening and resampling policy for generated seeds."""
+
+    enabled: bool = False
+    max_attempts: int = 1
+    resample_on_reject: bool = True
+    require_all_agents_pass: bool = True
+
+    # Screening horizon in frames for finite-difference geometry checks.
+    horizon_frames: int = 5
+
+    # VO-calibrated first-pass thresholds. These defaults are intentionally
+    # permissive: they are meant to reject obviously poor seeds before
+    # rendering while keeping borderline cases for continued calibration.
+    min_target_diameter_p10_px: float = 80.0
+    min_image_motion_p25_px: float = 1.0
+    min_los_parallax_p25_deg: float = 0.02
+    min_body_view_change_p25_deg: float = 0.0
+    min_transverse_baseline_ratio_p25: float = 0.0004
+    max_radial_dominance_p75: float = 1.0
+    min_relative_rotation_p25_deg: float = 0.0
+    min_tilt_component_p25_deg: float = 0.0
+    max_optical_axis_spin_fraction_p75: float = 0.75
+
+    # Non-fatal warning thresholds for accepted seeds. These do not reject a
+    # trajectory, but they help explain when a run is likely to remain
+    # borderline for monocular VO even if it passes the hard gate.
+    warn_los_parallax_p25_deg: float = 0.05
+    warn_transverse_baseline_ratio_p25: float = 0.001
+    warn_radial_dominance_p75: float = 0.80
+    warn_optical_axis_spin_fraction_p75: float = 0.45
+
+
 class SamplingTrajectoryConfig(BaseModel):
     """Configuration for the sampling-based trajectory generator"""
 
@@ -206,9 +239,10 @@ class TrajectoryConfig(BaseModel):
 
     # Distance to target
     R0_const: float = 30.0
-    # CRO out-of-plane amplitude for tumbling mode.
-    # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
-    # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
+    # CRO range half-width for tumbling mode, centered about R0_const.
+    # R0_const is the nominal midpoint standoff used for imaging/processing.
+    # The CRO family used here cannot realize a centered span below 1/3, so
+    # smaller requested values are clamped upward internally.
     tumbling_span_frac: float = 0.20
     # Camera pointing offset — look at a point offset from geometric center G
     # in body frame. For tumbling targets, the tumble sweeps this offset through
@@ -224,7 +258,20 @@ class TrajectoryConfig(BaseModel):
     #   I      = inertial look-at only
     #   G      = body-frame look-at only
     #   hybrid = blend inertial and body-frame look-at using follow gains
-    camera_lookat_mode: Literal["I", "G", "hybrid"] = "hybrid"
+    #   h      = alias for hybrid
+    #   h-cro  = hybrid pointing with tumbling CRO translation
+    #   h-nmc  = hybrid pointing with tumbling NMC translation
+    #   hybrid-weak/medium/strong = preset hybrid follow strengths
+    camera_lookat_mode: Literal[
+        "I",
+        "G",
+        "hybrid",
+        "h-cro",
+        "h-nmc",
+        "hybrid-weak",
+        "hybrid-medium",
+        "hybrid-strong",
+    ] = "hybrid"
     # Camera target-follow gains for passive inspection.
     # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
     camera_pitchyaw_follow_gain: float = 0.0
@@ -241,10 +288,37 @@ class TrajectoryConfig(BaseModel):
     h_orbit: float = 550e3  # circular altitude (m)
     R_earth: float = 6371e3  # Earth radius (m)
     # Time settings
+    # Effective image cadence assumed by the trajectory guard/repair logic.
+    # The generator uses this interval when estimating whether the sampled
+    # translation will create enough frame-to-frame motion for VO.
     IMAGE_MAX_DT_S: float = 1.0
     tend: float = 500.0
     tstep: float = 0.5
+    # Minimum median frame-to-frame image motion [px] that the initial
+    # condition guard tries to preserve. Increasing this biases generation
+    # toward stronger transverse velocity and more lateral baseline.
     MIN_F2F_PX_MED: float = 3.0
+    # Maximum allowed radial dominance of the initial relative velocity.
+    # Smaller values force the generator to prefer lateral motion over
+    # straight in/out line-of-sight motion.
+    MAX_INIT_RADIAL_DOMINANCE: float = 0.90
+    # Tumbling-target variant can tolerate a slightly more radial translation
+    # because target rotation contributes additional apparent motion, but large
+    # values still tend to produce weak monocular triangulation.
+    TUMBLING_MAX_INIT_RADIAL_DOMINANCE: float = 0.95
+    # Tumbling-rate bounds [deg/s]. These set the initial target spin
+    # magnitude. Higher values increase apparent feature motion, but too much
+    # spin can make the sequence harder rather than easier for VO.
+    tumbling_omega_min_deg: float = 3.0
+    tumbling_omega_max_deg: float = 5.0
+    # Minimum fraction of the second-largest component of the sampled tumbling
+    # axis. This keeps the spin axis off the principal axes so the tumble is
+    # genuinely multi-axis rather than a near-pure single-axis spin.
+    tumbling_off_axis_min: float = 0.3
+    # Minimum component of the sampled tumbling axis along the inertia
+    # outlier axis when inertia-aware excitation is used. Raising this pushes
+    # the motion toward the strongest asymmetric excitation.
+    tumbling_min_asymmetry_component: float = 0.4
 
     inertia_config: InertiaConfig = Field(default_factory=InertiaConfig.model_construct)
 
@@ -281,6 +355,62 @@ class TrajectoryConfig(BaseModel):
         else:
             raise ValueError(f"Invalid path_mode: {self.path_mode}")
 
+    @property
+    def camera_pointing_mode(self) -> str:
+        if self.camera_lookat_mode in {
+            "h-cro",
+            "h-nmc",
+            "hybrid-weak",
+            "hybrid-medium",
+            "hybrid-strong",
+        }:
+            return "hybrid"
+        return self.camera_lookat_mode
+
+    @property
+    def tumbling_translation_mode(self) -> str:
+        if self.camera_lookat_mode == "h-nmc":
+            return "nmc"
+        return "cro"
+
+    @property
+    def resolved_camera_pitchyaw_follow_gain(self) -> float:
+        if self.camera_lookat_mode == "hybrid-weak":
+            return 0.25
+        if self.camera_lookat_mode == "hybrid-medium":
+            return 0.40
+        if self.camera_lookat_mode == "hybrid-strong":
+            return 0.70
+        return self.camera_pitchyaw_follow_gain
+
+    @property
+    def resolved_camera_roll_follow_gain(self) -> float:
+        if self.camera_lookat_mode == "hybrid-weak":
+            return 0.10
+        if self.camera_lookat_mode == "hybrid-medium":
+            return 0.15
+        if self.camera_lookat_mode == "hybrid-strong":
+            return 0.35
+        return self.camera_roll_follow_gain
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_camera_lookat_mode(cls, data: Any):
+        if not isinstance(data, dict):
+            return data
+
+        data = data.copy()
+        lookat_mode = data.get("camera_lookat_mode")
+        if not isinstance(lookat_mode, str):
+            return data
+
+        normalized = lookat_mode.strip()
+        if normalized == "h":
+            normalized = "hybrid"
+
+        data["camera_lookat_mode"] = normalized
+        return data
+
 
 class SceneConfig(BaseModel):
     """Total Configuration, model and output"""
@@ -291,6 +421,7 @@ class SceneConfig(BaseModel):
     camera: CameraConfig = Field(default_factory=CameraConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
+    screening: SeedScreeningConfig = Field(default_factory=SeedScreeningConfig)
     # Vision Blender addon settings
     save_depth: bool = True
     save_normals: bool = True
@@ -302,6 +433,7 @@ class SceneConfig(BaseModel):
 
     # Rendering control
     frame_ids: list[int] | None = None  # If None, use all frames
+    from_frame_id: int | None = None  # If frame ids not specified, use this as the starting frame (inclusive)
     selected_model: str = "RF_Hubble"
     model_rotation_quat: float | None = None  # To align model with propper inertia calculation
 

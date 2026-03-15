@@ -10,10 +10,12 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
+import copy
 import datetime
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -38,6 +40,7 @@ from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_const_rotation,
     write_camera_trajectory_fib,
 )
+from modules.trajectory.seed_screening import evaluate_seed_candidate, write_screening_report
 from modules.trajectory.trajectory_io import (
     get_scaled_trajectory_in_ECI,
     make_frames_from_trajectory,
@@ -50,6 +53,46 @@ DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 def _sanitize_folder_token(value: str) -> str:
     token = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in value)
     return token.strip("_") or "Unknown"
+
+
+def _resolve_frame_ids(config: SceneConfig, num_frames: int) -> list[int]:
+    if config.frame_ids is not None:
+        return config.frame_ids
+
+    start_frame = config.from_frame_id or 0
+    if start_frame < 0:
+        raise ValueError(f"from_frame_id must be non-negative, got {start_frame}")
+    if start_frame >= num_frames:
+        raise ValueError(f"from_frame_id={start_frame} is out of range for trajectory with {num_frames} frames")
+
+    return list(range(start_frame, num_frames))
+
+
+def resolve_config_asset_paths(config: SceneConfig, project_root: Path | None = None) -> SceneConfig:
+    project_root = project_root or Path(__file__).parent.resolve()
+
+    if not os.path.isabs(config.scene_blend_path):
+        config.scene_blend_path = str(project_root / config.scene_blend_path)
+    if config.hdri_path and not os.path.isabs(config.hdri_path):
+        config.hdri_path = str(project_root / config.hdri_path)
+    for _obj_name, obj_cfg in config.objects.items():
+        if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
+            obj_cfg.blend_path = str(project_root / obj_cfg.blend_path)
+
+    return config
+
+
+def get_render_output_dirs(config: SceneConfig, renders_base_dir: Path) -> tuple[Path, Path]:
+    image_out_dir = renders_base_dir / "images_raw"
+    masked_out_dir = renders_base_dir / "images"
+    if str(config.setup.stars_mode).casefold() == "off":
+        if str(config.setup.earth_mode).casefold() == "off":
+            image_out_dir = image_out_dir / "Earth_Stars_OFF"
+        image_out_dir = image_out_dir / "Stars_OFF"
+    elif str(config.setup.earth_mode).casefold() == "off":
+        image_out_dir = image_out_dir / "Earth_OFF"
+
+    return image_out_dir, masked_out_dir
 
 
 def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: str) -> list[str]:
@@ -124,6 +167,111 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
     return agent_folders
 
 
+def _derive_attempt_seed(base_seed: int, attempt_idx: int) -> int:
+    if attempt_idx == 0:
+        return int(base_seed) & 0x7FFFFFFF
+    seed_seq = np.random.SeedSequence(base_seed)
+    child_state = seed_seq.generate_state(attempt_idx + 1, dtype=np.uint32)
+    return int(child_state[attempt_idx]) & 0x7FFFFFFF
+
+
+def _resolve_screening_seed(config: SceneConfig) -> int:
+    if config.trajectory.seed is not None:
+        return int(config.trajectory.seed) & 0x7FFFFFFF
+    return int(time.time_ns()) & 0x7FFFFFFF
+
+
+def _promote_candidate_outputs(staging_dir: Path, output_dir: Path, candidate_prefix: str, final_prefix: str) -> None:
+    trajectory_json = staging_dir / f"{candidate_prefix}_trajectory.json"
+    if trajectory_json.exists():
+        shutil.move(str(trajectory_json), str(output_dir / f"{final_prefix}_trajectory.json"))
+
+    for path in staging_dir.glob(f"{candidate_prefix}*"):
+        if path.name == f"{candidate_prefix}_trajectory.json":
+            continue
+        destination = output_dir / path.name.replace(candidate_prefix, final_prefix, 1)
+        if destination.exists():
+            raise FileExistsError(f"Cannot promote candidate output '{destination}'; destination already exists.")
+        shutil.move(str(path), str(destination))
+
+
+def _generate_screened_trajectories(
+    config: SceneConfig, output_dir: Path, config_prefix: str, screening_root: Path
+) -> tuple[list[Path], dict]:
+    logger = get_logger()
+    screening_cfg = config.screening
+    attempts_payload: list[dict] = []
+
+    if not screening_cfg.enabled:
+        agent_folders = [Path(folder) for folder in generate_trajectories(config, output_dir, config_prefix=config_prefix)]
+        return agent_folders, {"status": "disabled", "attempts": attempts_payload}
+
+    if config.trajectory_type != "trajectory_generator":
+        raise ValueError("Seed screening currently supports only trajectory_generator runs.")
+
+    max_attempts = max(int(screening_cfg.max_attempts), 1)
+    if not screening_cfg.resample_on_reject:
+        max_attempts = 1
+    base_seed = _resolve_screening_seed(config)
+    last_report = None
+
+    for attempt_idx in range(max_attempts):
+        attempt_config = copy.deepcopy(config)
+        attempt_config.trajectory.seed = _derive_attempt_seed(base_seed, attempt_idx)
+        if attempt_idx > 0 and screening_cfg.resample_on_reject:
+            attempt_config.trajectory.illumination_seed = None
+
+        candidate_prefix = f"{config_prefix}_attempt_{attempt_idx + 1}"
+        agent_folders = [Path(folder) for folder in generate_trajectories(attempt_config, screening_root, config_prefix=candidate_prefix)]
+        report = evaluate_seed_candidate(agent_folders, attempt_config, config_prefix=config_prefix)
+        report.attempts_used = attempt_idx + 1
+        last_report = report
+
+        attempt_record = report.model_dump()
+        attempt_record["attempt_idx"] = attempt_idx + 1
+        attempts_payload.append(attempt_record)
+
+        report_path = screening_root / f"{candidate_prefix}_screening.json"
+        write_screening_report(report, report_path)
+
+        if report.verdict == "ACCEPT":
+            config.trajectory.seed = attempt_config.trajectory.seed
+            config.trajectory.illumination_seed = attempt_config.trajectory.illumination_seed
+            _promote_candidate_outputs(screening_root, output_dir, candidate_prefix, config_prefix)
+            final_agent_folders = [
+                Path(str(agent_folder).replace(str(screening_root / candidate_prefix), str(output_dir / config_prefix)))
+                for agent_folder in agent_folders
+            ]
+            logger.info(
+                "Accepted seed %s for %s after %d attempt(s).",
+                config.trajectory.seed,
+                config_prefix,
+                attempt_idx + 1,
+            )
+            return final_agent_folders, {
+                "status": "accepted",
+                "base_seed": base_seed,
+                "attempts": attempts_payload,
+                "accepted_seed": config.trajectory.seed,
+            }
+
+        logger.warning(
+            "Rejected seed %s for %s on attempt %d/%d: %s",
+            attempt_config.trajectory.seed,
+            config_prefix,
+            attempt_idx + 1,
+            max_attempts,
+            "; ".join(report.diagnosis) if report.diagnosis else "screening checks failed",
+        )
+
+    if last_report is not None:
+        raise ValueError(
+            f"{config_prefix} failed screening after {max_attempts} attempts. "
+            f"Last rejection reasons: {'; '.join(last_report.diagnosis) if last_report.diagnosis else 'unknown'}"
+        )
+    raise ValueError(f"{config_prefix} failed screening before any candidate report was produced.")
+
+
 def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger = get_logger()
     renderer = BlenderRenderer(config, verbose=True)
@@ -146,21 +294,14 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("[Session] Renders output: %s/", renders_base_dir)
     frame_start_time = time.time()
 
-    frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
+    frame_ids = _resolve_frame_ids(config, len(frames))
 
     # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
     N_digits = max(4, int(math.log10(len(frames))) + 1)
 
     gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-    image_out_dir = renders_base_dir / "images_raw"
-    masked_out_dir = renders_base_dir / "images"
-    if str(config.setup.stars_mode).casefold() == "off":
-        if str(config.setup.earth_mode).casefold() == "off":
-            image_out_dir = image_out_dir / "Earth_Stars_OFF"
-        image_out_dir = image_out_dir / "Stars_OFF"
-    elif str(config.setup.earth_mode).casefold() == "off":
-        image_out_dir = image_out_dir / "Earth_OFF"
+    image_out_dir, masked_out_dir = get_render_output_dirs(config, renders_base_dir)
 
     # Prepare GT folders
     gt_dirs = {
@@ -176,11 +317,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     avg_frame_time = 0.0
 
-    avg_frame_time = 0.0
-
     with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
         image_filenames = []
-        for i in frame_ids:
+        for rendered_idx, i in enumerate(frame_ids):
             frame_start_time = time.time()
             fr = frames[i]
             fake_fr2 = None
@@ -235,16 +374,16 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
                 )
 
             current_frame_time = time.time() - frame_start_time
-            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
-            time_remaining_estimate = avg_frame_time * (total - i - 1)
+            avg_frame_time = (avg_frame_time * rendered_idx + current_frame_time) / (rendered_idx + 1)
+            time_remaining_estimate = avg_frame_time * (total - rendered_idx - 1)
             time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
-            logger.info("Generated frame %d in %.2f seconds. Output: %s", i, current_frame_time, image_filename)
-            logger.info("Average frame time: %.2f seconds.", avg_frame_time)
-            logger.info("Estimated time remaining: %s", time_delta_str)
-            logger.info(
-                "Estimated time of completion: %s",
-                datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate)),
-            )
+
+            if rendered_idx == 0 or rendered_idx % 5 == 0 or rendered_idx == total - 1:
+                logger.info("============================================================================================")
+                logger.info(f"Finished rendering frame {i} ({rendered_idx + 1}/{total}) in {current_frame_time:.2f} seconds.")
+                logger.info(f"Average frame time so far: {avg_frame_time:.2f} seconds.")
+                logger.info(f"Estimated time remaining: {time_delta_str}")
+                logger.info(f"Estimated time of completion: {datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate))}")
 
     # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
@@ -278,6 +417,10 @@ def run_sweep(sweep_config: SweepConfig):
         json.dump(payload, f, indent=2)
 
     PROJECT_ROOT = Path(__file__).parent.resolve()
+    screening_root = ensure_dir(output_dir / "_screening")
+
+    render_jobs: list[tuple[SceneConfig, Path]] = []
+    screening_summary: dict[str, dict] = {}
 
     for i, config in enumerate(configs):
         config_prefix = f"Config_{i + 1}"
@@ -287,18 +430,25 @@ def run_sweep(sweep_config: SweepConfig):
             payload = config.model_dump()
             json.dump(payload, f, indent=2)
 
-        # Ensure paths are absolute
-        if not os.path.isabs(config.scene_blend_path):
-            config.scene_blend_path = str(PROJECT_ROOT / config.scene_blend_path)
-        if config.hdri_path and not os.path.isabs(config.hdri_path):
-            config.hdri_path = str(PROJECT_ROOT / config.hdri_path)
-        for _obj_name, obj_cfg in config.objects.items():
-            if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
-                obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
+        resolve_config_asset_paths(config, PROJECT_ROOT)
 
-        agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
-        for agent_folder in agent_folders:
-            run_sisfos_with_config(config, Path(agent_folder))
+        agent_folders, screening_info = _generate_screened_trajectories(
+            config, output_dir, config_prefix=config_prefix, screening_root=screening_root
+        )
+        screening_summary[config_prefix] = screening_info
+
+        # Save each expanded config after seed screening so the accepted seed is recorded.
+        with open(output_dir / f"{config_prefix}.json", "w") as f:
+            payload = config.model_dump()
+            json.dump(payload, f, indent=2)
+
+        render_jobs.extend((config, Path(agent_folder)) for agent_folder in agent_folders)
+
+    with open(output_dir / "screening_summary.json", "w") as f:
+        json.dump(screening_summary, f, indent=2)
+
+    for config, agent_folder in render_jobs:
+        run_sisfos_with_config(config, agent_folder)
 
 
 if __name__ == "__main__":

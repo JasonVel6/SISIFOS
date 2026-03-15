@@ -154,7 +154,7 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
+            rho_max=config.MAX_INIT_RADIAL_DOMINANCE,
             R0_const=config.R0_const,
             variant="cro",
             rngs_mc=rngs_mc,
@@ -169,10 +169,11 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
+            rho_max=config.MAX_INIT_RADIAL_DOMINANCE,
         )
     elif config.rotMode_Gframe == "3":
-        logger.info("  Tumbling mode (CRO trajectory + target tumbling)")
+        tumbling_variant = config.tumbling_translation_mode
+        logger.info("  Tumbling mode (%s trajectory + target tumbling)", tumbling_variant.upper())
         # Use faster tumbling (3-5 deg/s) for better inertia observability.
         # This is within the conservative design envelope (~5 deg/s upper bound).
         # Slower rates (0.5-2 deg/s default) have near-zero omega_dot, making
@@ -185,13 +186,15 @@ def generate_trajectories_dynamical(
             focal_length_px=camera_config.focal_length_px,
             kf_dt=config.IMAGE_MAX_DT_S,
             px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.95,
+            rho_max=config.TUMBLING_MAX_INIT_RADIAL_DOMINANCE,
             R0_const=config.R0_const,
-            omega_min_deg=3.0,
-            omega_max_deg=5.0,
+            omega_min_deg=config.tumbling_omega_min_deg,
+            omega_max_deg=config.tumbling_omega_max_deg,
+            off_axis_min=config.tumbling_off_axis_min,
             J=config.inertia_config.J,
-            min_asymmetry_component=0.4,
+            min_asymmetry_component=config.tumbling_min_asymmetry_component,
             span_frac=config.tumbling_span_frac,
+            variant=tumbling_variant,
         )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])
@@ -417,7 +420,10 @@ def generate_trajectories_dynamical(
                     if omega_retry < MAX_OMEGA_RETRIES - 1:
                         omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
                         d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.inertia_config.J, min_asymmetry_component=0.4, off_axis_min=0.3
+                            rngs_mc[mc_trial],
+                            config.inertia_config.J,
+                            min_asymmetry_component=config.tumbling_min_asymmetry_component,
+                            off_axis_min=config.tumbling_off_axis_min,
                         )
                         omega_GI_G_0[mc_trial] = omega_mag * d_new
 
@@ -489,9 +495,9 @@ def generate_trajectories_dynamical(
         scan_amp = config.pointing_scan_amplitude
         scan_T = config.pointing_scan_period
         has_scan = (not is_tumbling) and (scan_amp > 0) and (scan_T > 0)
-        lookat_mode = config.camera_lookat_mode
-        pitchyaw_follow_gain = float(np.clip(config.camera_pitchyaw_follow_gain, 0.0, 1.0))
-        roll_follow_gain = float(np.clip(config.camera_roll_follow_gain, 0.0, 1.0))
+        lookat_mode = config.camera_pointing_mode
+        pitchyaw_follow_gain = float(np.clip(config.resolved_camera_pitchyaw_follow_gain, 0.0, 1.0))
+        roll_follow_gain = float(np.clip(config.resolved_camera_roll_follow_gain, 0.0, 1.0))
 
         for j in range(nbSteps):
             q_IG[mc_trial, j] = R2q(R_IG[mc_trial, j])
