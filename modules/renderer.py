@@ -1,15 +1,15 @@
-import bpy
+import importlib.util
+import math
 import os
 import sys
-import math
-import importlib.util
 from pathlib import Path
-from typing import List, Dict
+
+import bpy
 from mathutils import Quaternion
 
+from .blender_utils import append_blend_objects, clear_anim, keyframe_pose, scale_object_by_factor, set_sun_direction
 from .config import SceneConfig
 from .io_utils import vprint
-from .blender_utils import append_blend_objects, scale_object_by_factor, set_sun_direction, clear_anim, keyframe_pose
 
 
 class BlenderRenderer:
@@ -150,7 +150,7 @@ class BlenderRenderer:
 
         return selected_model
 
-    def get_all_models(self) -> List[bpy.types.Object]:
+    def get_all_models(self) -> list[bpy.types.Object]:
         """Get all RF_* models."""
         return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
 
@@ -171,7 +171,7 @@ class BlenderRenderer:
         bpy.context.view_layer.update()
 
     @staticmethod
-    def _are_contiguous(frame_ids: List[int]) -> bool:
+    def _are_contiguous(frame_ids: list[int]) -> bool:
         """Return True if *frame_ids* form a contiguous range min … max."""
         if not frame_ids:
             return False
@@ -187,12 +187,12 @@ class BlenderRenderer:
         cam: bpy.types.Object,
         model: bpy.types.Object,
         sun: bpy.types.Object,
-        frames: List[Dict],
-        frame_ids: List[int],
+        frames: list[dict],
+        frame_ids: list[int],
         output_dir: Path,
         exposure_time_s: float,
         N_digits: int,
-    ) -> List[str]:
+    ) -> list[str]:
         """Keyframe the whole trajectory and render every *frame_id*.
 
         All frames are keyframed up front so Cycles can sample real

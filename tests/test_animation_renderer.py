@@ -10,8 +10,6 @@ a single lightweight render to verify keyframe-based rendering works.
 """
 
 import json
-import pytest
-import numpy as np
 from pathlib import Path
 
 from main import run_sweep
@@ -29,7 +27,7 @@ class TestAnimationRenderer:
         the correct image files and imgList.
         """
         config_path = "configs/ci_test.json"
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             sweep_json = json.load(f)
 
         sweep_json["base_config"]["trajectory"]["MIN_F2F_PX_MED"] = 0.0

@@ -10,26 +10,26 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
-import sys
-import os
-import math
-from pathlib import Path
-import argparse
 import json
+import math
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 
 sys.path.append(os.getcwd())
 from modules.config import SceneConfig, SweepConfig
-from modules.renderer import BlenderRenderer
 from modules.io_utils import (
+    create_image_list,
     ensure_dir,
     get_timestamp_folder,
-    format_R_RPO,
     handle_gt_from_npz,
     images_to_video_blender_sequence,
     vprint,
-    create_image_list,
 )
+from modules.renderer import BlenderRenderer
+from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 from modules.trajectory.sampling_trajectory import (
     write_camera_trajectory_fib,
 )
@@ -38,7 +38,6 @@ from modules.trajectory.trajectory_io import (
     make_frames_from_trajectory,
     read_camera_trajectory,
 )
-from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 
 DEFAULT_CONFIG_PATH = "/config/config_example_basic.json"
 
@@ -181,7 +180,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     print(f"Finished rendering frames for {model.name}. Output directory: {renders_base_dir}")
     if config.setup.generate_video:
-        print(f"Saving video")
+        print("Saving video")
         images_to_video_blender_sequence(
             image_dir=image_out_dir,
             image_filenames=image_filenames,
@@ -253,12 +252,12 @@ if __name__ == "__main__":
             )
 
         print(f"[SISFOS] Loading sweep config from: {args.sweep_config_path}")
-        sweep_config_json = json.load(open(args.sweep_config_path, "r"))
+        sweep_config_json = json.load(open(args.sweep_config_path))
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 
     elif args.config_path:
         print(f"[SISFOS] Loading config from: {args.config_path}")
-        base_config_json = json.load(open(args.config_path, "r"))
+        base_config_json = json.load(open(args.config_path))
 
         sweep_config_json = {}
 
@@ -266,7 +265,7 @@ if __name__ == "__main__":
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 
     else:
-        config_json = json.load(open(DEFAULT_CONFIG_PATH, "r"))
+        config_json = json.load(open(DEFAULT_CONFIG_PATH))
         sweep_config_json = {"base_config": config_json, "sweep_parameters": {}}
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 

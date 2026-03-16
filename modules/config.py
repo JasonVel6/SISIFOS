@@ -5,19 +5,17 @@ Defines the configuration schema for the trajectory generator and renderer
 
 """
 
-import time
-from pydantic import BaseModel, Field, computed_field
-from typing import List, Dict, Optional, Tuple, Any, Literal
-import json
-import numpy as np
-import itertools
 import copy
-import enum
+import itertools
+from typing import Any, Literal
+
+import numpy as np
+from pydantic import BaseModel, Field
 
 
 class ObjectConfig(BaseModel):
     name: str
-    blend_path: Optional[str] = None
+    blend_path: str | None = None
     scale_factor: float = 1.0
 
 
@@ -29,7 +27,7 @@ class CameraConfig(BaseModel):
     sensor_width: float = 36.0  # mm (matches Blender default)
     clip_start: float = 0.00001  # m
     clip_end: float = 5000000.0  # m
-    resolution: Tuple[int, int] = (480, 480)
+    resolution: tuple[int, int] = (480, 480)
     lens_flare: float = 0.01
     exposure_time_s: float = 1.0 / 60.0  # s
 
@@ -79,11 +77,11 @@ class TrajectoryConfig(BaseModel):
 
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
-    seed: Optional[int] = None  # For reproducibility
+    seed: int | None = None  # For reproducibility
     num_agents: int = 1
     num_mc: int = 1
 
-    r_AG_G: List[float] = Field(default_factory=lambda: [0.1, 0.05, 0.15])
+    r_AG_G: list[float] = Field(default_factory=lambda: [0.1, 0.05, 0.15])
 
     # Sensor noise
     # ASTRO APS3 star tracker (Jena-Optronik)
@@ -100,7 +98,7 @@ class TrajectoryConfig(BaseModel):
     # Accelerometer noise is less often published in detail for space IMUs;
     # using a nominal value based on typical performance.
     sigma_accel: float = 10.0 * 1e-6 * 9.80665 * np.sqrt(10.0 / 2.0)
-    MEAN_DEFAULT: List[float] = [0.0, 0.0, 0.0]
+    MEAN_DEFAULT: list[float] = [0.0, 0.0, 0.0]
 
     # Bias models
     # Gyro bias stability < 0.005 deg/h (Astrix NS published spec).
@@ -154,15 +152,15 @@ class TrajectoryConfig(BaseModel):
         return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
 
     @property
-    def COV_R_ASTRO_APS3(self) -> List[List[float]]:
+    def COV_R_ASTRO_APS3(self) -> list[list[float]]:
         return [[self.sigma_Rxy_aps3**2, 0, 0], [0, self.sigma_Rxy_aps3**2, 0], [0, 0, self.sigma_Rz_aps3**2]]
 
     @property
-    def COV_OMEGA_ASTRIX(self) -> List[List[float]]:
+    def COV_OMEGA_ASTRIX(self) -> list[list[float]]:
         return [[self.sigma_omega**2, 0, 0], [0, self.sigma_omega**2, 0], [0, 0, self.sigma_omega**2]]
 
     @property
-    def COV_ACCEL_ASTRIX(self) -> List[List[float]]:
+    def COV_ACCEL_ASTRIX(self) -> list[list[float]]:
         return [[self.sigma_accel**2, 0, 0], [0, self.sigma_accel**2, 0], [0, 0, self.sigma_accel**2]]
 
     # TODO this would be much better done with an enum will implement later tho
@@ -184,14 +182,14 @@ class SceneConfig(BaseModel):
 
     scene_blend_path: str = "assets/scene.blend"
     hdri_path: str = "assets/starmap_2020_16k.exr"
-    objects: Dict[str, ObjectConfig] = Field(default_factory=dict)
+    objects: dict[str, ObjectConfig] = Field(default_factory=dict)
     camera: CameraConfig = Field(default_factory=CameraConfig)
     render: RenderConfig = Field(default_factory=RenderConfig)
     setup: SetupConfig = Field(default_factory=SetupConfig)
     trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath"] = "trajectory_generator"
     trajectory_sampling: SamplingTrajectoryConfig = Field(default_factory=SamplingTrajectoryConfig)
     trajectory: TrajectoryConfig = Field(default_factory=TrajectoryConfig)
-    trajectory_filepath: Optional[str] = ""
+    trajectory_filepath: str | None = ""
     # Vision Blender addon settings
     save_depth: bool = True
     save_normals: bool = True
@@ -200,7 +198,7 @@ class SceneConfig(BaseModel):
     save_obj_poses: bool = True
 
     # Rendering control
-    frame_ids: Optional[List[int]] = None  # If None, use all frames
+    frame_ids: list[int] | None = None  # If None, use all frames
     selected_model: str = "RF_Hubble"
     model_rotation_z_deg: float = 45.0  # Apply initial Z rotation, will be extended to X,Y
 
@@ -213,7 +211,7 @@ class SweepConfig(BaseModel):
     """
 
     base_config: SceneConfig
-    sweep_parameters: Dict[str, List[Any]] = Field(
+    sweep_parameters: dict[str, list[Any]] = Field(
         default_factory=dict
     )  # Dict of parameter full path to list of values to sweep over
 
@@ -245,7 +243,7 @@ class SweepConfig(BaseModel):
                 raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
             setattr(target, last, value)
 
-    def generate_sweep_configs(self) -> List[SceneConfig]:
+    def generate_sweep_configs(self) -> list[SceneConfig]:
         """Generate a list of SceneConfig instances for each combination of sweep parameters"""
         # Generate all combinations of sweep parameters
         if not self.sweep_parameters:

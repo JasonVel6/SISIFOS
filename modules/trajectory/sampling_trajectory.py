@@ -1,12 +1,13 @@
 import math
 import random
-import numpy as np
 from pathlib import Path
-from typing import List, Dict
-from mathutils import Vector, Quaternion
-from modules.trajectory.trajectory_math import fibonacci_sphere, _rand_quat_uniform, quat_to_wxyz
+
+import numpy as np
+from mathutils import Quaternion, Vector
+
 from modules.io_utils import ensure_dir
 from modules.trajectory.trajectory_io import write_camera_trajectory
+from modules.trajectory.trajectory_math import _rand_quat_uniform, fibonacci_sphere, quat_to_wxyz
 
 
 def write_camera_trajectory_fib(
