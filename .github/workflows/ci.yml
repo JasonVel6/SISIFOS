@@ -21,8 +21,6 @@ jobs:
 
       - name: Ruff Lint
         uses: astral-sh/ruff-action@v3
-        with:
-          version: "0.15.6"
         run: "ruff check"
         run: "ruff format --check"
 
