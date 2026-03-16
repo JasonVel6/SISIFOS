@@ -53,9 +53,7 @@ class TestAnimationRenderer:
         raw_dir = agent_dir / "images_raw"
         pngs = list(raw_dir.rglob("frame_*.png"))
         expected = len(sweep_json["base_config"].get("frame_ids") or [])
-        assert len(pngs) == expected, (
-            f"Expected {expected} rendered frames, found {len(pngs)}"
-        )
+        assert len(pngs) == expected, f"Expected {expected} rendered frames, found {len(pngs)}"
 
         # --- Check imgList ---
         imglist = agent_dir / "imgList.txt"
@@ -63,6 +61,7 @@ class TestAnimationRenderer:
 
         # --- Image not black ---
         import matplotlib.pyplot as plt
+
         img = plt.imread(str(pngs[0]))
         assert img.max() > 0.01, "Rendered image is completely black"
 
@@ -72,16 +71,20 @@ class TestContiguousDetection:
 
     def test_contiguous_range(self):
         from modules.renderer import BlenderRenderer
+
         assert BlenderRenderer._are_contiguous([0, 1, 2, 3])
 
     def test_sparse_ids(self):
         from modules.renderer import BlenderRenderer
+
         assert not BlenderRenderer._are_contiguous([0, 2, 5])
 
     def test_single_frame(self):
         from modules.renderer import BlenderRenderer
+
         assert BlenderRenderer._are_contiguous([7])
 
     def test_empty(self):
         from modules.renderer import BlenderRenderer
+
         assert not BlenderRenderer._are_contiguous([])
