@@ -21,9 +21,9 @@ jobs:
 
       - name: Ruff Lint
         uses: astral-sh/ruff-action@v3
-        run: "ruff format --check && ruff check"
         with:
           version: "0.15.6"
+      - run: ruff format --check && ruff check
 
   security-audit:
     runs-on: ubuntu-latest
