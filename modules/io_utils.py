@@ -1,20 +1,22 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
-from datetime import datetime
-from .vis_utils import _depth_vis_and_mask_from_rrpo, _norm_to_rgb, _flow_to_rgb, _id_to_color
 import os
-import shutil
-import bpy
+from datetime import datetime
+from pathlib import Path
 
-def vprint(msg: str, verbose: bool = True):
-    if verbose:
-        print(msg)
+import bpy
+import matplotlib.pyplot as plt
+import numpy as np
+
+from .log_utils import get_logger
+from .vis_utils import _depth_vis_and_mask_from_rrpo, _flow_to_rgb, _id_to_color, _norm_to_rgb
+
+logger = get_logger()
+
 
 def ensure_dir(path: Path) -> Path:
     path = Path(path)
     path.mkdir(parents=True, exist_ok=True)
     return path
+
 
 def format_R_RPO(value: float) -> str:
     if abs(value - round(value)) < 1e-6:
@@ -22,8 +24,10 @@ def format_R_RPO(value: float) -> str:
     # one decimal place, replace '.' with 'p'
     return f"R{str(round(value, 1)).replace('.', 'p')}"
 
+
 def get_timestamp_folder():
     return datetime.now().strftime("%Y-%m-%d_%H%M")
+
 
 def handle_gt_from_npz(
     npz_src: Path,
@@ -35,9 +39,8 @@ def handle_gt_from_npz(
     target_dist: float,
     raw_image_filename: str,
     raw_images_dir: str,
-    masked_images_dir: str
+    masked_images_dir: str,
 ):
-    
     npz_src = Path(npz_src)
     gt_npz_dir = Path(gt_npz_dir)
     gt_depth_dir = Path(gt_depth_dir)
@@ -55,10 +58,11 @@ def handle_gt_from_npz(
     npz_dst = gt_npz_dir / npz_src.name
     if npz_dst.resolve() != npz_src.resolve():
         try:
-            npz_src.replace(npz_dst)   # atomic move if possible
+            npz_src.replace(npz_dst)  # atomic move if possible
         except Exception:
             # fallback: copy then remove
             import shutil
+
             shutil.copy2(npz_src, npz_dst)
             npz_src.unlink(missing_ok=True)
 
@@ -66,8 +70,6 @@ def handle_gt_from_npz(
 
     data = np.load(npz_dst, allow_pickle=True)
 
-    
-   
     # --------- DEPTH (masked + colormap) ---------
     if "depth_map" in data:
         d = data["depth_map"].astype(np.float32)
@@ -87,19 +89,25 @@ def handle_gt_from_npz(
         flow = data["optical_flow"].astype(np.float32)
         plt.imsave(str(gt_flow_dir / f"{base}_Flow.png"), _flow_to_rgb(flow))
 
+    mask = None
+
     # --------- SEGMENTATION (addon-provided) ---------
     if "segmentation_masks" in data:
         seg = data["segmentation_masks"]
         plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
+        mask = seg == 1
 
     # Create masked images
     ensure_dir(Path(masked_images_dir))
     rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
     rendered_img = plt.imread(rendered_img_path)
     masked_img = np.zeros_like(rendered_img)
-    masked_img[near_mask] = rendered_img[near_mask]
+    if mask is None:
+        mask = near_mask
+    masked_img[mask] = rendered_img[mask]
     masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
     plt.imsave(masked_img_path, masked_img)
+
 
 def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     """
@@ -110,8 +118,9 @@ def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
         for i in range(len(timestamps)):
             ts = timestamps[i]
             f.write(f"{ts:.6f} {image_paths[i]}\n")
-    print(f"  Created: {imglist_path}")
+    logger.info("  Created: %s", imglist_path)
     return imglist_path
+
 
 def images_to_video_blender_sequence(
     image_dir: str | Path,
@@ -133,16 +142,16 @@ def images_to_video_blender_sequence(
 
     image_dir = Path(image_dir)
     output_path = Path(output_path)
-    abs_output = Path(output_path).resolve()
+    abs_output = output_path.resolve()
 
-    abs_dir = Path(image_dir).resolve()
+    abs_dir = image_dir.resolve()
     frames = []
     for name in image_filenames:
         p = abs_dir / name
         if p.exists():
             frames.append({"name": p.name})
         else:
-            print(f"Skipping missing frame in video assembly: {p}")
+            logger.warning("Skipping missing frame in video assembly: %s", p)
 
     if not frames:
         raise ValueError("Cannot generate video: no existing frames found in image_dir.")
@@ -189,7 +198,7 @@ def images_to_video_blender_sequence(
         render_scene.render.filepath = str(abs_output)
 
         bpy.ops.render.render(animation=True, scene=render_scene.name)
-        print(f"Video generated successfully: {abs_output}")
+        logger.info("Video generated successfully: %s", abs_output)
         return str(abs_output)
     finally:
         bpy.data.scenes.remove(render_scene)

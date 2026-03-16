@@ -13,16 +13,222 @@ bl_info = {
 }
 
 import json
+import logging
 import os
 import shutil
+import sys
+
 import numpy as np
 
+if sys.platform != "win32":
+    _old_dl_flags = sys.getdlopenflags()
+    sys.setdlopenflags(os.RTLD_DEEPBIND | os.RTLD_NOW)
+    import embreex.rtcore_scene  # noqa: F401
+
+    sys.setdlopenflags(_old_dl_flags)
+    del _old_dl_flags
 import bpy
-from bpy.props import BoolProperty, PointerProperty, FloatVectorProperty
-from bpy.types import Panel, Operator, PropertyGroup
+import trimesh
 from bpy.app.handlers import persistent
+from bpy.props import BoolProperty, FloatVectorProperty, PointerProperty
+from bpy.types import Panel, PropertyGroup
 
 """ Defining fuctions to obtain ground truth data """
+
+_SCENE_RENDER_CACHE = {}
+
+
+def _scene_cache_key(scene) -> int:
+    return int(scene.as_pointer())
+
+
+# Trimesh depth pipeline helpers
+def _make_T_from_extrinsic(extr: np.ndarray) -> np.ndarray:
+    T = np.eye(4, dtype=float)
+    T[:3, :4] = extr
+    return T
+
+
+def _invert_T(T: np.ndarray) -> np.ndarray:
+    R = T[:3, :3]
+    t = T[:3, 3]
+    Ti = np.eye(4)
+    Ti[:3, :3] = R.T
+    Ti[:3, 3] = -R.T @ t
+    return Ti
+
+
+def _camera_rays_in_camera_frame(W: int, H: int, K: np.ndarray) -> np.ndarray:
+    fx, fy = K[0, 0], K[1, 1]
+    cx, cy = K[0, 2], K[1, 2]
+    us = np.arange(W)
+    vs = np.arange(H)
+    uu, vv = np.meshgrid(us, vs)
+    x = (uu - cx) / fx
+    y = (vv - cy) / fy
+    z = np.ones_like(x)
+    dirs = np.stack([x, y, z], axis=-1).reshape(-1, 3).astype(float)
+    norms = np.linalg.norm(dirs, axis=-1, keepdims=True)
+    return dirs / (norms + 1e-12)
+
+
+def _transform_points(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    if pts.shape[0] == 0:
+        return pts.copy()
+    pts_h = np.concatenate([pts, np.ones((pts.shape[0], 1), dtype=float)], axis=1)
+    out = (T @ pts_h.T).T
+    return out[:, :3]
+
+
+def _get_scene_cache(scene) -> dict:
+    return _SCENE_RENDER_CACHE.setdefault(_scene_cache_key(scene), {})
+
+
+def _clear_scene_cache(scene) -> None:
+    _SCENE_RENDER_CACHE.pop(_scene_cache_key(scene), None)
+
+
+_ENVIRONMENT_OBJECTS = {"Earth", "Clouds", "Atmo"}
+
+
+def _extract_target_mesh(scene):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    all_verts = []
+    all_faces = []
+    vert_offset = 0
+    ref_obj_name = None
+    ref_mat_inv = None
+    for obj in scene.objects:
+        if obj.type != "MESH" or obj.hide_render:
+            continue
+        if obj.name in _ENVIRONMENT_OBJECTS:
+            continue
+        obj_eval = obj.evaluated_get(depsgraph)
+        mesh = obj_eval.to_mesh()
+        mesh.calc_loop_triangles()
+        n_verts = len(mesh.vertices)
+        n_tris = len(mesh.loop_triangles)
+        if n_verts == 0 or n_tris == 0:
+            obj_eval.to_mesh_clear()
+            continue
+        co = np.empty(n_verts * 3, dtype=float)
+        mesh.vertices.foreach_get("co", co)
+        tri = np.empty(n_tris * 3, dtype=int)
+        mesh.loop_triangles.foreach_get("vertices", tri)
+        local_verts = co.reshape(n_verts, 3)
+        if ref_obj_name is None:
+            ref_obj_name = obj.name
+            ref_mat_inv = np.array(obj_eval.matrix_world.inverted(), dtype=float)
+            verts = local_verts
+        else:
+            # This cache assumes all target geometry is rigid relative to the
+            # first target object. If another independently moving satellite is
+            # added to the scene, this combined BVH becomes invalid and the BVH
+            # strategy must be revised or rebuilt when relative poses change.
+            mat = np.array(obj_eval.matrix_world, dtype=float)
+            rel = ref_mat_inv @ mat
+            verts = (rel[:3, :3] @ local_verts.T).T + rel[:3, 3]
+        faces = tri.reshape(n_tris, 3)
+        all_verts.append(verts)
+        all_faces.append(faces + vert_offset)
+        vert_offset += verts.shape[0]
+        obj_eval.to_mesh_clear()
+    if not all_verts:
+        return {
+            "ref_obj_name": None,
+            "vertices": np.zeros((0, 3), dtype=float),
+            "faces": np.zeros((0, 3), dtype=int),
+        }
+    return {
+        "ref_obj_name": ref_obj_name,
+        "vertices": np.concatenate(all_verts, axis=0),
+        "faces": np.concatenate(all_faces, axis=0),
+    }
+
+
+def _make_ray_intersector(mesh: trimesh.Trimesh):
+    from trimesh.ray.ray_pyembree import RayMeshIntersector
+
+    return RayMeshIntersector(mesh)
+
+
+def _build_depth_cache(scene) -> dict:
+    target_mesh = _extract_target_mesh(scene)
+    mesh = trimesh.Trimesh(vertices=target_mesh["vertices"], faces=target_mesh["faces"], process=False)
+    return {
+        "ref_obj_name": target_mesh["ref_obj_name"],
+        "is_empty": mesh.is_empty,
+        "intersector": None if mesh.is_empty else _make_ray_intersector(mesh),
+    }
+
+
+def _ensure_depth_cache(scene) -> dict:
+    scene_cache = _get_scene_cache(scene)
+    depth_cache = scene_cache.get("depth_cache")
+    if depth_cache is None:
+        depth_cache = _build_depth_cache(scene)
+        scene_cache["depth_cache"] = depth_cache
+    return depth_cache
+
+
+def _ensure_camera_ray_cache(scene) -> dict:
+    scene_cache = _get_scene_cache(scene)
+    res_x, res_y = get_scene_resolution(scene)
+    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+    signature = (res_x, res_y, float(f_x), float(f_y), float(c_x), float(c_y))
+    ray_cache = scene_cache.get("ray_cache")
+    if ray_cache is None or ray_cache["signature"] != signature:
+        K = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]], dtype=float)
+        ray_cache = {
+            "signature": signature,
+            "res_x": res_x,
+            "res_y": res_y,
+            "dirs_C": _camera_rays_in_camera_frame(res_x, res_y, K),
+        }
+        scene_cache["ray_cache"] = ray_cache
+    return ray_cache
+
+
+def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
+    ray_cache = _ensure_camera_ray_cache(scene)
+    depth_cache = _ensure_depth_cache(scene)
+    res_x = ray_cache["res_x"]
+    res_y = ray_cache["res_y"]
+    T_CW = _make_T_from_extrinsic(extrinsic_mat)
+    dirs_C = ray_cache["dirs_C"]
+
+    if depth_cache["is_empty"] or depth_cache["ref_obj_name"] is None:
+        return np.zeros((res_y, res_x), dtype=np.float32)
+
+    ref_obj = scene.objects.get(depth_cache["ref_obj_name"])
+    if ref_obj is None or ref_obj.hide_render:
+        return np.zeros((res_y, res_x), dtype=np.float32)
+
+    T_WO = np.array(ref_obj.matrix_world, dtype=float)
+    T_OW = _invert_T(T_WO)
+    T_WC = _invert_T(T_CW)
+    T_OC = T_OW @ T_WC
+
+    origins_O = np.repeat(T_OC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
+    dirs_O = (T_OC[:3, :3] @ dirs_C.T).T
+
+    locs_O, ray_idx, _tri_idx = depth_cache["intersector"].intersects_location(
+        origins_O,
+        dirs_O,
+        multiple_hits=False,
+    )
+
+    depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
+    if locs_O.shape[0] == 0:
+        return depth_z.reshape(res_y, res_x)
+
+    T_CO = T_CW @ T_WO
+    locs_C = _transform_points(T_CO, locs_O)
+    z = locs_C[:, 2]
+    max_dist = float(scene.camera.data.clip_end)
+    valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
+    depth_z[ray_idx[valid]] = z[valid].astype(np.float32)
+    return depth_z.reshape(res_y, res_x)
 
 
 def get_scene_resolution(scene):
@@ -53,9 +259,7 @@ def get_camera_parameters_intrinsic(scene):
     focal_length = scene.camera.data.lens  # [mm]
     res_x, res_y = get_scene_resolution(scene)
     cam_data = scene.camera.data
-    sensor_size_in_mm = get_sensor_size(
-        cam_data.sensor_fit, cam_data.sensor_width, cam_data.sensor_height
-    )
+    sensor_size_in_mm = get_sensor_size(cam_data.sensor_fit, cam_data.sensor_width, cam_data.sensor_height)
     sensor_fit = get_sensor_fit(
         cam_data.sensor_fit,
         scene.render.pixel_aspect_x * res_x,
@@ -121,9 +325,7 @@ def get_camera_parameters_extrinsic(scene):
 def get_obj_poses():
     n_chars = get_largest_object_name_length()
     n_object = len(bpy.data.objects)
-    obj_poses = np.zeros(
-        n_object, dtype=[("name", "U{}".format(n_chars)), ("pose", np.float64, (4, 4))]
-    )
+    obj_poses = np.zeros(n_object, dtype=[("name", f"U{n_chars}"), ("pose", np.float64, (4, 4))])
     for ind, obj in enumerate(bpy.data.objects):
         obj_poses[ind] = (obj.name, obj.matrix_world)
     return obj_poses
@@ -163,7 +365,7 @@ def clean_folder(folder_path):
                 elif os.path.isdir(file_path):
                     shutil.rmtree(file_path)
             except Exception as e:
-                print("Failed to delete %s. Reason: %s" % (file_path, e))
+                logging.getLogger("sisifos").error("Failed to delete %s. Reason: %s", file_path, e)
     else:
         os.makedirs(folder_path)
 
@@ -196,19 +398,14 @@ def get_struct_array_of_obj_indexes():
     n_chars = get_largest_object_name_length()
     n_object = len(bpy.data.objects)
     # max_index = 32767 in Blender version 2.83, so unsigned 2-byte is more than enough memory
-    obj_indexes = np.zeros(
-        n_object, dtype=[("name", "U{}".format(n_chars)), ("pass_index", "<u2")]
-    )
+    obj_indexes = np.zeros(n_object, dtype=[("name", f"U{n_chars}"), ("pass_index", "<u2")])
     for ind, obj in enumerate(bpy.data.objects):
         obj_indexes[ind] = (obj.name, obj.pass_index)
     return obj_indexes
 
 
 def is_stereo_ok_for_disparity(scene):
-    if (
-        scene.render.use_multiview
-        and scene.camera.data.stereo.convergence_mode == "PARALLEL"
-    ):
+    if scene.render.use_multiview and scene.camera.data.stereo.convergence_mode == "PARALLEL":
         return True
     return False
 
@@ -226,13 +423,14 @@ def get_transf0to1(scene):
 def load_file_data_to_numpy(scene, tmp_file_path, data_map):
     if not os.path.isfile(tmp_file_path):
         return None
-    out_data = bpy.data.images.load(tmp_file_path)
-    pixels_numpy = np.array(out_data.pixels[:])
+    out_data = bpy.data.images.load(tmp_file_path, check_existing=False)
+    try:
+        pixels_numpy = np.array(out_data.pixels[:], dtype=np.float32)
+    finally:
+        bpy.data.images.remove(out_data)
     res_x, res_y = get_scene_resolution(scene)
     pixels_numpy.resize((res_y, res_x, 4))  # Numpy works with (y, x, channels)
-    pixels_numpy = np.flip(
-        pixels_numpy, 0
-    )  # flip vertically (in Blender y in the image points up instead of down)
+    pixels_numpy = np.flip(pixels_numpy, 0)  # flip vertically (in Blender y in the image points up instead of down)
     if data_map == "Normal":
         normal = pixels_numpy[:, :, 0:3]
         return normal
@@ -249,9 +447,7 @@ def load_file_data_to_numpy(scene, tmp_file_path, data_map):
             return z, disp
         baseline_m = scene.camera.data.stereo.interocular_distance  # [m]
         disp = np.zeros_like(z)  # disp = 0.0, on the invalid points
-        f_x, _f_y, _c_x, _c_y = get_camera_parameters_intrinsic(
-            scene
-        )  # needed for z in Cycles and for disparity
+        f_x, _f_y, _c_x, _c_y = get_camera_parameters_intrinsic(scene)  # needed for z in Cycles and for disparity
         disp[z != INVALID_POINT] = (baseline_m * f_x) / z[z != INVALID_POINT]
         # Check `tmp_file_path` if it is for the left or right camera
         suffix1 = scene.render.views[1].file_suffix
@@ -262,9 +458,7 @@ def load_file_data_to_numpy(scene, tmp_file_path, data_map):
         tmp_seg_mask = pixels_numpy[:, :, 0]
         return tmp_seg_mask
     elif data_map == "OptFlow":
-        opt_flw = pixels_numpy[
-            :, :, :2
-        ]  # We are only interested in the first two channels
+        opt_flw = pixels_numpy[:, :, :2]  # We are only interested in the first two channels
         # In Blender y is up instead of down, so the y optical flow should be -
         # opt_flw[:,:,1] = np.negative(opt_flw[:,:,1]) # channel 1 - y optical flow
         # However, I want forward flow (from current to next frame) instead of backward (next frame to current)
@@ -321,18 +515,14 @@ def save_data_to_npz(
             "disparity_map": disp1,
             "object_poses": obj_poses,
         }
-        out_path1 = os.path.join(
-            gt_dir_path, "{:04d}{}.npz".format(scene.frame_current, suffix1)
-        )
+        out_path1 = os.path.join(gt_dir_path, f"{scene.frame_current:04d}{suffix1}.npz")
         out_dict_filtered1 = {k: v for k, v in out_dict1.items() if v is not None}
         np.savez_compressed(out_path1, **out_dict_filtered1)
         # Camera 0
         suffix0 = scene.render.views[0].file_suffix  # By default '_L'
-        out_path0 = os.path.join(
-            gt_dir_path, "{:04d}{}.npz".format(scene.frame_current, suffix0)
-        )
+        out_path0 = os.path.join(gt_dir_path, f"{scene.frame_current:04d}{suffix0}.npz")
     else:
-        out_path0 = os.path.join(gt_dir_path, "{:04d}.npz".format(scene.frame_current))
+        out_path0 = os.path.join(gt_dir_path, f"{scene.frame_current:04d}.npz")
     out_dict_filtered0 = {k: v for k, v in out_dict0.items() if v is not None}
     np.savez_compressed(out_path0, **out_dict_filtered0)
 
@@ -365,6 +555,10 @@ def load_handler_render_init(scene):
                 bpy.context.view_layer.use_pass_normal = True
         ## Segmentation masks and optical flow only work in Cycles
         if scene.render.engine == "CYCLES":
+            scene_cache = _get_scene_cache(scene)
+            has_non_zero_obj_idx = check_any_obj_with_non_zero_index()
+            scene_cache["has_non_zero_obj_idx"] = has_non_zero_obj_idx
+            scene_cache["seg_masks_indexes"] = get_struct_array_of_obj_indexes() if has_non_zero_obj_idx else None
             if vision_blender.bool_save_segmentation_masks:
                 if not bpy.context.view_layer.use_pass_object_index:
                     bpy.context.view_layer.use_pass_object_index = True
@@ -378,18 +572,14 @@ def load_handler_render_init(scene):
         ## Remove old nodes (from previous rendering)
         remove_old_vision_blender_nodes(tree)
         ## Create new output node
-        node_output = create_node(
-            tree, "CompositorNodeOutputFile", "output_vision_blender"
-        )
+        node_output = create_node(tree, "CompositorNodeOutputFile", "output_vision_blender")
         ## Set-up the output img format
         node_output.format.file_format = "OPEN_EXR"
         node_output.format.color_mode = "RGBA"
         node_output.format.color_depth = "32"
         node_output.format.exr_codec = "PIZ"
         ## Set-up output path
-        TMP_FILES_PATH = os.path.join(
-            os.path.dirname(scene.render.filepath), "tmp_vision_blender"
-        )
+        TMP_FILES_PATH = os.path.join(os.path.dirname(scene.render.filepath), "tmp_vision_blender")
         clean_folder(TMP_FILES_PATH)
         node_output.base_path = TMP_FILES_PATH
 
@@ -398,9 +588,7 @@ def load_handler_render_init(scene):
         slots.clear()
 
         links = tree.links
-        rl = scene.node_tree.nodes[
-            "Render Layers"
-        ]  # I assumed there is always a Render Layers
+        rl = scene.node_tree.nodes["Render Layers"]  # I assumed there is always a Render Layers
         """ Normal map """
         if vision_blender.bool_save_normals:
             slot_normal = _new_slot(node_output, "####_Normal")
@@ -415,7 +603,7 @@ def load_handler_render_init(scene):
             """Segmentation masks"""
             if vision_blender.bool_save_segmentation_masks:
                 # We can only generate segmentation masks if that are any labeled objects (objects w/ index set)
-                non_zero_obj_ind_found = check_any_obj_with_non_zero_index()
+                non_zero_obj_ind_found = scene_cache["has_non_zero_obj_idx"]
                 if non_zero_obj_ind_found:
                     slot_seg_mask = _new_slot(node_output, "####_Segmentation_Mask")
                     links.new(rl.outputs["IndexOB"], slot_seg_mask)
@@ -424,12 +612,8 @@ def load_handler_render_init(scene):
                 # Create new slot in output node
                 slot_opt_flow = _new_slot(node_output, "####_Optical_Flow")
                 # Get optical flow
-                node_rg_separate = create_node(
-                    tree, "CompositorNodeSepRGBA", "BA_sep_vision_blender"
-                )
-                node_rg_combine = create_node(
-                    tree, "CompositorNodeCombRGBA", "RG_comb_vision_blender"
-                )
+                node_rg_separate = create_node(tree, "CompositorNodeSepRGBA", "BA_sep_vision_blender")
+                node_rg_combine = create_node(tree, "CompositorNodeCombRGBA", "RG_comb_vision_blender")
                 links.new(rl.outputs["Vector"], node_rg_separate.inputs["Image"])
                 links.new(node_rg_separate.outputs["B"], node_rg_combine.inputs["R"])
                 links.new(node_rg_separate.outputs["A"], node_rg_combine.inputs["G"])
@@ -466,9 +650,7 @@ def load_handler_render_init(scene):
             ### stereo mode
             stereo_info["stereo_mode"] = cam.data.stereo.convergence_mode
             ### stereo interocular distance
-            stereo_info[
-                "stereo_interocular_distance [m]"
-            ] = cam.data.stereo.interocular_distance
+            stereo_info["stereo_interocular_distance [m]"] = cam.data.stereo.interocular_distance
             ### stereo pivot
             stereo_info["stereo_pivot"] = cam.data.stereo.pivot
             dict_cam_info["stereo_info"] = stereo_info
@@ -478,6 +660,11 @@ def load_handler_render_init(scene):
         with open(out_path, "w") as tmp_file:
             json.dump(dict_cam_info, tmp_file)
 
+        scene_cache = _get_scene_cache(scene)
+        if vision_blender.bool_save_depth:
+            _ensure_camera_ray_cache(scene)
+            _ensure_depth_cache(scene)
+
 
 @persistent
 def load_handler_after_rend_frame(
@@ -486,9 +673,10 @@ def load_handler_after_rend_frame(
     """This script runs after rendering each frame"""
     # ref: https://blenderartists.org/t/how-to-run-script-on-every-frame-in-blender-render/699404/2
     # check if user wants to generate the ground truth data
-    #print("Entered load_handler")
+    # print("Entered load_handler")
     if scene.vision_blender.bool_save_gt_data:
         vision_blender = scene.vision_blender
+        scene_cache = _get_scene_cache(scene)
         is_stereo_activated = scene.render.use_multiview
         if is_stereo_activated:
             suffix0 = scene.render.views[0].file_suffix  # By default '_L'
@@ -537,88 +725,59 @@ def load_handler_after_rend_frame(
                 if is_stereo_activated:
                     tmp_file_path1 = os.path.join(
                         TMP_FILES_PATH,
-                        "{:04d}_Normal{}.exr".format(scene.frame_current, suffix1),
+                        f"{scene.frame_current:04d}_Normal{suffix1}.exr",
                     )
                     normal1 = load_file_data_to_numpy(scene, tmp_file_path1, "Normal")
                     tmp_file_path0 = os.path.join(
                         TMP_FILES_PATH,
-                        "{:04d}_Normal{}.exr".format(scene.frame_current, suffix0),
+                        f"{scene.frame_current:04d}_Normal{suffix0}.exr",
                     )
                 else:
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH, "{:04d}_Normal.exr".format(scene.frame_current)
-                    )
+                    tmp_file_path0 = os.path.join(TMP_FILES_PATH, f"{scene.frame_current:04d}_Normal.exr")
                 normal0 = load_file_data_to_numpy(scene, tmp_file_path0, "Normal")
             """ Depth + Disparity """
             if vision_blender.bool_save_depth:
-                if is_stereo_activated:
-                    tmp_file_path1 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix1),
-                    )
-                    z1, disp1 = load_file_data_to_numpy(scene, tmp_file_path1, "Depth")
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH,
-                        "{:04d}_Depth{}.exr".format(scene.frame_current, suffix0),
-                    )
-                else:
-                    tmp_file_path0 = os.path.join(
-                        TMP_FILES_PATH, "{:04d}_Depth.exr".format(scene.frame_current)
-                    )
-                z0, disp0 = load_file_data_to_numpy(scene, tmp_file_path0, "Depth")
+                z0 = depth_from_trimesh(scene, extrinsic_mat0)
+                disp0 = None
+                if is_stereo_activated and extrinsic_mat1 is not None:
+                    z1 = depth_from_trimesh(scene, extrinsic_mat1)
+                    disp1 = None
             if scene.render.engine == "CYCLES":
                 """Segmentation masks"""
-                if (
-                    vision_blender.bool_save_segmentation_masks
-                    and check_any_obj_with_non_zero_index()
-                ):
-                    seg_masks_indexes = get_struct_array_of_obj_indexes()
+                if vision_blender.bool_save_segmentation_masks and scene_cache.get("has_non_zero_obj_idx", False):
+                    seg_masks_indexes = scene_cache.get("seg_masks_indexes")
                     if is_stereo_activated:
                         tmp_file_path1 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Segmentation_Mask{}.exr".format(
-                                scene.frame_current, suffix1
-                            ),
+                            f"{scene.frame_current:04d}_Segmentation_Mask{suffix1}.exr",
                         )
-                        seg_masks1 = load_file_data_to_numpy(
-                            scene, tmp_file_path1, "Segmentation"
-                        )
+                        seg_masks1 = load_file_data_to_numpy(scene, tmp_file_path1, "Segmentation")
                         tmp_file_path0 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Segmentation_Mask{}.exr".format(
-                                scene.frame_current, suffix0
-                            ),
+                            f"{scene.frame_current:04d}_Segmentation_Mask{suffix0}.exr",
                         )
                     else:
                         tmp_file_path0 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Segmentation_Mask.exr".format(scene.frame_current),
+                            f"{scene.frame_current:04d}_Segmentation_Mask.exr",
                         )
-                    seg_masks0 = load_file_data_to_numpy(
-                        scene, tmp_file_path0, "Segmentation"
-                    )
+                    seg_masks0 = load_file_data_to_numpy(scene, tmp_file_path0, "Segmentation")
                 """ Optical flow - Forward -> from current to next frame"""
                 if vision_blender.bool_save_opt_flow:
                     if is_stereo_activated:
                         tmp_file_path1 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Optical_Flow{}.exr".format(
-                                scene.frame_current, suffix1
-                            ),
+                            f"{scene.frame_current:04d}_Optical_Flow{suffix1}.exr",
                         )
-                        opt_flw1 = load_file_data_to_numpy(
-                            scene, tmp_file_path1, "OptFlow"
-                        )
+                        opt_flw1 = load_file_data_to_numpy(scene, tmp_file_path1, "OptFlow")
                         tmp_file_path0 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Optical_Flow{}.exr".format(
-                                scene.frame_current, suffix0
-                            ),
+                            f"{scene.frame_current:04d}_Optical_Flow{suffix0}.exr",
                         )
                     else:
                         tmp_file_path0 = os.path.join(
                             TMP_FILES_PATH,
-                            "{:04d}_Optical_Flow.exr".format(scene.frame_current),
+                            f"{scene.frame_current:04d}_Optical_Flow.exr",
                         )
                     opt_flw0 = load_file_data_to_numpy(scene, tmp_file_path0, "OptFlow")
             # Optional step - delete the tmp output files
@@ -647,7 +806,8 @@ def load_handler_after_rend_frame(
 
 @persistent
 def load_handler_after_rend_finish(scene):
-    if check_if_node_exists(scene.node_tree, "output_vision_blender"):
+    _clear_scene_cache(scene)
+    if scene.node_tree and check_if_node_exists(scene.node_tree, "output_vision_blender"):
         node_output = scene.node_tree.nodes["output_vision_blender"]
         TMP_FILES_PATH = node_output.base_path
         shutil.rmtree(TMP_FILES_PATH)
@@ -661,24 +821,12 @@ class MyAddonProperties(PropertyGroup):
         description="Save ground truth data",
         default=False,
     )
-    bool_save_depth: BoolProperty(
-        name="Depth", description="Save depth maps", default=True
-    )
-    bool_save_normals: BoolProperty(
-        name="Normals", description="Save surface normals", default=True
-    )
-    bool_save_cam_param: BoolProperty(
-        name="Camera parameters", description="Save camera parameters", default=True
-    )
-    bool_save_opt_flow: BoolProperty(
-        name="Optical Flow", description="Save optical flow", default=True
-    )
-    bool_save_segmentation_masks: BoolProperty(
-        name="Semantic", description="Save semantic segmentation", default=True
-    )
-    bool_save_obj_poses: BoolProperty(
-        name="Objects Pose", description="Save object pose", default=True
-    )
+    bool_save_depth: BoolProperty(name="Depth", description="Save depth maps", default=True)
+    bool_save_normals: BoolProperty(name="Normals", description="Save surface normals", default=True)
+    bool_save_cam_param: BoolProperty(name="Camera parameters", description="Save camera parameters", default=True)
+    bool_save_opt_flow: BoolProperty(name="Optical Flow", description="Save optical flow", default=True)
+    bool_save_segmentation_masks: BoolProperty(name="Semantic", description="Save semantic segmentation", default=True)
+    bool_save_obj_poses: BoolProperty(name="Objects Pose", description="Save object pose", default=True)
 
     def get_cam_intrinsic(self):
         scene = bpy.context.scene
@@ -686,9 +834,7 @@ class MyAddonProperties(PropertyGroup):
         intrinsic_mat = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]])
         return intrinsic_mat.flatten("F").tolist()
 
-    cam_intrinsic: FloatVectorProperty(
-        name="Intrinsic", size=9, subtype="MATRIX", get=get_cam_intrinsic
-    )
+    cam_intrinsic: FloatVectorProperty(name="Intrinsic", size=9, subtype="MATRIX", get=get_cam_intrinsic)
 
     def get_cam_extrinsic(self):
         scene = bpy.context.scene
@@ -696,9 +842,7 @@ class MyAddonProperties(PropertyGroup):
         extr_mat = np.vstack([extr_mat, [0, 0, 0, 1]])
         return extr_mat.flatten("F").tolist()
 
-    cam_extrinsic: FloatVectorProperty(
-        name="extrinsic", size=16, subtype="MATRIX", get=get_cam_extrinsic
-    )
+    cam_extrinsic: FloatVectorProperty(name="extrinsic", size=16, subtype="MATRIX", get=get_cam_extrinsic)
 
 
 class GroundTruthGeneratorPanel(Panel):
@@ -727,7 +871,6 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
 
     def draw(self, context):
         scene = context.scene
-        rd = scene.render
         layout = self.layout
 
         vision_blender = scene.vision_blender
@@ -738,18 +881,14 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
 
         # boolean flags to control what is being saved
         #  reference: https://github.com/sobotka/blender/blob/662d94e020f36e75b9c6b4a258f31c1625573ee8/release/scripts/startup/bl_ui/properties_output.py
-        flow = layout.grid_flow(
-            row_major=True, columns=0, even_columns=True, even_rows=False, align=False
-        )
+        flow = layout.grid_flow(row_major=True, columns=0, even_columns=True, even_rows=False, align=False)
         col = flow.column()
         col.prop(vision_blender, "bool_save_depth", text="Depth / Disparity")
         col = flow.column()
         col.enabled = (
             context.engine == "CYCLES"
         )  # ref: https://blenderartists.org/t/how-to-disable-a-checkbox-when-a-dropdown-option-is-picked/612801/2
-        col.prop(
-            vision_blender, "bool_save_segmentation_masks", text="Segmentation Masks"
-        )
+        col.prop(vision_blender, "bool_save_segmentation_masks", text="Segmentation Masks")
         col = flow.column()
         col.prop(vision_blender, "bool_save_normals", text="Normals")
         col = flow.column()
@@ -839,13 +978,15 @@ def register():
         register_class(cls)
     # register the properties
     bpy.types.Scene.vision_blender = PointerProperty(type=MyAddonProperties)
-    # register the function being called when rendering starts
-    bpy.app.handlers.render_init.append(load_handler_render_init)
-    # register the function being called after rendering each frame
-    bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
-    # register the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    # register handlers idempotently to avoid duplicates across repeated setup calls
+    if load_handler_render_init not in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.append(load_handler_render_init)
+    if load_handler_after_rend_frame not in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.append(load_handler_after_rend_frame)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish not in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
 
 
 def unregister():
@@ -855,12 +996,16 @@ def unregister():
     # unregister the properties
     del bpy.types.Scene.vision_blender
     # unregister the function being called when rendering starts
-    bpy.app.handlers.render_init.remove(load_handler_render_init)
+    if load_handler_render_init in bpy.app.handlers.render_init:
+        bpy.app.handlers.render_init.remove(load_handler_render_init)
     # unregister the function being called after rendering each frame
-    bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
+    if load_handler_after_rend_frame in bpy.app.handlers.render_post:
+        bpy.app.handlers.render_post.remove(load_handler_after_rend_frame)
     # unregister the function being called after rendering all the frames, or being cancelled
-    bpy.app.handlers.render_complete.append(load_handler_after_rend_finish)
-    bpy.app.handlers.render_cancel.append(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_complete:
+        bpy.app.handlers.render_complete.remove(load_handler_after_rend_finish)
+    if load_handler_after_rend_finish in bpy.app.handlers.render_cancel:
+        bpy.app.handlers.render_cancel.remove(load_handler_after_rend_finish)
 
 
 if __name__ == "__main__":  # only for live edit.

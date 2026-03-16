@@ -6,13 +6,12 @@ TODO this could prob use some unit testing to make sure that we dont accidentall
 """
 
 ### Import necessary libraries
-import numpy as np
-from scipy.linalg import logm
-from scipy.linalg import expm
 import math
-from mathutils import Vector, Matrix, Quaternion
 import random
-from typing import List, Tuple
+
+import numpy as np
+from mathutils import Matrix, Quaternion, Vector
+from scipy.linalg import expm, logm
 
 
 def sk(u):
@@ -25,13 +24,15 @@ def sk(u):
     Returns:
     U_x -- the 3x3 skew-symmetric matrix
     """
-    
+
     u = np.asarray(u).flatten()
-    U_x = np.array([
-        [0.0, -float(u[2]), float(u[1])],
-        [float(u[2]), 0.0, -float(u[0])],
-        [-float(u[1]), float(u[0]), 0.0],
-    ])
+    U_x = np.array(
+        [
+            [0.0, -float(u[2]), float(u[1])],
+            [float(u[2]), 0.0, -float(u[0])],
+            [-float(u[1]), float(u[0]), 0.0],
+        ]
+    )
     return U_x
 
 
@@ -136,9 +137,7 @@ def qProd(q1, q2):
         q2 = q2.reshape(4, 1)
 
     # Quaternion product calculation
-    q3 = np.dot(
-        np.block([[q1[0], -q1[1:4].T], [q1[1:4], q1[0] * np.eye(3) - sk(q1[1:4])]]), q2
-    )
+    q3 = np.dot(np.block([[q1[0], -q1[1:4].T], [q1[1:4], q1[0] * np.eye(3) - sk(q1[1:4])]]), q2)
 
     return q3.flatten()
 
@@ -316,6 +315,7 @@ def vee(X):
 
     return x_vee
 
+
 def so3_log_vec(R):
     R = np.asarray(R)
     tr = float(np.trace(R))
@@ -324,6 +324,7 @@ def so3_log_vec(R):
     if theta < 1e-7:
         return 0.5 * vee(R - R.T)
     return (theta / (2.0 * math.sin(theta))) * vee(R - R.T)
+
 
 def rodrigues(u, k, ang):
     k = k / (np.linalg.norm(k) + 1e-12)
@@ -339,24 +340,22 @@ def rodrigues(u, k, ang):
     if np.linalg.norm(axis) < 1e-12:
         axis = u_perp
     axis = axis / (np.linalg.norm(axis) + 1e-12)
-    K = np.array([[0, -axis[2], axis[1]],
-                  [axis[2], 0, -axis[0]],
-                  [-axis[1], axis[0], 0]])
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
     R = np.eye(3) + np.sin(ang) * K + (1 - np.cos(ang)) * (K @ K)
     return R @ u
 
+
 def _seed_right(f):
     f = f / (np.linalg.norm(f) + 1e-12)
-    a = np.array([1., 0., 0.]) if abs(f[0]) < 0.9 else np.array([0., 1., 0.])
+    a = np.array([1.0, 0.0, 0.0]) if abs(f[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
     x = np.cross(a, f)
     return x / (np.linalg.norm(x) + 1e-12)
 
 
-def _lookat_continuous(fwd_I, world_up_I, x_prev=None,
-                           cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
+def _lookat_continuous(fwd_I, world_up_I, x_prev=None, cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
     f = fwd_I / (np.linalg.norm(fwd_I) + 1e-12)
 
-    use_prev = (x_prev is not None)
+    use_prev = x_prev is not None
     x_proj = None
     n_proj = 0.0
 
@@ -366,7 +365,6 @@ def _lookat_continuous(fwd_I, world_up_I, x_prev=None,
 
     x_up = np.cross(world_up_I, f)
     n_up = np.linalg.norm(x_up)
-    near_sing = (abs(f @ world_up_I) > cos_thr) or (n_up < sin_thr)
 
     if use_prev and n_proj > eps:
         x = x_proj / n_proj
@@ -376,7 +374,7 @@ def _lookat_continuous(fwd_I, world_up_I, x_prev=None,
         x = _seed_right(f)
 
     y = np.cross(f, x)
-    R= np.column_stack((x, y, f))
+    R = np.column_stack((x, y, f))
     return R, x
 
 
@@ -399,6 +397,7 @@ def enforce_quat_series_continuity(q_series):
         q_series[k] = qk
         q_prev = qk
     return q_series
+
 
 def calcCandS(z):
     """
@@ -480,9 +479,7 @@ def solveUniVarKepler(s0, mu, tgoal):
         if abs(tgoal - tn) / abs(tgoal) < 1e-8:
             break
 
-        dtdxn = (
-            1 / smu * (x**2 * C + r0_dot_v0 / smu * x * (1 - z * S) + nr0 * (1 - z * C))
-        )
+        dtdxn = 1 / smu * (x**2 * C + r0_dot_v0 / smu * x * (1 - z * S) + nr0 * (1 - z * C))
 
         x = x + (tgoal - tn) / dtdxn
 
@@ -622,17 +619,23 @@ def cart2sph(x, y, z):
     r = np.sqrt(x**2 + y**2 + z**2)
     return az, el, r
 
+
 def _vecI_to_azel(v_I):
     """
     converts a vector in inertial frame to azimuth and elevation angles.
-    
+
     :param v_I: Description
     """
     x, y, z = v_I
     r = np.linalg.norm(v_I) + 1e-12
     el = np.arcsin(np.clip(z / r, -1.0, 1.0))
     az = np.arctan2(y, x) % (2.0 * np.pi)
+    # Canonicalize angles at the wrap boundary so numerically equivalent
+    # directions do not flip between ~0 and ~2*pi across runs.
+    if np.isclose(az, 0.0, atol=1e-5) or np.isclose(az, 2.0 * np.pi, atol=1e-5):
+        az = 0.0
     return az, el
+
 
 def cart2oe(r_vec, v_vec, muCB):
     """
@@ -744,12 +747,14 @@ def parameterSetting(d_ref):
     return a
 
 
-def centerPointingAttitude(r, v, up_fallback=np.array([0, 1, 0]), v_collinear_deg=15.0):
+def centerPointingAttitude(r, v, up_fallback=None, v_collinear_deg=15.0):
     """
     Stable 'look-at' camera pointing: +Z toward -r (target at the image center).
     Uses velocity projected on image plane to define 'up'; falls back to fixed up if needed.
     Returns R_GC: columns are camera x,y,z axes expressed in the G frame.
     """
+    if up_fallback is None:
+        up_fallback = np.array([0, 1, 0])
     r_vec = unit(
         -np.asarray(r, dtype=float).reshape(
             3,
@@ -783,7 +788,7 @@ def centerPointingAttitudeWithBoresight(
     r,
     v,
     boresight_angles=(0.0, 0.0, 0.0),
-    up_fallback=np.array([0, 1, 0]),
+    up_fallback=None,
     v_collinear_deg=15.0,
 ):
     """
@@ -798,9 +803,7 @@ def centerPointingAttitudeWithBoresight(
     R_GC -- rotation matrix from target frame to camera frame with boresight offset
     """
     # First create the standard center-pointing attitude
-    R_GC_nominal = centerPointingAttitude(
-        r, v, up_fallback=up_fallback, v_collinear_deg=v_collinear_deg
-    )
+    R_GC_nominal = centerPointingAttitude(r, v, up_fallback=up_fallback, v_collinear_deg=v_collinear_deg)
 
     # Create boresight rotation matrix
     # Apply rotations in order: roll (about x), pitch (about y), yaw (about z)
@@ -898,19 +901,13 @@ def createHillFrame(r_X, v_X):
     return R_XH
 
 
-def calcInitCondChaser(
-    xdot_0, ydot_0, zdot_0, x_0, y_0, z_0, s_t_0, R_IH_0, omega_HI_I_0
-):
+def calcInitCondChaser(xdot_0, ydot_0, zdot_0, x_0, y_0, z_0, s_t_0, R_IH_0, omega_HI_I_0):
     r_GO_I_0 = s_t_0[0:3]  # Target position
     v_GO_I_0 = s_t_0[3:6]  # Target velocity
     r_CG_H_0 = np.hstack([x_0, y_0, z_0])
     dr_CG_H_0 = np.hstack([xdot_0, ydot_0, zdot_0])
     r_CO_I_0 = np.dot(R_IH_0, r_CG_H_0) + r_GO_I_0
-    v_CO_I_0 = (
-        np.dot(R_IH_0, dr_CG_H_0)
-        + np.cross(omega_HI_I_0, np.dot(R_IH_0, r_CG_H_0))
-        + v_GO_I_0
-    )
+    v_CO_I_0 = np.dot(R_IH_0, dr_CG_H_0) + np.cross(omega_HI_I_0, np.dot(R_IH_0, r_CG_H_0)) + v_GO_I_0
     return r_CO_I_0, v_CO_I_0
 
 
@@ -930,6 +927,7 @@ def propagate_orbit(mu_ref, s_I_0, tspan):
 
 # Defined by Newton - Euler equations
 # Define the system of equations
+
 
 def calcOmegaDotNE(omega, J, invJ):
     return -np.dot(invJ, np.dot(sk(omega), np.dot(J, omega)))
@@ -974,9 +972,7 @@ def solve_ne_equation(nbSteps, delta_t, omega_0, R_0, J):
     for k in range(0, nbSteps - 1):
         for i in range(0, s):
             # calculate the intermediate steps
-            omega_step[i] = omega[k] + sum(
-                a[i][j] * delta_t * k_step[j] for j in range(0, i)
-            )
+            omega_step[i] = omega[k] + sum(a[i][j] * delta_t * k_step[j] for j in range(0, i))
             k_step[i] = calcOmegaDotNE(omega_step[i], J, invJ)
 
         omega[k + 1] = omega[k] + delta_t * sum(b[i] * k_step[i] for i in range(0, s))
@@ -989,7 +985,7 @@ def solve_ne_equation(nbSteps, delta_t, omega_0, R_0, J):
 
 
 # Helper functions for the non orbital trajectory generator
-def fibonacci_sphere(n: int, radius: float = 1.0) -> List[Vector]:
+def fibonacci_sphere(n: int, radius: float = 1.0) -> list[Vector]:
     """Fibonacci sampled points along a sphere of specific radius"""
     if n <= 0:
         return []
@@ -1004,28 +1000,33 @@ def fibonacci_sphere(n: int, radius: float = 1.0) -> List[Vector]:
         pts.append(Vector((x, y, z)) * radius)
     return pts
 
+
 def _rand_quat_uniform(rng: random.Random) -> Quaternion:
     """Generate uniformly random rotation in quaternion."""
     u1 = rng.random()
     u2 = rng.random()
     u3 = rng.random()
-    
-    q = Quaternion((
-        math.sqrt(1.0 - u1) * math.sin(2.0 * math.pi * u2),
-        math.sqrt(1.0 - u1) * math.cos(2.0 * math.pi * u2),
-        math.sqrt(u1) * math.sin(2.0 * math.pi * u3),
-        math.sqrt(u1) * math.cos(2.0 * math.pi * u3),
-    ))
+
+    q = Quaternion(
+        (
+            math.sqrt(1.0 - u1) * math.sin(2.0 * math.pi * u2),
+            math.sqrt(1.0 - u1) * math.cos(2.0 * math.pi * u2),
+            math.sqrt(u1) * math.sin(2.0 * math.pi * u3),
+            math.sqrt(u1) * math.cos(2.0 * math.pi * u3),
+        )
+    )
     # Convert from (x,y,z,w) to (w,x,y,z)
     q = Quaternion((q[3], q[0], q[1], q[2])).normalized()
     return q
+
 
 def _rand_unit_vec(rng: random.Random) -> Vector:
     # Random point on sphere
     z = rng.uniform(-1.0, 1.0)
     t = rng.uniform(0.0, 2.0 * math.pi)
-    r = math.sqrt(max(0.0, 1.0 - z*z))
+    r = math.sqrt(max(0.0, 1.0 - z * z))
     return Vector((r * math.cos(t), r * math.sin(t), z))
+
 
 def _small_random_rotation(rng: random.Random, max_deg: float) -> Quaternion:
     """Return a small random axis-angle rotation quaternion."""
@@ -1035,15 +1036,18 @@ def _small_random_rotation(rng: random.Random, max_deg: float) -> Quaternion:
     ang = math.radians(rng.uniform(-max_deg, max_deg))
     return Quaternion(axis, ang).normalized()
 
+
 def quat_wxyz_to_quat(q_wxyz) -> Quaternion:
     """Convert (w,x,y,z) tuple to mathutils.Quaternion."""
     w, x, y, z = q_wxyz
     return Quaternion((w, x, y, z)).normalized()
 
+
 def quat_to_wxyz(q: Quaternion) -> tuple:
     """Convert mathutils.Quaternion to (w,x,y,z) tuple."""
     q = q.normalized()
     return (q.w, q.x, q.y, q.z)
+
 
 def make_T_from_q_t(q: Quaternion, t: Vector) -> Matrix:
     """Build 4x4 transform T from quaternion and translation."""
@@ -1052,7 +1056,8 @@ def make_T_from_q_t(q: Quaternion, t: Vector) -> Matrix:
     T.translation = t
     return T
 
-def decompose_T(T: Matrix) -> Tuple[Vector, Quaternion]:
+
+def decompose_T(T: Matrix) -> tuple[Vector, Quaternion]:
     """Extract translation and rotation from 4x4 matrix."""
     t = T.to_translation()
     R = T.to_3x3()
@@ -1060,18 +1065,20 @@ def decompose_T(T: Matrix) -> Tuple[Vector, Quaternion]:
     q.normalize()
     return t, q
 
+
 def axes_to_quaternion(x_axis, y_axis, z_axis):
     # Form the rotation matrix from the axes
     R = np.column_stack((x_axis, y_axis, z_axis))
     # Convert to quaternion
-    quaternion =R2q(R)
+    quaternion = R2q(R)
     return quaternion
+
 
 def cartesian_to_spherical(x, y, z):
     # Calculate azimuth angle (phi)
     azimuth = np.arctan2(y, x)
-    
+
     # Calculate elevation angle (theta)
     elevation = np.arcsin(z / np.sqrt(x**2 + y**2 + z**2))
-    
+
     return azimuth, elevation

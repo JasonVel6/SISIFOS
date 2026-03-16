@@ -5,7 +5,8 @@
     "objects": {
       "Target": {
         "name": "Target",
-        "blend_path": "assets/spacecraft_models_0_5.blend"
+        "blend_path": "assets/spacecraft_models_0_5.blend",
+        "scale_factor": 1.0
       },
       "Earth": {
         "name": "Earth",
@@ -25,25 +26,20 @@
     },
     "camera": {
       "focal_length": 190.0,
+      "sensor_width": 36.0,
       "clip_start": 1e-05,
       "clip_end": 5000000.0,
       "resolution": [
-        512,
-        512
+        1024,
+        1024
       ],
       "lens_flare": 0.01,
       "exposure_time_s": 0.016666666666666666
     },
     "render": {
       "engine": "CYCLES",
-      "samples": 4,
-      "bg_color": [
-        0.0,
-        0.0,
-        0.0,
-        1.0
-      ],
-      "noise_strength": 0.0
+      "samples": 16,
+      "earth_dist_scale_factor": 0.001
     },
     "setup": {
       "earth_mode": "on",
@@ -52,14 +48,23 @@
       "enable_glare": "off",
       "t_ref_s": 0.01666667,
       "blur_shutter_factor": 8.8,
+      "blur_motion_factor": 8.8,
       "glare_threshold": 0.95,
-      "glare_size": 6
+      "glare_size": 6,
+      "generate_video": true,
+      "video_fps": 10
     },
     "trajectory_type": "trajectory_generator",
+    "trajectory_sampling": {
+      "num_frames": 200,
+      "R_RPO": 70.0,
+      "R_LEO": 10000.0,
+      "sun_az": 0.0,
+      "sun_el": 0.0
+    },
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 887863346,
-      "illumination_seed": null,
+      "seed": 1817843519,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
@@ -81,10 +86,7 @@
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
       "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
-      "pointing_offset_G": [0.8, 0.5, 0.2],
-      "camera_pitchyaw_follow_gain": 0.55,
-      "camera_roll_follow_gain": 0.2,
+      "tumbling_span_frac": 2.0,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -92,16 +94,17 @@
       "mu_ref": 398600441800000.0,
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
-      "IMAGE_MAX_DT_S": 1.0,
-      "tend": 10.0,
+      "IMAGE_MAX_DT_S": 0.1,
+      "tend": 500.0,
       "tstep": 0.1,
-      "MIN_F2F_PX_MED": 3.0,
+      "MIN_F2F_PX_MED": 0.0,
       "m": 4000.0,
       "l": 5.0,
       "w": 3.2,
       "h": 2.8
     },
-    "save_depth": true,
+    "trajectory_filepath": "",
+    "save_depth": false,
     "save_normals": false,
     "save_optical_flow": false,
     "save_segmentation": false,

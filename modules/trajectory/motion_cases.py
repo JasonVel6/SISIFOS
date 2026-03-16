@@ -43,8 +43,8 @@ def _nmc_best_phase(r0, n_scalar, A):
     u = -r0 / (R if R > 1e-12 else 1.0)
     M = np.eye(3) - np.outer(u, u)
 
-    b_cos = np.array([0.0, -2.0*n_scalar*A, 0.0])  # vy term
-    b_sin = np.array([-n_scalar*A, 0.0, 0.0])      # -vx term
+    b_cos = np.array([0.0, -2.0 * n_scalar * A, 0.0])  # vy term
+    b_sin = np.array([-n_scalar * A, 0.0, 0.0])  # -vx term
     C = M @ b_cos
     S = -M @ b_sin
     C2, S2, CS = float(C @ C), float(S @ S), float(C @ S)
@@ -61,7 +61,7 @@ def detect_degeneracy(r0, v0, f_px, dt, px_min, rho_max):
     """
     px, v_perp, R, u, M = _ic_geom_from_state(r0, v0, f_px, dt)
     vmag = float(np.linalg.norm(v0)) + 1e-12
-    rho  = float(abs(v0 @ u) / vmag)
+    rho = float(abs(v0 @ u) / vmag)
     is_bad = (px < px_min) or (rho > rho_max)
     return is_bad, {"px": px, "rho": rho, "R": R, "v_perp": v_perp, "u": u, "M": M}
 
@@ -69,10 +69,10 @@ def detect_degeneracy(r0, v0, f_px, dt, px_min, rho_max):
 def repair_inertial_nmc(r0, n_scalar, A):
     """Re-phase in-plane (keep A) to maximize transverse motion; keep z terms as-is."""
     phi_star = _nmc_best_phase(r0, n_scalar, A)
-    x  =  A * np.cos(phi_star)
-    y  =  0.0
+    x = A * np.cos(phi_star)
+    y = 0.0
     vx = -n_scalar * A * np.sin(phi_star)
-    vy = -2.0      * n_scalar * A * np.cos(phi_star)
+    vy = -2.0 * n_scalar * A * np.cos(phi_star)
     return x, y, vx, vy
 
 
@@ -84,10 +84,10 @@ def repair_inertial_cro(r0, v0, f_px, dt, n_scalar, px_min, vz0):
     B_add, _stats = _cro_min_B_add(r0, v0, f_px, dt, n_scalar, px_min)
     if not np.isfinite(B_add) or (B_add <= 0.0):
         return 0.0, vz0  # no change possible/needed
-    B_prev   = abs(vz0) / max(n_scalar, 1e-12)
-    B_new    = B_prev + B_add
-    z0_new   = 0.0
-    vz0_new  = n_scalar * B_new
+    B_prev = abs(vz0) / max(n_scalar, 1e-12)
+    B_new = B_prev + B_add
+    z0_new = 0.0
+    vz0_new = n_scalar * B_new
     return z0_new, vz0_new
 
 
@@ -105,15 +105,20 @@ def repair_hill(r0, v0, n_scalar, f_px, dt, px_min, M_hint=None):
     if k < 1e-9:
         # Fallback: tiny z-kick if LOS ~ y-direction
         vz_needed = vperp_req
-        return {"x0": r0[0], "y0": r0[1], "z0": 0.0,
-                "vx0": v0[0], "vy0": v0[1], "vz0": vz_needed,
-                "force_z_quadrature": True}
+        return {
+            "x0": r0[0],
+            "y0": r0[1],
+            "z0": 0.0,
+            "vx0": v0[0],
+            "vy0": v0[1],
+            "vz0": vz_needed,
+            "force_z_quadrature": True,
+        }
     # scale vy to reach vperp_req; keep sign
-    vy_sign   = 1.0 if v0[1] >= 0.0 else -1.0
-    vy_new    = vy_sign * max(abs(v0[1]), vperp_req / k)
-    x0_new    = -vy_new / (2.0 * n_scalar)
-    return {"x0": x0_new, "y0": r0[1], "z0": r0[2],
-            "vx0": v0[0], "vy0": vy_new, "vz0": v0[2]}
+    vy_sign = 1.0 if v0[1] >= 0.0 else -1.0
+    vy_new = vy_sign * max(abs(v0[1]), vperp_req / k)
+    x0_new = -vy_new / (2.0 * n_scalar)
+    return {"x0": x0_new, "y0": r0[1], "z0": r0[2], "vx0": v0[0], "vy0": vy_new, "vz0": v0[2]}
 
 
 def repair_tumbling(r0, v0, f_px, dt, px_min, n_scalar=None):
@@ -124,8 +129,7 @@ def repair_tumbling(r0, v0, f_px, dt, px_min, n_scalar=None):
     # Treat like CRO with n_scalar=1 for the algebra if n not provided
     n_eff = 1.0 if (n_scalar is None) else float(n_scalar)
     z0_new, vz0_new = repair_inertial_cro(r0, v0, f_px, dt, n_eff, px_min, vz0=v0[2])
-    return {"x0": r0[0], "y0": r0[1], "z0": z0_new,
-            "vx0": v0[0], "vy0": v0[1], "vz0": vz0_new}
+    return {"x0": r0[0], "y0": r0[1], "z0": z0_new, "vx0": v0[0], "vy0": v0[1], "vz0": vz0_new}
 
 
 # ------------------ Inertia Observability Helpers ----------------------------
@@ -166,8 +170,7 @@ def check_omega_excitation(omega_dir, off_axis_min=0.3):
     omega_dir = np.asarray(omega_dir, dtype=float)
     norm = np.linalg.norm(omega_dir)
     if norm < 1e-12:
-        return False, {'sorted_abs': [0, 0, 0], 'second_largest': 0,
-                       'dominant_axis': 0, 'off_axis_angle_deg': 0}
+        return False, {"sorted_abs": [0, 0, 0], "second_largest": 0, "dominant_axis": 0, "off_axis_angle_deg": 0}
 
     # Normalize if not already
     d = omega_dir / norm
@@ -189,10 +192,10 @@ def check_omega_excitation(omega_dir, off_axis_min=0.3):
     is_excited = second_largest >= off_axis_min
 
     stats = {
-        'sorted_abs': sorted_abs.tolist(),
-        'second_largest': float(second_largest),
-        'dominant_axis': int(dominant_axis),
-        'off_axis_angle_deg': float(off_axis_angle_deg),
+        "sorted_abs": sorted_abs.tolist(),
+        "second_largest": float(second_largest),
+        "dominant_axis": int(dominant_axis),
+        "off_axis_angle_deg": float(off_axis_angle_deg),
     }
 
     return is_excited, stats
@@ -247,8 +250,7 @@ def sample_excited_omega_direction(rng, off_axis_min=0.3, max_retries=100):
     )
 
 
-def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4,
-                                            off_axis_min=0.3, max_retries=100):
+def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4, off_axis_min=0.3, max_retries=100):
     """
     Sample omega direction that excites the largest inertia asymmetry.
 
@@ -298,7 +300,7 @@ def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4,
     outlier_axis = int(np.argmax(asymmetry_scores))
     max_asymmetry = asymmetry_scores[outlier_axis]
 
-    for attempt in range(max_retries):
+    for _attempt in range(max_retries):
         # Sample uniformly on the sphere
         d = np.array([rng.normal(), rng.normal(), rng.normal()])
         norm = np.linalg.norm(d)
@@ -319,12 +321,12 @@ def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4,
         # Both checks passed
         stats = {
             **base_stats,
-            'outlier_axis': outlier_axis,
-            'outlier_axis_name': ['x', 'y', 'z'][outlier_axis],
-            'outlier_component': float(outlier_component),
-            'inertia_diagonal': I_diag.tolist(),
-            'asymmetry_scores': asymmetry_scores.tolist(),
-            'max_asymmetry': float(max_asymmetry),
+            "outlier_axis": outlier_axis,
+            "outlier_axis_name": ["x", "y", "z"][outlier_axis],
+            "outlier_component": float(outlier_component),
+            "inertia_diagonal": I_diag.tolist(),
+            "asymmetry_scores": asymmetry_scores.tolist(),
+            "max_asymmetry": float(max_asymmetry),
         }
         return d, stats
 
@@ -335,9 +337,7 @@ def sample_inertia_excited_omega_direction(rng, J, min_asymmetry_component=0.4,
     )
 
 
-def validate_omega_timeseries_excitation(omega_timeseries, dt_array=None,
-                                          omega_dot_min=1e-5,
-                                          off_axis_min=0.3):
+def validate_omega_timeseries_excitation(omega_timeseries, dt_array=None, omega_dot_min=1e-5, off_axis_min=0.3):
     """
     Validate that an omega time series has sufficient excitation for
     inertia estimation.
@@ -377,17 +377,15 @@ def validate_omega_timeseries_excitation(omega_timeseries, dt_array=None,
     N = omega_timeseries.shape[0]
 
     if N < 2:
-        return False, {'error': 'Need at least 2 samples'}
+        return False, {"error": "Need at least 2 samples"}
 
     # Check 1: Initial omega direction
     omega_0 = omega_timeseries[0]
     omega_0_norm = np.linalg.norm(omega_0)
     if omega_0_norm < 1e-12:
-        return False, {'error': 'Initial omega is zero'}
+        return False, {"error": "Initial omega is zero"}
 
-    omega_dir_excited, initial_omega_stats = check_omega_excitation(
-        omega_0 / omega_0_norm, off_axis_min
-    )
+    omega_dir_excited, initial_omega_stats = check_omega_excitation(omega_0 / omega_0_norm, off_axis_min)
 
     # Check 2: Angular acceleration
     if dt_array is None:
@@ -409,14 +407,14 @@ def validate_omega_timeseries_excitation(omega_timeseries, dt_array=None,
     is_valid = omega_dir_excited and omega_dot_sufficient
 
     diagnostics = {
-        'omega_dir_excited': omega_dir_excited,
-        'mean_omega_dot': mean_omega_dot,
-        'max_omega_dot': max_omega_dot,
-        'omega_dot_sufficient': omega_dot_sufficient,
-        'omega_dot_min_threshold': omega_dot_min,
-        'initial_omega_stats': initial_omega_stats,
-        'initial_omega_norm_rad_s': float(omega_0_norm),
-        'initial_omega_norm_deg_s': float(np.rad2deg(omega_0_norm)),
+        "omega_dir_excited": omega_dir_excited,
+        "mean_omega_dot": mean_omega_dot,
+        "max_omega_dot": max_omega_dot,
+        "omega_dot_sufficient": omega_dot_sufficient,
+        "omega_dot_min_threshold": omega_dot_min,
+        "initial_omega_stats": initial_omega_stats,
+        "initial_omega_norm_rad_s": float(omega_0_norm),
+        "initial_omega_norm_deg_s": float(np.rad2deg(omega_0_norm)),
     }
 
     return is_valid, diagnostics
@@ -425,9 +423,17 @@ def validate_omega_timeseries_excitation(omega_timeseries, dt_array=None,
 # ------------------ Inertial Case ----------------------------------------
 
 
-def inertial_nmc(num_mc, num_agents, n_scalar=None, focal_length_px=None,
-                 kf_dt=None, px_min=6.0, rho_max=0.90, R0_const=100.0,
-                 rngs_mc=None):
+def inertial_nmc(
+    num_mc,
+    num_agents,
+    n_scalar=None,
+    focal_length_px=None,
+    kf_dt=None,
+    px_min=6.0,
+    rho_max=0.90,
+    R0_const=100.0,
+    rngs_mc=None,
+):
     """
     inertial_nmc
     ------------
@@ -440,39 +446,37 @@ def inertial_nmc(num_mc, num_agents, n_scalar=None, focal_length_px=None,
     Returns Hill/LVLH initial state arrays (no drift), inertial path_mode tag,
     and ω_GI_G_0 = [0,0,0] (G-frame fixed in inertial mode).
     """
-    x_0     = np.zeros((num_mc, num_agents))
-    y_0     = np.zeros((num_mc, num_agents))
-    z_0     = np.zeros((num_mc, num_agents))
-    xdot_0  = np.zeros((num_mc, num_agents))
-    ydot_0  = np.zeros((num_mc, num_agents))
-    zdot_0  = np.zeros((num_mc, num_agents))
+    x_0 = np.zeros((num_mc, num_agents))
+    y_0 = np.zeros((num_mc, num_agents))
+    z_0 = np.zeros((num_mc, num_agents))
+    xdot_0 = np.zeros((num_mc, num_agents))
+    ydot_0 = np.zeros((num_mc, num_agents))
+    zdot_0 = np.zeros((num_mc, num_agents))
 
     A_nom = 0.5 * float(R0_const)
 
     for i in range(num_mc):
-        
         # Derive a per-agent RNG in a reproducible way if none supplied
         base_rng = rngs_mc[i] if (rngs_mc is not None) else np.random.default_rng(12345 + i)
 
         for a in range(num_agents):
-            
             # Small amplitude jitter (e.g., ±10%)
             eps = float(base_rng.uniform(-0.10, 0.10))
-            A   = max(1e-6, A_nom * (1.0 + eps))
+            A = max(1e-6, A_nom * (1.0 + eps))
 
             # Random in-plane phase
-            phi = float(base_rng.uniform(0.0, 2.0*np.pi))
+            phi = float(base_rng.uniform(0.0, 2.0 * np.pi))
 
             # Classic NMC ICs at t0 with phase phi
-            x0, y0   =  A*np.cos(phi), -2.0*A*np.sin(phi)
-            vx0, vy0 = -n_scalar*A*np.sin(phi), -2.0*n_scalar*A*np.cos(phi)
+            x0, y0 = A * np.cos(phi), -2.0 * A * np.sin(phi)
+            vx0, vy0 = -n_scalar * A * np.sin(phi), -2.0 * n_scalar * A * np.cos(phi)
 
             # Keep existing z-model (can also jitter lightly if desired)
             B = np.sqrt(3.0) * A
             z0, vz0 = B, 0.0
 
-            x_0[i,a], y_0[i,a], z_0[i,a]       = x0, y0, z0
-            xdot_0[i,a], ydot_0[i,a], zdot_0[i,a] = vx0, vy0, vz0
+            x_0[i, a], y_0[i, a], z_0[i, a] = x0, y0, z0
+            xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0, vy0, vz0
 
             # ---- shared degeneracy detector + NMC repair ----
             if (focal_length_px is not None) and (kf_dt is not None):
@@ -481,23 +485,35 @@ def inertial_nmc(num_mc, num_agents, n_scalar=None, focal_length_px=None,
                 bad, _ = detect_degeneracy(r0, v0, focal_length_px, float(kf_dt), px_min, rho_max)
                 if bad:
                     xn, yn, vxn, vyn = repair_inertial_nmc(r0, n_scalar, A)
-                    x_0[i,a], y_0[i,a], xdot_0[i,a], ydot_0[i,a] = xn, yn, vxn, vyn
+                    x_0[i, a], y_0[i, a], xdot_0[i, a], ydot_0[i, a] = xn, yn, vxn, vyn
                     # keep z terms as set
                     # Raise error if still degenerate
-                    r1 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                    v1 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+                    r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                    v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
                     bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
                     if bad2:
                         raise RuntimeError(f"NMC IC unrecoverable: px={stats2['px']:.2f}, rho={stats2['rho']:.3f}")
     omega_GI_G_0 = [0.0, 0.0, 0.0]
-    path_mode    = "Inertial"
+    path_mode = "Inertial"
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
 
 
-def inertial_cro(num_mc, num_agents, n_scalar=None, focal_length_px=None,
-                 kf_dt=None, px_min=6.0, rho_max=0.90, R_nom=None,
-                 span_frac=None, r_min=None, r_max=None, A_xy=None, B_z=None,
-                 rngs_mc=None):
+def inertial_cro(
+    num_mc,
+    num_agents,
+    n_scalar=None,
+    focal_length_px=None,
+    kf_dt=None,
+    px_min=6.0,
+    rho_max=0.90,
+    R_nom=None,
+    span_frac=None,
+    r_min=None,
+    r_max=None,
+    A_xy=None,
+    B_z=None,
+    rngs_mc=None,
+):
     """
     inertial_cro
     ------------
@@ -520,30 +536,30 @@ def inertial_cro(num_mc, num_agents, n_scalar=None, focal_length_px=None,
     # Therefore: B = sqrt(r_max^2 - (2A)^2)
     if (R_nom is not None) and (span_frac is not None):
         # Tied-to-NMC (preferred)
-        A_base   = 0.5 * float(R_nom)                     # => r_min = 2A = R_nom
+        A_base = 0.5 * float(R_nom)  # => r_min = 2A = R_nom
         r_max_in = (1.0 + float(span_frac)) * float(R_nom)
-        B_base   = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base)**2, 0.0)))
+        B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
     elif (r_min is not None) and (r_max is not None):
         A_base = 0.5 * float(r_min)  # so 2*A_base = r_min
-        B_base = float(np.sqrt(max(float(r_max)**2 - (2.0 * A_base)**2, 0.0)))
+        B_base = float(np.sqrt(max(float(r_max) ** 2 - (2.0 * A_base) ** 2, 0.0)))
     elif (A_xy is not None) and (B_z is not None):
         A_base = float(A_xy)
         B_base = float(B_z)
     else:
         # Sensible tied-to-NMC default ~100 m with +20% upper swing
-        R_nom   = 100.0
+        R_nom = 100.0
         span_frac = 0.20
-        A_base  = 0.5 * R_nom  # so 2*A_base = R_nom
+        A_base = 0.5 * R_nom  # so 2*A_base = R_nom
         r_max_in = (1.0 + span_frac) * R_nom
-        B_base  = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base)**2, 0.0)))
+        B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
 
     # ---------- allocate ----------
-    x_0     = np.zeros((num_mc, num_agents), dtype=float)
-    y_0     = np.zeros((num_mc, num_agents), dtype=float)
-    z_0     = np.zeros((num_mc, num_agents), dtype=float)
-    xdot_0  = np.zeros((num_mc, num_agents), dtype=float)
-    ydot_0  = np.zeros((num_mc, num_agents), dtype=float)
-    zdot_0  = np.zeros((num_mc, num_agents), dtype=float)
+    x_0 = np.zeros((num_mc, num_agents), dtype=float)
+    y_0 = np.zeros((num_mc, num_agents), dtype=float)
+    z_0 = np.zeros((num_mc, num_agents), dtype=float)
+    xdot_0 = np.zeros((num_mc, num_agents), dtype=float)
+    ydot_0 = np.zeros((num_mc, num_agents), dtype=float)
+    zdot_0 = np.zeros((num_mc, num_agents), dtype=float)
 
     # Small amplitude jitter (±10%) for variability; phase ∈ U[0, 2π)
     amp_jitter = 0.10
@@ -553,26 +569,26 @@ def inertial_cro(num_mc, num_agents, n_scalar=None, focal_length_px=None,
 
         for a in range(num_agents):
             eps_xy = float(rng.uniform(-amp_jitter, amp_jitter))
-            eps_z  = float(rng.uniform(-amp_jitter, amp_jitter))
-            A      = max(1e-9, A_base * (1.0 + eps_xy))
-            B      = max(1e-9, B_base * (1.0 + eps_z))
+            eps_z = float(rng.uniform(-amp_jitter, amp_jitter))
+            A = max(1e-9, A_base * (1.0 + eps_xy))
+            B = max(1e-9, B_base * (1.0 + eps_z))
 
             # In-plane random start phase for (x,y)
-            phi = float(rng.uniform(0.0, 2.0*np.pi))
+            phi = float(rng.uniform(0.0, 2.0 * np.pi))
 
             # In-plane ICs at t0 with phase phi
             # x = A cos(phi), y = -2A sin(phi)
             # vx = -n A sin(phi), vy = -2 n A cos(phi)
-            x0   =  A * np.cos(phi)
-            y0   = -2.0 * A * np.sin(phi)
-            vx0  = -n_scalar * A * np.sin(phi)
-            vy0  = -2.0 * n_scalar * A * np.cos(phi)
+            x0 = A * np.cos(phi)
+            y0 = -2.0 * A * np.sin(phi)
+            vx0 = -n_scalar * A * np.sin(phi)
+            vy0 = -2.0 * n_scalar * A * np.cos(phi)
 
             # z-quadrature at t0: z(0)=0,  zdot(0)=+n*B
-            z0   = 0.0
-            vz0  = n_scalar * B
+            z0 = 0.0
+            vz0 = n_scalar * B
 
-            x_0[i, a], y_0[i, a], z_0[i, a]       = x0, y0, z0
+            x_0[i, a], y_0[i, a], z_0[i, a] = x0, y0, z0
             xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0, vy0, vz0
 
             # ---------- shared detector + CRO repair ----------
@@ -585,8 +601,8 @@ def inertial_cro(num_mc, num_agents, n_scalar=None, focal_length_px=None,
                     z_0[i, a], zdot_0[i, a] = zN, vzN
                     # x,y unchanged — extra z-velocity injects usable v_perp
                     # Check if still degenerate
-                    r1 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                    v1 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+                    r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                    v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
                     bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
 
                     if bad2:
@@ -605,23 +621,31 @@ def inertial_cro(num_mc, num_agents, n_scalar=None, focal_length_px=None,
                         z_0[i, a] = 0.0
                         zdot_0[i, a] = vzN  # keep the boosted vz
 
-                        r2 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                        v2 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+                        r2 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                        v2 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
                         bad3, stats3 = detect_degeneracy(r2, v2, focal_length_px, float(kf_dt), px_min, rho_max)
                         if bad3:
-                            raise RuntimeError(f"CRO IC unrecoverable after phase shift: px={stats3['px']:.2f}, rho={stats3['rho']:.3f}")
+                            raise RuntimeError(
+                                f"CRO IC unrecoverable after phase shift: px={stats3['px']:.2f}, rho={stats3['rho']:.3f}"
+                            )
 
     omega_GI_G_0 = [0.0, 0.0, 0.0]
-    path_mode    = "Inertial"
+    path_mode = "Inertial"
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
 
 
-def init_inertial(num_mc, num_agents, focal_length_px, kf_dt=None,
-                  px_min=6.0, rho_max=0.90, n_scalar=None,
-                  R0_const=100.0,     # NMC range (≈ constant)
-                  variant="nmc",      # "nmc" or "cro"
-                  rngs_mc=None
-                  ):
+def init_inertial(
+    num_mc,
+    num_agents,
+    focal_length_px,
+    kf_dt=None,
+    px_min=6.0,
+    rho_max=0.90,
+    n_scalar=None,
+    R0_const=100.0,  # NMC range (≈ constant)
+    variant="nmc",  # "nmc" or "cro"
+    rngs_mc=None,
+):
     """Initialize Hill-form ICs for the inertial (G fixed to I) case.
 
     Parameters
@@ -633,18 +657,33 @@ def init_inertial(num_mc, num_agents, focal_length_px, kf_dt=None,
     Returns: x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
     """
     if variant.lower() == "nmc":
-        return inertial_nmc(num_mc, num_agents, n_scalar=n_scalar, 
-                            focal_length_px=focal_length_px, kf_dt=kf_dt,
-                            px_min=px_min, rho_max=rho_max, R0_const=R0_const,
-                            rngs_mc=rngs_mc)
+        return inertial_nmc(
+            num_mc,
+            num_agents,
+            n_scalar=n_scalar,
+            focal_length_px=focal_length_px,
+            kf_dt=kf_dt,
+            px_min=px_min,
+            rho_max=rho_max,
+            R0_const=R0_const,
+            rngs_mc=rngs_mc,
+        )
     elif variant.lower() == "cro":
         # span_frac=2.0 provides ~81% actual range variation after repair
         # This gives tri_angle_min ~1.27° (above 1.0° threshold) and px_min ~3.2
         # Validated via sweep_inertial_trajectories.py parameter sweep
-        return inertial_cro(num_mc, num_agents, n_scalar=n_scalar,
-                            focal_length_px=focal_length_px, kf_dt=kf_dt,
-                            px_min=px_min, rho_max=rho_max, R_nom=R0_const,
-                            span_frac=2.0, rngs_mc=rngs_mc)
+        return inertial_cro(
+            num_mc,
+            num_agents,
+            n_scalar=n_scalar,
+            focal_length_px=focal_length_px,
+            kf_dt=kf_dt,
+            px_min=px_min,
+            rho_max=rho_max,
+            R_nom=R0_const,
+            span_frac=2.0,
+            rngs_mc=rngs_mc,
+        )
     else:
         raise ValueError("init_inertial: unknown variant (use 'nmc' or 'cro').")
 
@@ -652,17 +691,16 @@ def init_inertial(num_mc, num_agents, focal_length_px, kf_dt=None,
 # ------------------ Hill Case ----------------------------------------------
 
 
-def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, kf_dt=None,
-              px_min=6.0, rho_max=0.90):
+def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, kf_dt=None, px_min=6.0, rho_max=0.90):
     """Initialize Hill/LVLH case
     Returns: x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
     """
-    x_0     = np.zeros((num_mc, num_agents))
-    y_0     = np.zeros((num_mc, num_agents))
-    z_0     = np.zeros((num_mc, num_agents))
-    xdot_0  = np.zeros((num_mc, num_agents))
-    ydot_0  = np.zeros((num_mc, num_agents))
-    zdot_0  = np.zeros((num_mc, num_agents))
+    x_0 = np.zeros((num_mc, num_agents))
+    y_0 = np.zeros((num_mc, num_agents))
+    z_0 = np.zeros((num_mc, num_agents))
+    xdot_0 = np.zeros((num_mc, num_agents))
+    ydot_0 = np.zeros((num_mc, num_agents))
+    zdot_0 = np.zeros((num_mc, num_agents))
 
     path_mode = "Hill"
     omega_GI_G_0 = [0.0, 0.0, 0.0]  # not used for Hill
@@ -677,19 +715,18 @@ def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, 
             # CW in-plane consistency
             x_0[i, a] = -ydot_0[i, a] / (2.0 * n_scalar)
 
-            
             # Build state for guard
-            r0 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-            v0 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+            r0 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+            v0 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
             if (focal_length_px is not None) and (kf_dt is not None):
                 bad, _ = detect_degeneracy(r0, v0, focal_length_px, float(kf_dt), px_min, rho_max)
                 if bad:
                     fix = repair_hill(r0, v0, n_scalar, focal_length_px, float(kf_dt), px_min)
                     if fix is not None:
-                        x_0[i,a], y_0[i,a], z_0[i,a]           = fix["x0"], fix["y0"], fix["z0"]
-                        xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]  = fix["vx0"], fix["vy0"], fix["vz0"]
-                        r1 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                        v1 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+                        x_0[i, a], y_0[i, a], z_0[i, a] = fix["x0"], fix["y0"], fix["z0"]
+                        xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = fix["vx0"], fix["vy0"], fix["vz0"]
+                        r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                        v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
                         bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
                         if bad2:
                             raise RuntimeError(f"Hill IC unrecoverable: px={stats2['px']:.2f}, rho={stats2['rho']:.3f}")
@@ -700,11 +737,24 @@ def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, 
 # ------------------ Tumbling Case ----------------------------------------------
 
 
-def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=None,
-                  px_min=6.0, rho_max=0.90, n_scalar=None, R0_const=100.0,
-                  omega_min_deg=0.5, omega_max_deg=2.0,
-                  off_axis_min=0.3, max_omega_retries=100,
-                  J=None, min_asymmetry_component=0.4):
+def init_tumbling(
+    num_mc,
+    num_agents,
+    rngs_mc=None,
+    focal_length_px=None,
+    kf_dt=None,
+    px_min=6.0,
+    rho_max=0.90,
+    n_scalar=None,
+    R0_const=100.0,
+    omega_min_deg=0.5,
+    omega_max_deg=2.0,
+    off_axis_min=0.3,
+    max_omega_retries=100,
+    J=None,
+    min_asymmetry_component=0.4,
+    span_frac=2.0,
+):
     """Initialize tumbling case with CRO trajectory.
 
     Uses CRO (Cross-Range Oscillation) bounded HCW trajectory for the chaser,
@@ -745,12 +795,12 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
         raise ValueError("n_scalar must be provided (mean motion, rad/s).")
     if (rngs_mc is not None) and (len(rngs_mc) != num_mc):
         raise ValueError("rngs_mc must have length num_mc.")
-    x_0     = np.zeros((num_mc, num_agents))
-    y_0     = np.zeros((num_mc, num_agents))
-    z_0     = np.zeros((num_mc, num_agents))
-    xdot_0  = np.zeros((num_mc, num_agents))
-    ydot_0  = np.zeros((num_mc, num_agents))
-    zdot_0  = np.zeros((num_mc, num_agents))
+    x_0 = np.zeros((num_mc, num_agents))
+    y_0 = np.zeros((num_mc, num_agents))
+    z_0 = np.zeros((num_mc, num_agents))
+    xdot_0 = np.zeros((num_mc, num_agents))
+    ydot_0 = np.zeros((num_mc, num_agents))
+    zdot_0 = np.zeros((num_mc, num_agents))
 
     path_mode = "Tumbling"
 
@@ -764,11 +814,9 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
     # A sets in-plane amplitude, B sets out-of-plane amplitude
     # r_min = 2A = R0_const, r_max = sqrt((2A)^2 + B^2)
     # Therefore: B = sqrt(r_max^2 - (2A)^2) = sqrt(r_max^2 - R0_const^2)
-    # Use span_frac=0.20 (20% range variation) as baseline - repair will boost B if needed
-    span_frac = 0.20
     A_base = 0.5 * float(R0_const)  # so 2*A_base = R0_const
     r_max_in = (1.0 + span_frac) * float(R0_const)
-    B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base)**2, 0.0)))
+    B_base = float(np.sqrt(max(r_max_in**2 - (2.0 * A_base) ** 2, 0.0)))
     amp_jitter = 0.10  # ±10% amplitude jitter
 
     for i in range(num_mc):
@@ -788,16 +836,14 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
         try:
             if J is not None:
                 d, _ = sample_inertia_excited_omega_direction(
-                    rng, J,
+                    rng,
+                    J,
                     min_asymmetry_component=min_asymmetry_component,
                     off_axis_min=off_axis_min,
-                    max_retries=max_omega_retries
+                    max_retries=max_omega_retries,
                 )
             else:
-                d, _ = sample_excited_omega_direction(
-                    rng, off_axis_min=off_axis_min,
-                    max_retries=max_omega_retries
-                )
+                d, _ = sample_excited_omega_direction(rng, off_axis_min=off_axis_min, max_retries=max_omega_retries)
         except RuntimeError as e:
             raise RuntimeError(f"init_tumbling MC trial {i}: {e}") from e
 
@@ -806,7 +852,7 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
         for a in range(num_agents):
             # Apply small amplitude jitter for MC variability
             eps_xy = float(rng.uniform(-amp_jitter, amp_jitter))
-            eps_z  = float(rng.uniform(-amp_jitter, amp_jitter))
+            eps_z = float(rng.uniform(-amp_jitter, amp_jitter))
             A = max(1e-9, A_base * (1.0 + eps_xy))
             B = max(1e-9, B_base * (1.0 + eps_z))
 
@@ -815,12 +861,12 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
 
             # CRO ICs: x = A cos(phi), y = -2A sin(phi), z = 0 (z-quadrature)
             # vx = -n A sin(phi), vy = -2 n A cos(phi), vz = n B
-            x0   =  A * np.cos(phi)
-            y0   = -2.0 * A * np.sin(phi)
-            z0   =  0.0  # z-quadrature start
-            vx0  = -n_scalar * A * np.sin(phi)
-            vy0  = -2.0 * n_scalar * A * np.cos(phi)
-            vz0  =  n_scalar * B  # immediate cross-track velocity
+            x0 = A * np.cos(phi)
+            y0 = -2.0 * A * np.sin(phi)
+            z0 = 0.0  # z-quadrature start
+            vx0 = -n_scalar * A * np.sin(phi)
+            vy0 = -2.0 * n_scalar * A * np.cos(phi)
+            vz0 = n_scalar * B  # immediate cross-track velocity
 
             x_0[i, a], y_0[i, a], z_0[i, a] = x0, y0, z0
             xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0, vy0, vz0
@@ -832,34 +878,55 @@ def init_tumbling(num_mc, num_agents, rngs_mc=None, focal_length_px=None, kf_dt=
                 bad, stats = detect_degeneracy(r0, v0, focal_length_px, float(kf_dt), px_min, rho_max)
                 if bad:
                     # Try CRO repair first (boost B via zdot)
-                    zN, vzN = repair_inertial_cro(r0, v0, focal_length_px, float(kf_dt),
-                                                   n_scalar, px_min, vz0=vz0)
+                    zN, vzN = repair_inertial_cro(r0, v0, focal_length_px, float(kf_dt), n_scalar, px_min, vz0=vz0)
                     z_0[i, a], zdot_0[i, a] = zN, vzN
                     # Verify fix
-                    r1 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                    v1 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
+                    r1 = np.array([x_0[i, a], y_0[i, a], z_0[i, a]], float)
+                    v1 = np.array([xdot_0[i, a], ydot_0[i, a], zdot_0[i, a]], float)
                     bad2, stats2 = detect_degeneracy(r1, v1, focal_length_px, float(kf_dt), px_min, rho_max)
 
                     if bad2:
-                        # z-repair failed (likely LOS ~ z-axis). Try phase shift to get
-                        # better in-plane geometry. Shift phase by 90° to maximize
-                        # transverse in-plane velocity component.
-                        phi_new = phi + np.pi / 2.0
-                        x0_new = A * np.cos(phi_new)
-                        y0_new = -2.0 * A * np.sin(phi_new)
-                        vx0_new = -n_scalar * A * np.sin(phi_new)
-                        vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
+                        # z-repair failed (likely LOS close to the z axis for this phase).
+                        # Try a small set of phase shifts and recompute the minimal z-boost
+                        # for each candidate instead of reusing the original vz correction.
+                        phase_offsets = [k * (np.pi / 6.0) for k in range(1, 12)]
+                        repaired = False
+                        best_stats = stats2
+                        px_target = 1.02 * float(px_min)
 
-                        x_0[i, a], y_0[i, a] = x0_new, y0_new
-                        xdot_0[i, a], ydot_0[i, a] = vx0_new, vy0_new
-                        # Reset z to quadrature with boosted B
-                        z_0[i, a] = 0.0
-                        zdot_0[i, a] = vzN  # keep the boosted vz
+                        for phase_offset in phase_offsets:
+                            phi_new = phi + phase_offset
+                            x0_new = A * np.cos(phi_new)
+                            y0_new = -2.0 * A * np.sin(phi_new)
+                            vx0_new = -n_scalar * A * np.sin(phi_new)
+                            vy0_new = -2.0 * n_scalar * A * np.cos(phi_new)
 
-                        r2 = np.array([x_0[i,a], y_0[i,a], z_0[i,a]], float)
-                        v2 = np.array([xdot_0[i,a], ydot_0[i,a], zdot_0[i,a]], float)
-                        bad3, stats3 = detect_degeneracy(r2, v2, focal_length_px, float(kf_dt), px_min, rho_max)
-                        if bad3:
-                            raise RuntimeError(f"Tumbling IC unrecoverable after phase shift: px={stats3['px']:.2f}, rho={stats3['rho']:.3f}")
+                            r_try = np.array([x0_new, y0_new, 0.0], float)
+                            v_try = np.array([vx0_new, vy0_new, vz0], float)
+                            z_try, vz_try = repair_inertial_cro(
+                                r_try, v_try, focal_length_px, float(kf_dt), n_scalar, px_target, vz0=vz0
+                            )
+                            r_fix = np.array([x0_new, y0_new, z_try], float)
+                            v_fix = np.array([vx0_new, vy0_new, vz_try], float)
+                            bad3, stats3 = detect_degeneracy(
+                                r_fix, v_fix, focal_length_px, float(kf_dt), px_min, rho_max
+                            )
+
+                            if (not repaired) and (
+                                stats3["px"] > best_stats["px"]
+                                or (np.isclose(stats3["px"], best_stats["px"]) and stats3["rho"] < best_stats["rho"])
+                            ):
+                                best_stats = stats3
+
+                            if not bad3:
+                                x_0[i, a], y_0[i, a], z_0[i, a] = x0_new, y0_new, z_try
+                                xdot_0[i, a], ydot_0[i, a], zdot_0[i, a] = vx0_new, vy0_new, vz_try
+                                repaired = True
+                                break
+
+                        if not repaired:
+                            raise RuntimeError(
+                                f"Tumbling IC unrecoverable after phase search: px={best_stats['px']:.2f}, rho={best_stats['rho']:.3f}"
+                            )
 
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, path_mode
