@@ -149,7 +149,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     if config.model_rotation_z_deg != 0:
         renderer.rotate_z(model, config.model_rotation_z_deg)
 
-    total = len(frame_ids)
     print("Enabling blur is: ", config.setup.enable_blur)
 
     image_filenames = renderer.render_animation(
@@ -216,7 +215,7 @@ def run_sweep(sweep_config: SweepConfig):
             config.scene_blend_path = str(PROJECT_ROOT / config.scene_blend_path)
         if config.hdri_path and not os.path.isabs(config.hdri_path):
             config.hdri_path = str(PROJECT_ROOT / config.hdri_path)
-        for obj_name, obj_cfg in config.objects.items():
+        for _obj_name, obj_cfg in config.objects.items():
             if obj_cfg.blend_path and not os.path.isabs(obj_cfg.blend_path):
                 obj_cfg.blend_path = str(PROJECT_ROOT / obj_cfg.blend_path)
 

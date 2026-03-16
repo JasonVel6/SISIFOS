@@ -31,8 +31,8 @@ class BlenderRenderer:
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
 
-        new_objects = append_blend_objects(self.config.objects["Earth"].blend_path)
-        new_objects2 = append_blend_objects(self.config.objects["Target"].blend_path)
+        append_blend_objects(self.config.objects["Earth"].blend_path)
+        append_blend_objects(self.config.objects["Target"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
 
@@ -127,7 +127,6 @@ class BlenderRenderer:
         earth = bpy.data.objects["Earth"]
         clouds = bpy.data.objects["Clouds"]
         atmo = bpy.data.objects["Atmo"]
-        target = bpy.data.objects["Target"]
         sun = bpy.data.objects["Sun"]  # or create one
         bpy.context.view_layer.update()
         sun.data.energy = 10.0

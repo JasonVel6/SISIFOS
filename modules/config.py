@@ -249,8 +249,8 @@ class SweepConfig(BaseModel):
         if not self.sweep_parameters:
             return [copy.deepcopy(self.base_config)]
 
-        keys, values = zip(*self.sweep_parameters.items())
-        combinations = [dict(zip(keys, v)) for v in itertools.product(*values)]
+        keys, values = zip(*self.sweep_parameters.items(), strict=False)
+        combinations = [dict(zip(keys, v, strict=False)) for v in itertools.product(*values)]
 
         sweep_configs = []
         for combo in combinations:
