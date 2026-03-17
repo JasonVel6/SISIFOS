@@ -116,7 +116,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
         agent_folders = [str(dest_folder)]
     else:
         raise ValueError(
-            f"Invalid trajectory type: {config.trajectory_type}. Must be one of 'trajectory_generator', 'sampling_trajectory', 'const_rotate', or 'filepath'."
+            f"Invalid trajectory type: {config.trajectory_type}. Must be 'trajectory_generator' or 'sampling_trajectory'."
         )
 
     return agent_folders
@@ -150,7 +150,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     gt_root = ensure_dir(renders_base_dir / "GTAnnotations")
 
-    renderer.hide_all_except(model, all_models)
     image_out_dir = renders_base_dir / "images_raw"
     masked_out_dir = renders_base_dir / "images"
     if str(config.setup.stars_mode).casefold() == "off":
