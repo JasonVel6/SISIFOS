@@ -28,7 +28,6 @@ from modules.io_utils import (
     get_timestamp_folder,
     handle_gt_from_npz,
     images_to_video_blender_sequence,
-    vprint,
 )
 from modules.log_utils import get_logger, setup_logger
 from modules.renderer import BlenderRenderer
@@ -135,7 +134,7 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("[Session] Renders output: %s/", renders_base_dir)
 
     model = renderer.select_model_to_render()
-    vprint(f"Rendering model: {model.name}", True)
+    logger.info("Rendering model: %s", model.name)
     all_models = renderer.get_all_models()
 
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
