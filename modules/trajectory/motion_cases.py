@@ -1,4 +1,5 @@
 import numpy as np
+
 from modules.config import InitialConditionConfig
 
 
@@ -779,6 +780,7 @@ def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, 
 
 # ------------------ Tumbling Case ----------------------------------------------
 
+
 def init_tumbling_new(
     num_mc: int,
     num_agents: int,
@@ -817,7 +819,9 @@ def init_tumbling_new(
                 )
             else:
                 d, _ = sample_excited_omega_direction(
-                    rng, off_axis_min=init_condition_config.off_axis_min, max_retries=init_condition_config.max_omega_retries
+                    rng,
+                    off_axis_min=init_condition_config.off_axis_min,
+                    max_retries=init_condition_config.max_omega_retries,
                 )
 
             omega_sampled_rad = float(
@@ -854,18 +858,27 @@ def initial_condititions_orbital(
 
     for mc_trial in range(num_mc):
         rng = rngs_mc[mc_trial]
-        inc[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.inclination_rad, initial_condition_config.inclination_rad_range)
-        ecc[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.eccentricity, initial_condition_config.eccentricity_range)
+        inc[mc_trial] = _sample_fixed_or_range(
+            rng, initial_condition_config.inclination_rad, initial_condition_config.inclination_rad_range
+        )
+        ecc[mc_trial] = _sample_fixed_or_range(
+            rng, initial_condition_config.eccentricity, initial_condition_config.eccentricity_range
+        )
         # Always draw from the main RNG to preserve downstream state.
         el_I[mc_trial] = _sample_fixed_or_range(
             rng, initial_condition_config.sun_elevation_I_rad, initial_condition_config.sun_elevation_I_rad_range
         )
-        az_I[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.sun_azimuth_I_rad, initial_condition_config.sun_azimuth_I_rad_range)
+        az_I[mc_trial] = _sample_fixed_or_range(
+            rng, initial_condition_config.sun_azimuth_I_rad, initial_condition_config.sun_azimuth_I_rad_range
+        )
         yaw[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.yaw, initial_condition_config.yaw_range)
-        pitch[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.pitch, initial_condition_config.pitch_range)
+        pitch[mc_trial] = _sample_fixed_or_range(
+            rng, initial_condition_config.pitch, initial_condition_config.pitch_range
+        )
         roll[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.roll, initial_condition_config.roll_range)
 
     return inc, ecc, el_I, az_I, yaw, pitch, roll
+
 
 def init_tumbling(
     num_mc,

@@ -159,6 +159,7 @@ class InitialConditionConfig(BaseModel):
 
     TODO make docs and test this out
     """
+
     R_mid: float | None = None
     R_mid_range: tuple[float, float] = (15.0, 50.0)
 
@@ -213,10 +214,7 @@ class InitialConditionConfig(BaseModel):
 
     @property
     def uses_cartesian_state(self) -> bool:
-        return any(
-            getattr(self, field_name) is not None
-            for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")
-        )
+        return any(getattr(self, field_name) is not None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot"))
 
 
 def default_inertia_config(selected_model: str) -> InertiaConfig:

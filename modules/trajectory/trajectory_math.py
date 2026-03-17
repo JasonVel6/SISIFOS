@@ -7,9 +7,9 @@ TODO this could prob use some unit testing to make sure that we dont accidentall
 
 ### Import necessary libraries
 import math
-import random
 
 import numpy as np
+
 # from mathutils import Matrix, Quaternion, Vector
 from scipy.linalg import expm, logm
 

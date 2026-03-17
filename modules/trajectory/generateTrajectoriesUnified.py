@@ -42,8 +42,8 @@ import time
 import numpy as np
 from scipy.linalg import expm
 
-from modules.log_utils import get_logger, setup_logger
 from modules.io_utils import get_timestamp_folder
+from modules.log_utils import get_logger, setup_logger
 
 # Add project root to path so imports work both when running directly and when imported
 _SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -51,14 +51,9 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectoryConfig, InitialConditionConfig
+from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectoryConfig
 from modules.trajectory.motion_cases import (
-    init_hill,
-    init_inertial,
-    init_tumbling,
     init_tumbling_new,
-    sample_inertia_excited_omega_direction,
-    validate_omega_timeseries_excitation,
     initial_condititions_orbital,
 )
 from modules.trajectory.plot_figure import generate_scene_plots, plot_trial_trajectories
@@ -100,6 +95,7 @@ def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
     delta_cam = so3_log_vec(R_IC_lookat.T @ R_IC_follow)
     gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
     return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
+
 
 # ============================================================================
 # MAIN Function
@@ -902,7 +898,9 @@ def main():
             scene_config.trajectory.seed = seed
 
         timestamp_folder = get_timestamp_folder()
-        output_dir = os.path.join(DEFAULT_OUTPUT_BASE, f"{timestamp_folder}_{scene_config.trajectory.path_mode}_traj_only")
+        output_dir = os.path.join(
+            DEFAULT_OUTPUT_BASE, f"{timestamp_folder}_{scene_config.trajectory.path_mode}_traj_only"
+        )
 
         os.makedirs(output_dir, exist_ok=True)
         setup_logger(log_file=os.path.join(output_dir, "run.log"))
