@@ -111,6 +111,7 @@ class InertiaConfig(BaseModel):
 
     inertia_type: Literal["box", "cylinder", "custom", "sphere"]
     m: float | None = None
+    # following spatial dimensions are in meters
     l: float | None = None
     w: float | None = None
     h: float | None = None
@@ -125,27 +126,30 @@ class InertiaConfig(BaseModel):
         if self.inertia_type == "box":
             if self.l is None or self.w is None or self.h is None or self.m is None:
                 raise ValueError("Box inertia requires l, w, and h to be defined")
-            J_xx = (1.0 / 12.0) * self.m * (self.w**2 + self.h**2)
-            J_yy = (1.0 / 12.0) * self.m * (self.l**2 + self.h**2)
-            J_zz = (1.0 / 12.0) * self.m * (self.l**2 + self.w**2)
+            J_xx = (1.0 / 12.0) * self.m * (self.w**2 + self.h**2)  # rotation about x (longest)
+            J_yy = (1.0 / 12.0) * self.m * (self.l**2 + self.h**2)  # rotation about y
+            J_zz = (1.0 / 12.0) * self.m * (self.l**2 + self.w**2)  # rotation about z
             return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
-        if self.inertia_type == "cylinder":
+        elif self.inertia_type == "cylinder":
+            # From https://scienceworld.wolfram.com/physics/MomentofInertiaCylinder.html
+            # Simplified cylinder inertia (assuming rotation about central axis)
             if self.r is None or self.h is None or self.m is None:
                 raise ValueError("Cylinder inertia requires r and h to be defined")
-            J_xx = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2
-            J_yy = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2
-            J_zz = (1.0 / 2.0) * self.m * self.r**2
+            J_xx = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2  # rotation about x (longitudinal)
+            J_yy = (1.0 / 12.0) * self.m * self.h**2 + (1 / 4) * self.m * self.r**2  # rotation about y
+            J_zz = (1.0 / 2.0) * self.m * self.r**2  # rotation about z (central axis)
             return np.array([[J_xx, 0, 0], [0, J_yy, 0], [0, 0, J_zz]])
-        if self.inertia_type == "custom":
+        elif self.inertia_type == "custom":
             if self.Jx is None or self.Jy is None or self.Jz is None:
                 raise ValueError("Custom inertia requires Jx, Jy, and Jz to be defined")
             return np.array([[self.Jx, 0, 0], [0, self.Jy, 0], [0, 0, self.Jz]])
-        if self.inertia_type == "sphere":
+        elif self.inertia_type == "sphere":
             if self.r is None or self.m is None:
                 raise ValueError("Sphere inertia requires r and m to be defined")
             J = (2.0 / 5.0) * self.m * self.r**2
             return np.array([[J, 0, 0], [0, J, 0], [0, 0, J]])
-        raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
+        else:
+            raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
 
 
 def default_inertia_config(selected_model: str) -> InertiaConfig:
@@ -166,7 +170,7 @@ class TrajectoryConfig(BaseModel):
     # Commonly changed parameters
     path_mode: Literal["inertial", "hill", "tumbling"] = "tumbling"
     seed: int | None = None  # For reproducibility
-    illumination_seed: int | None = None
+    illumination_seed: int | None = None  # Separate seed for sun angles; None auto-generates a fresh one
     num_agents: int = 1
     num_mc: int = 1
 
@@ -201,13 +205,30 @@ class TrajectoryConfig(BaseModel):
 
     # Distance to target
     R0_const: float = 30.0
+    # CRO out-of-plane amplitude for tumbling mode.
+    # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
+    # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
     tumbling_span_frac: float = 0.20
+    # Camera pointing offset — look at a point offset from geometric center G
+    # in body frame. For tumbling targets, the tumble sweeps this offset through
+    # inertial space, providing parallax diversity that breaks monocular VO
+    # degeneracies (pure-LOS rotation). For non-tumbling modes (inertial/Hill),
+    # a slow sinusoidal scan is added automatically.
     pointing_offset_G: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
-    pointing_scan_amplitude: float = 0.0
-    pointing_scan_period: float = 60.0
+    # Scan amplitude for non-tumbling modes [m]. Each axis oscillates as
+    # A*sin(2*pi*t/T + phase_i). Ignored when pointing_offset_G is zero or tumbling.
+    pointing_scan_amplitude: float = 0.0  # [m]
+    pointing_scan_period: float = 60.0  # [s]
+    # Camera look-at mode:
+    #   I      = inertial look-at only
+    #   G      = body-frame look-at only
+    #   hybrid = blend inertial and body-frame look-at using follow gains
     camera_lookat_mode: Literal["I", "G", "hybrid"] = "hybrid"
+    # Camera target-follow gains for passive inspection.
+    # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
     camera_pitchyaw_follow_gain: float = 0.0
     camera_roll_follow_gain: float = 0.0
+
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
     SUN_ALIGN_CONE_DEG: float = 12.0
@@ -281,7 +302,7 @@ class SceneConfig(BaseModel):
     # Rendering control
     frame_ids: list[int] | None = None  # If None, use all frames
     selected_model: str = "RF_Hubble"
-    model_rotation_quat: float | None = None
+    model_rotation_quat: float | None = None  # To align model with propper inertia calculation
     trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath", "const_rotate"] = (
         "trajectory_generator"
     )
@@ -291,7 +312,6 @@ class SceneConfig(BaseModel):
     trajectory_filepath: str | None = ""
 
     model_rotation_A_model_euler: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    model_rotation_z_deg: float = 45.0
 
     @model_validator(mode="before")
     @classmethod
@@ -305,8 +325,9 @@ class SceneConfig(BaseModel):
         if trajectory is None:
             return data
 
-        if isinstance(trajectory, dict) and "selected_model" in trajectory:
-            raise ValueError("trajectory.selected_model is not supported; use top-level selected_model")
+        if isinstance(trajectory, dict):
+            if "selected_model" in trajectory:
+                raise ValueError("trajectory.selected_model is not supported; use top-level selected_model")
 
         return data
 
@@ -321,7 +342,7 @@ class SceneConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def default_model_rotation_from_selected_model(self):
+    def default_model_rotation(self):
         if not self.selected_model:
             self.model_rotation_A_model_euler = (0.0, 0.0, 0.0)
             return self
