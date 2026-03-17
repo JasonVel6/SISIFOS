@@ -1,4 +1,3 @@
-import math
 import random
 from pathlib import Path
 
@@ -129,7 +128,6 @@ def write_camera_trajectory_fib(
         logger.info("Trajectory (v2 - inertial orbital) written to: %s", out_path)
 
     return [out_dir]
-
 
 
 def write_camera_trajectory_const_rotation(

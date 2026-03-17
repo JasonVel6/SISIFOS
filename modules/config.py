@@ -303,6 +303,7 @@ class SceneConfig(BaseModel):
     frame_ids: list[int] | None = None  # If None, use all frames
     selected_model: str = "RF_Hubble"
     model_rotation_quat: float | None = None  # To align model with propper inertia calculation
+
     trajectory_type: Literal["trajectory_generator", "sampling_trajectory", "filepath", "const_rotate"] = (
         "trajectory_generator"
     )

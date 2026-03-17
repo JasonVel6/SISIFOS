@@ -177,7 +177,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
 
     elapsed = time.time() - render_start_time
     if frame_ids:
-        logger.info("Rendered %d frame(s) in %.2f seconds (%.2f s/frame)", len(frame_ids), elapsed, elapsed / len(frame_ids))
+        logger.info(
+            "Rendered %d frame(s) in %.2f seconds (%.2f s/frame)", len(frame_ids), elapsed, elapsed / len(frame_ids)
+        )
         logger.info("Render completed at: %s", datetime.datetime.now())
 
     # Post-process NPZ ground truth data
