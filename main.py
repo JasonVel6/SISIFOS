@@ -169,7 +169,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         "gt_seg": ensure_dir(gt_root / "Seg"),
     }
 
-
     logger.info("Enabling blur is: %s", config.setup.enable_blur)
 
     render_start_time = time.time()
