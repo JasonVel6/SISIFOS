@@ -277,6 +277,12 @@ class BlenderRenderer:
             to_remove.update(root.children_recursive)
         remove_objects_from_scene(list(to_remove))
 
+    def get_models_in_blend(self) -> list[str]:
+        """Inspect the blend file and return RF_* root names to render (without loading)."""
+        all_names = self._get_target_blend_object_names()
+        rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
+        return rf_names
+
     def load_spacecraft(self, model_name: str) -> bpy.types.Object:
         """Load a single spacecraft (root + descendants) into the scene and return the root."""
         blend_path = self.config.objects["Target"].blend_path
