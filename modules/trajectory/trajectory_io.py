@@ -26,29 +26,9 @@ camera_trajectory_header = [
 ]
 
 
-def _derive_cro_fields_from_state(state_H: np.ndarray, n_scalar: float) -> dict:
-    x, y, z, xdot, ydot, zdot = [float(v) for v in np.asarray(state_H, dtype=float)]
-    A = float(np.hypot(x, y / 2.0))
-    if A > 1e-12:
-        phi = float(np.arctan2(-y / (2.0 * A), x / A))
-    else:
-        phi = 0.0
-    B = float(np.hypot(z, zdot / max(n_scalar, 1e-12)))
-    r_min = A
-    r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
-    R_mid = 0.5 * (r_min + r_max)
-    span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
-    return {
-        "A": A,
-        "B": B,
-        "phi": phi,
-        "R_mid": R_mid,
-        "span_frac": span_frac,
-    }
-
-
 def build_initial_config_payload(
     state_H: np.ndarray,
+    cro_fields: dict[str, float],
     omega_GI_G_0_trial: np.ndarray,
     inc: float,
     ecc: float,
@@ -57,10 +37,8 @@ def build_initial_config_payload(
     yaw: float,
     pitch: float,
     roll: float,
-    n_scalar: float,
 ) -> dict:
     state_H = np.asarray(state_H, dtype=float)
-    cro_fields = _derive_cro_fields_from_state(state_H, n_scalar)
     return {
         "x": float(state_H[0]),
         "y": float(state_H[1]),
@@ -134,10 +112,11 @@ def write_agent_config_files(
     yaw: float,
     pitch: float,
     roll: float,
-    n_scalar: float,
+    cro_fields: dict[str, float],
 ) -> tuple[dict, dict]:
     initial_config_payload = build_initial_config_payload(
         state_H=state_H,
+        cro_fields=cro_fields,
         omega_GI_G_0_trial=omega_GI_G_0_trial,
         inc=inc,
         ecc=ecc,
@@ -146,7 +125,6 @@ def write_agent_config_files(
         yaw=yaw,
         pitch=pitch,
         roll=roll,
-        n_scalar=n_scalar,
     )
     resolved_trajectory_payload = build_resolved_trajectory_config_payload(config, initial_config_payload)
     write_json_payload(os.path.join(output_dir, "trajectory_config.json"), resolved_trajectory_payload)

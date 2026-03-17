@@ -18,15 +18,40 @@ def _sample_tumbling_cartesian_state(
     rng: np.random.Generator,
     n_scalar: float,
     init_condition_config: InitialConditionConfig,
-) -> tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, dict[str, float]]:
     if init_condition_config.uses_cartesian_state:
+        x0 = _sample_fixed_or_range(rng, init_condition_config.x, init_condition_config.x_range)
+        y0 = _sample_fixed_or_range(rng, init_condition_config.y, init_condition_config.y_range)
+        z0 = _sample_fixed_or_range(rng, init_condition_config.z, init_condition_config.z_range)
+        vx0 = _sample_fixed_or_range(rng, init_condition_config.xdot, init_condition_config.xdot_range)
+        vy0 = _sample_fixed_or_range(rng, init_condition_config.ydot, init_condition_config.ydot_range)
+        vz0 = _sample_fixed_or_range(rng, init_condition_config.zdot, init_condition_config.zdot_range)
+
+        A = float(np.hypot(x0, y0 / 2.0))
+        if A > 1e-12:
+            phi = float(np.arctan2(-y0 / (2.0 * A), x0 / A))
+        else:
+            phi = 0.0
+        B = float(np.hypot(z0, vz0 / max(n_scalar, 1e-12)))
+        r_min = A
+        r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
+        R_mid = 0.5 * (r_min + r_max)
+        span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
+
         return (
-            _sample_fixed_or_range(rng, init_condition_config.x, init_condition_config.x_range),
-            _sample_fixed_or_range(rng, init_condition_config.y, init_condition_config.y_range),
-            _sample_fixed_or_range(rng, init_condition_config.z, init_condition_config.z_range),
-            _sample_fixed_or_range(rng, init_condition_config.xdot, init_condition_config.xdot_range),
-            _sample_fixed_or_range(rng, init_condition_config.ydot, init_condition_config.ydot_range),
-            _sample_fixed_or_range(rng, init_condition_config.zdot, init_condition_config.zdot_range),
+            x0,
+            y0,
+            z0,
+            vx0,
+            vy0,
+            vz0,
+            {
+                "A": A,
+                "B": B,
+                "phi": phi,
+                "R_mid": R_mid,
+                "span_frac": span_frac,
+            },
         )
 
     R_mid = _sample_fixed_or_range(rng, init_condition_config.R_mid, init_condition_config.R_mid_range)
@@ -42,7 +67,13 @@ def _sample_tumbling_cartesian_state(
     vx0 = -n_scalar * A * np.sin(phi)
     vy0 = -2.0 * n_scalar * A * np.cos(phi)
     vz0 = n_scalar * B
-    return x0, y0, z0, vx0, vy0, vz0
+    return x0, y0, z0, vx0, vy0, vz0, {
+        "A": float(A),
+        "B": float(B),
+        "phi": float(phi),
+        "R_mid": float(R_mid),
+        "span_frac": float(span_frac),
+    }
 
 
 def _ic_geom_from_state(r0, v0, f_px, dt):
@@ -788,7 +819,7 @@ def init_tumbling_new(
     n_scalar: float,
     init_condition_config: InitialConditionConfig,
     J: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     if n_scalar is None:
         raise ValueError("n_scalar must be provided (mean motion, rad/s).")
     if (rngs_mc is not None) and (len(rngs_mc) != num_mc):
@@ -799,7 +830,13 @@ def init_tumbling_new(
     xdot_0 = np.zeros((num_mc, num_agents))
     ydot_0 = np.zeros((num_mc, num_agents))
     zdot_0 = np.zeros((num_mc, num_agents))
-    path_mode = "Tumbling"
+    cro_fields_all = {
+        "A": np.zeros((num_mc, num_agents), dtype=float),
+        "B": np.zeros((num_mc, num_agents), dtype=float),
+        "phi": np.zeros((num_mc, num_agents), dtype=float),
+        "R_mid": np.zeros((num_mc, num_agents), dtype=float),
+        "span_frac": np.zeros((num_mc, num_agents), dtype=float),
+    }
 
     # Initialize omega_GI_G_0 based on config: use fixed value if provided, otherwise sample with excitation checks
     if init_condition_config.omega is not None:
@@ -830,17 +867,21 @@ def init_tumbling_new(
             omega_GI_G_0[i] = omega_sampled_rad * d
 
     for mc_trial in range(num_mc):
-        rng = rngs_mc[mc_trial] if (rngs_mc is not None) else np.random.default_rng(32141 + mc_trial)
+        rng = rngs_mc[mc_trial]
         for agent_idx in range(num_agents):
-            x0, y0, z0, vx0, vy0, vz0 = _sample_tumbling_cartesian_state(rng, n_scalar, init_condition_config)
+            x0, y0, z0, vx0, vy0, vz0, cro_fields = _sample_tumbling_cartesian_state(
+                rng, n_scalar, init_condition_config
+            )
             x_0[mc_trial, agent_idx] = x0
             y_0[mc_trial, agent_idx] = y0
             z_0[mc_trial, agent_idx] = z0
             xdot_0[mc_trial, agent_idx] = vx0
             ydot_0[mc_trial, agent_idx] = vy0
             zdot_0[mc_trial, agent_idx] = vz0
+            for key, value in cro_fields.items():
+                cro_fields_all[key][mc_trial, agent_idx] = value
 
-    return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0
+    return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, cro_fields_all
 
 
 def initial_condititions_orbital(

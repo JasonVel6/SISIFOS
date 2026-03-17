@@ -150,7 +150,7 @@ def generate_trajectories_dynamical(
     #     logger.info("    No init_condition_config provided, using defaults for tumbling case")
     #     config.init_condition_config = InitialConditionConfig()
 
-    x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0 = init_tumbling_new(
+    x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, cro_fields = init_tumbling_new(
         num_mc=config.num_mc,
         num_agents=config.num_agents,
         n_scalar=config.n_scalar,
@@ -738,6 +738,7 @@ def generate_trajectories_dynamical(
                 output_dir=agent_folder,
                 config=config,
                 state_H=r_0[mc_trial, agent_idx],
+                cro_fields={key: values[mc_trial, agent_idx] for key, values in cro_fields.items()},
                 omega_GI_G_0_trial=omega_GI_G_0[mc_trial],
                 inc=inc[mc_trial],
                 ecc=ecc[mc_trial],
@@ -746,7 +747,6 @@ def generate_trajectories_dynamical(
                 yaw=yaw[mc_trial],
                 pitch=pitch[mc_trial],
                 roll=roll[mc_trial],
-                n_scalar=config.n_scalar,
             )
             all_initial_configs[mc_key][f"agent_{agent_idx:02d}"] = initial_config_payload
 
