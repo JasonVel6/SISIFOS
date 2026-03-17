@@ -6,7 +6,7 @@ import csv
 import os
 
 import numpy as np
-from mathutils import Quaternion
+# from mathutils import Quaternion
 
 from modules.log_utils import get_logger
 
@@ -256,25 +256,25 @@ def make_frames_from_trajectory(
             "sun_el": trajectory["sun_el"][i],
         }
         frames.append(frame)
-        if debug_camera_orientation:
-            # Generate additional camera orientations around local X/Y only.
-            # Do not rotate around local forward axis (-Z), because that does
-            # not change the visible scene content.
-            q_IC = Quaternion(tuple(trajectory["q_IC"][i]))
-            for axis in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
-                for angle in debug_angles:
-                    q_CCprime = Quaternion(axis, float(angle))
-                    q_variant = (q_IC @ q_CCprime).normalized()
-                    frames.append(
-                        {
-                            "p_G_I": trajectory["p_G_I"][i],
-                            "q_I_G": trajectory["q_IG"][i],
-                            "p_C_I": trajectory["p_C_I"][i],
-                            "q_I_C": np.array([q_variant.w, q_variant.x, q_variant.y, q_variant.z], dtype=float),
-                            "sun_az": trajectory["sun_az"][i],
-                            "sun_el": trajectory["sun_el"][i],
-                        }
-                    )
+        # if debug_camera_orientation:
+        #     # Generate additional camera orientations around local X/Y only.
+        #     # Do not rotate around local forward axis (-Z), because that does
+        #     # not change the visible scene content.
+        #     q_IC = Quaternion(tuple(trajectory["q_IC"][i]))
+        #     for axis in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+        #         for angle in debug_angles:
+        #             q_CCprime = Quaternion(axis, float(angle))
+        #             q_variant = (q_IC @ q_CCprime).normalized()
+        #             frames.append(
+        #                 {
+        #                     "p_G_I": trajectory["p_G_I"][i],
+        #                     "q_I_G": trajectory["q_IG"][i],
+        #                     "p_C_I": trajectory["p_C_I"][i],
+        #                     "q_I_C": np.array([q_variant.w, q_variant.x, q_variant.y, q_variant.z], dtype=float),
+        #                     "sun_az": trajectory["sun_az"][i],
+        #                     "sun_el": trajectory["sun_el"][i],
+        #                 }
+        #             )
 
     return frames
 

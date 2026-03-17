@@ -1,4 +1,47 @@
 import numpy as np
+from modules.config import InitialConditionConfig
+
+
+def _sample_fixed_or_range(
+    rng: np.random.Generator,
+    fixed_value: float | None,
+    value_range: tuple[float, float],
+) -> float:
+    if fixed_value is not None:
+        return float(fixed_value)
+    low, high = value_range
+    return float(rng.uniform(low, high))
+
+
+def _sample_tumbling_cartesian_state(
+    rng: np.random.Generator,
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+) -> tuple[float, float, float, float, float, float]:
+    if init_condition_config.uses_cartesian_state:
+        return (
+            _sample_fixed_or_range(rng, init_condition_config.x, init_condition_config.x_range),
+            _sample_fixed_or_range(rng, init_condition_config.y, init_condition_config.y_range),
+            _sample_fixed_or_range(rng, init_condition_config.z, init_condition_config.z_range),
+            _sample_fixed_or_range(rng, init_condition_config.xdot, init_condition_config.xdot_range),
+            _sample_fixed_or_range(rng, init_condition_config.ydot, init_condition_config.ydot_range),
+            _sample_fixed_or_range(rng, init_condition_config.zdot, init_condition_config.zdot_range),
+        )
+
+    R_mid = _sample_fixed_or_range(rng, init_condition_config.R_mid, init_condition_config.R_mid_range)
+    span_frac = _sample_fixed_or_range(rng, init_condition_config.span_frac, init_condition_config.span_frac_range)
+    phi = _sample_fixed_or_range(rng, init_condition_config.phi, init_condition_config.phi_range)
+
+    A = R_mid * (1.0 - span_frac)
+    B = R_mid * (1.0 + span_frac)
+
+    x0 = A * np.cos(phi)
+    y0 = -2.0 * A * np.sin(phi)
+    z0 = 0.0
+    vx0 = -n_scalar * A * np.sin(phi)
+    vy0 = -2.0 * n_scalar * A * np.cos(phi)
+    vz0 = n_scalar * B
+    return x0, y0, z0, vx0, vy0, vz0
 
 
 def _ic_geom_from_state(r0, v0, f_px, dt):
@@ -736,6 +779,93 @@ def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, 
 
 # ------------------ Tumbling Case ----------------------------------------------
 
+def init_tumbling_new(
+    num_mc: int,
+    num_agents: int,
+    rngs_mc: list[np.random.Generator],
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+    J: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    if n_scalar is None:
+        raise ValueError("n_scalar must be provided (mean motion, rad/s).")
+    if (rngs_mc is not None) and (len(rngs_mc) != num_mc):
+        raise ValueError("rngs_mc must have length num_mc.")
+    x_0 = np.zeros((num_mc, num_agents))
+    y_0 = np.zeros((num_mc, num_agents))
+    z_0 = np.zeros((num_mc, num_agents))
+    xdot_0 = np.zeros((num_mc, num_agents))
+    ydot_0 = np.zeros((num_mc, num_agents))
+    zdot_0 = np.zeros((num_mc, num_agents))
+    path_mode = "Tumbling"
+
+    # Initialize omega_GI_G_0 based on config: use fixed value if provided, otherwise sample with excitation checks
+    if init_condition_config.omega is not None:
+        omega = np.array(init_condition_config.omega)
+        omega_GI_G_0 = np.tile(omega.reshape(1, 3), (num_mc, 1))
+    else:
+        omega_GI_G_0 = np.zeros((num_mc, 3), dtype=float)
+        for i in range(num_mc):
+            rng = rngs_mc[i]
+            if J is not None:
+                d, _ = sample_inertia_excited_omega_direction(
+                    rng,
+                    J,
+                    min_asymmetry_component=init_condition_config.min_asymmetry_component,
+                    off_axis_min=init_condition_config.off_axis_min,
+                    max_retries=init_condition_config.max_omega_retries,
+                )
+            else:
+                d, _ = sample_excited_omega_direction(
+                    rng, off_axis_min=init_condition_config.off_axis_min, max_retries=init_condition_config.max_omega_retries
+                )
+
+            omega_sampled_rad = float(
+                rng.uniform(init_condition_config.omega_mag_range[0], init_condition_config.omega_mag_range[1])
+            )
+            omega_GI_G_0[i] = omega_sampled_rad * d
+
+    for mc_trial in range(num_mc):
+        rng = rngs_mc[mc_trial] if (rngs_mc is not None) else np.random.default_rng(32141 + mc_trial)
+        for agent_idx in range(num_agents):
+            x0, y0, z0, vx0, vy0, vz0 = _sample_tumbling_cartesian_state(rng, n_scalar, init_condition_config)
+            x_0[mc_trial, agent_idx] = x0
+            y_0[mc_trial, agent_idx] = y0
+            z_0[mc_trial, agent_idx] = z0
+            xdot_0[mc_trial, agent_idx] = vx0
+            ydot_0[mc_trial, agent_idx] = vy0
+            zdot_0[mc_trial, agent_idx] = vz0
+
+    return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0
+
+
+def initial_condititions_orbital(
+    num_mc: int,
+    rngs_mc: list[np.random.Generator],
+    initial_condition_config: InitialConditionConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    inc = np.zeros(num_mc)
+    ecc = np.zeros(num_mc)
+    el_I = np.zeros(num_mc)
+    az_I = np.zeros(num_mc)
+    yaw = np.zeros(num_mc)
+    pitch = np.zeros(num_mc)
+    roll = np.zeros(num_mc)
+
+    for mc_trial in range(num_mc):
+        rng = rngs_mc[mc_trial]
+        inc[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.inclination_rad, initial_condition_config.inclination_rad_range)
+        ecc[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.eccentricity, initial_condition_config.eccentricity_range)
+        # Always draw from the main RNG to preserve downstream state.
+        el_I[mc_trial] = _sample_fixed_or_range(
+            rng, initial_condition_config.sun_elevation_I_rad, initial_condition_config.sun_elevation_I_rad_range
+        )
+        az_I[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.sun_azimuth_I_rad, initial_condition_config.sun_azimuth_I_rad_range)
+        yaw[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.yaw, initial_condition_config.yaw_range)
+        pitch[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.pitch, initial_condition_config.pitch_range)
+        roll[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.roll, initial_condition_config.roll_range)
+
+    return inc, ecc, el_I, az_I, yaw, pitch, roll
 
 def init_tumbling(
     num_mc,

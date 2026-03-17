@@ -43,7 +43,7 @@ from datetime import datetime
 import numpy as np
 from scipy.linalg import expm
 
-from modules.log_utils import get_logger
+from modules.log_utils import get_logger, setup_logger
 
 # Add project root to path so imports work both when running directly and when imported
 _SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -51,13 +51,15 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, InertiaConfig, TrajectoryConfig
+from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectoryConfig, InitialConditionConfig
 from modules.trajectory.motion_cases import (
     init_hill,
     init_inertial,
     init_tumbling,
+    init_tumbling_new,
     sample_inertia_excited_omega_direction,
     validate_omega_timeseries_excitation,
+    initial_condititions_orbital,
 )
 from modules.trajectory.plot_figure import generate_scene_plots, plot_trial_trajectories
 from modules.trajectory.trajectory_io import (
@@ -97,6 +99,91 @@ def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
     gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
     return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
 
+# TODO we should prob move this to file io utils
+def _derive_cro_fields_from_state(state_H: np.ndarray, n_scalar: float) -> dict:
+    x, y, z, xdot, ydot, zdot = [float(v) for v in np.asarray(state_H, dtype=float)]
+    A = float(np.hypot(x, y / 2.0))
+    if A > 1e-12:
+        phi = float(np.arctan2(-y / (2.0 * A), x / A))
+    else:
+        phi = 0.0
+    B = float(np.hypot(z, zdot / max(n_scalar, 1e-12)))
+    r_min = A
+    r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
+    R_mid = 0.5 * (r_min + r_max)
+    span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
+    return {
+        "A": A,
+        "B": B,
+        "phi": phi,
+        "R_mid": R_mid,
+        "span_frac": span_frac,
+    }
+
+
+def _build_initial_config_payload(
+    state_H: np.ndarray,
+    omega_GI_G_0_trial: np.ndarray,
+    inc: float,
+    ecc: float,
+    el_I: float,
+    az_I: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
+    n_scalar: float,
+) -> dict:
+    state_H = np.asarray(state_H, dtype=float)
+    cro_fields = _derive_cro_fields_from_state(state_H, n_scalar)
+    return {
+        "x": float(state_H[0]),
+        "y": float(state_H[1]),
+        "z": float(state_H[2]),
+        "xdot": float(state_H[3]),
+        "ydot": float(state_H[4]),
+        "zdot": float(state_H[5]),
+        "A": cro_fields["A"],
+        "B": cro_fields["B"],
+        "phi": cro_fields["phi"],
+        "R_mid": cro_fields["R_mid"],
+        "span_frac": cro_fields["span_frac"],
+        "omega": np.asarray(omega_GI_G_0_trial, dtype=float).tolist(),
+        "inclination_rad": float(inc),
+        "eccentricity": float(ecc),
+        "sun_elevation_I_rad": float(el_I),
+        "sun_azimuth_I_rad": float(az_I),
+        "yaw": float(yaw),
+        "pitch": float(pitch),
+        "roll": float(roll),
+    }
+
+
+def _build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_config: dict) -> dict:
+    payload = config.model_dump()
+    payload["init_condition_config"] = {
+        key: initial_config[key]
+        for key in (
+            "x",
+            "y",
+            "z",
+            "xdot",
+            "ydot",
+            "zdot",
+            "R_mid",
+            "span_frac",
+            "phi",
+            "omega",
+            "inclination_rad",
+            "eccentricity",
+            "sun_elevation_I_rad",
+            "sun_azimuth_I_rad",
+            "yaw",
+            "pitch",
+            "roll",
+        )
+    }
+    return payload
+
 
 # ============================================================================
 # MAIN Function
@@ -115,17 +202,16 @@ def generate_trajectories_dynamical(
 
     # Initialize random seeds for reproducibility
     if config.seed is not None:
-        master_seed = config.seed
-        logger.info("[INITIALIZATION]: detected pre defined seed: %s", master_seed)
+        logger.info("[INITIALIZATION]: detected pre defined seed: %s", config.seed)
     else:
-        master_seed = int(time.time() * 1e6) & 0x7FFFFFFF
-        config.seed = master_seed  # Store the resolved seed back in the config for output
-        logger.info("[INITIALIZATION]: no pre defined seed detected, generating new seed: %s", master_seed)
+        config.seed = int(time.time() * 1e6) & 0x7FFFFFFF  # Store the resolved seed back in the config for output
+        logger.info("[INITIALIZATION]: no pre defined seed detected, generating new seed: %s", config.seed)
 
-    ss_master = np.random.SeedSequence(master_seed)
+    ss_master = np.random.SeedSequence(config.seed)
     child_ss = ss_master.spawn(config.num_mc)
     rngs_mc = [np.random.default_rng(cs) for cs in child_ss]
 
+    # TODO this isnt used anymore we may want to add it back or delete all together
     # Illumination uses its own RNG stream. If no explicit illumination seed was
     # provided, resolve a fresh one so the same trajectory seed can be rendered
     # under multiple independent lighting conditions and still be reproducible.
@@ -145,54 +231,21 @@ def generate_trajectories_dynamical(
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
 
-    if config.rotMode_Gframe == "1":
-        logger.info("  Inertial mode (CRO trajectory)")
-        x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_inertial(
-            num_mc=config.num_mc,
-            num_agents=config.num_agents,
-            n_scalar=config.n_scalar,
-            focal_length_px=camera_config.focal_length_px,
-            kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
-            R0_const=config.R0_const,
-            variant="cro",
-            rngs_mc=rngs_mc,
-        )
-    elif config.rotMode_Gframe == "2":
-        logger.info("  Hill mode")
-        x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_hill(
-            num_mc=config.num_mc,
-            num_agents=config.num_agents,
-            n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc,
-            focal_length_px=camera_config.focal_length_px,
-            kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.90,
-        )
-    elif config.rotMode_Gframe == "3":
-        logger.info("  Tumbling mode (CRO trajectory + target tumbling)")
-        # Use faster tumbling (3-5 deg/s) for better inertia observability.
-        # This is within the conservative design envelope (~5 deg/s upper bound).
-        # Slower rates (0.5-2 deg/s default) have near-zero omega_dot, making
-        # inertia poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0.
-        x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
-            num_mc=config.num_mc,
-            num_agents=config.num_agents,
-            n_scalar=config.n_scalar,
-            rngs_mc=rngs_mc,
-            focal_length_px=camera_config.focal_length_px,
-            kf_dt=config.IMAGE_MAX_DT_S,
-            px_min=config.MIN_F2F_PX_MED,
-            rho_max=0.95,
-            R0_const=config.R0_const,
-            omega_min_deg=3.0,
-            omega_max_deg=5.0,
-            J=config.inertia_config.J,
-            min_asymmetry_component=0.4,
-            span_frac=config.tumbling_span_frac,
-        )
+    # Getting rid of all motion cases besides tumbling for now to focus on inertia observability these should be re added once observability is debugged
+
+    # logger.info("  Tumbling mode (CRO trajectory + target tumbling)")
+    # if config.init_condition_config is None:
+    #     logger.info("    No init_condition_config provided, using defaults for tumbling case")
+    #     config.init_condition_config = InitialConditionConfig()
+
+    x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0 = init_tumbling_new(
+        num_mc=config.num_mc,
+        num_agents=config.num_agents,
+        n_scalar=config.n_scalar,
+        rngs_mc=rngs_mc,
+        init_condition_config=config.init_condition_config,
+        J=config.inertia_config.J,
+    )
 
     # Ensure omega_GI_G_0 is a numpy array (tumbling returns (num_mc,3), others return [0,0,0])
     omega_GI_G_0 = np.atleast_2d(omega_GI_G_0)
@@ -213,32 +266,11 @@ def generate_trajectories_dynamical(
                 zdot_0[mc_trial, a],
             ]
 
-    # ---------- Generate MC parameters ----------
-    logger.info("[STEP 2] Sampling orbital and attitude parameters...")
-
-    inc = np.zeros(config.num_mc)
-    ecc = np.zeros(config.num_mc)
-    el_I = np.zeros(config.num_mc)
-    az_I = np.zeros(config.num_mc)
-    yaw = np.zeros(config.num_mc)
-    pitch = np.zeros(config.num_mc)
-    roll = np.zeros(config.num_mc)
-
-    for mc_trial in range(config.num_mc):
-        rng = rngs_mc[mc_trial]
-        inc[mc_trial] = float(rng.uniform(0.0, np.pi))
-        ecc[mc_trial] = float(rng.uniform(0.005, 0.05))
-        # Always draw from the main RNG to preserve downstream state.
-        el_I[mc_trial] = float(rng.uniform(-np.pi / 2.0, np.pi / 2.0))
-        az_I[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
-        yaw[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
-        pitch[mc_trial] = float(rng.uniform(0.0, np.pi))
-        roll[mc_trial] = float(rng.uniform(0.0, 2.0 * np.pi))
-
-        if rngs_illum is not None:
-            rng_il = rngs_illum[mc_trial]
-            el_I[mc_trial] = float(np.arcsin(rng_il.uniform(-1.0, 1.0)))
-            az_I[mc_trial] = float(rng_il.uniform(0.0, 2.0 * np.pi))
+    inc, ecc, el_I, az_I, yaw, pitch, roll = initial_condititions_orbital(
+        num_mc=config.num_mc,
+        rngs_mc=rngs_mc,
+        initial_condition_config=config.init_condition_config,
+    )
 
     # ---------- Setup timestamps ----------
     timestamps = np.arange(0.0, config.tend, config.tstep, dtype=float)
@@ -325,7 +357,7 @@ def generate_trajectories_dynamical(
     accel_bias_state = np.zeros((config.num_mc, config.num_agents, 3))
 
     # ---------- Propagate orbits and compute geometry ----------
-    logger.info("[STEP 3] Propagating orbits and computing geometry...")
+    logger.info("[STEP 2] Propagating orbits and computing geometry...")
 
     # Outer loop: MC trials
     for mc_trial in range(config.num_mc):
@@ -379,58 +411,58 @@ def generate_trajectories_dynamical(
                 config.mu_ref, state_C_I_0[mc_trial, agent_idx], timestamps
             )
 
-        # Attitude law
-        if config.rotMode_Gframe == "1":
-            for j in range(nbSteps):
-                R_IG[mc_trial, j] = R_XG_0[mc_trial]
-                omega_GI_I[mc_trial, j] = np.array([0, 0, 0])
-                omega_GI_G[mc_trial, j] = np.array([0, 0, 0])
-        elif config.rotMode_Gframe == "2":
-            for j in range(nbSteps):
-                R_IH = createHillFrame(state_A_I[mc_trial, j, 0:3], state_A_I[mc_trial, j, 3:6])
-                R_IG[mc_trial, j] = R_IH @ R_XG_0[mc_trial]
-                omega_GI_I[mc_trial, j] = omega_HI_I_0[mc_trial]
-                omega_GI_G[mc_trial, j] = R_IG[mc_trial, j].T @ omega_GI_I[mc_trial, j]
-        elif config.rotMode_Gframe == "3":
-            R0 = R_XG_0[mc_trial]
-            # omega_GI_G_0 is (num_mc, 3) array - extract this trial's initial angular velocity
-            # Use retry loop to ensure sufficient omega excitation for inertia observability
-            MAX_OMEGA_RETRIES = 10
-            omega_excitation_validated = False
+        # # Attitude law
+        # if config.rotMode_Gframe == "1":
+        #     for j in range(nbSteps):
+        #         R_IG[mc_trial, j] = R_XG_0[mc_trial]
+        #         omega_GI_I[mc_trial, j] = np.array([0, 0, 0])
+        #         omega_GI_G[mc_trial, j] = np.array([0, 0, 0])
+        # elif config.rotMode_Gframe == "2":
+        #     for j in range(nbSteps):
+        #         R_IH = createHillFrame(state_A_I[mc_trial, j, 0:3], state_A_I[mc_trial, j, 3:6])
+        #         R_IG[mc_trial, j] = R_IH @ R_XG_0[mc_trial]
+        #         omega_GI_I[mc_trial, j] = omega_HI_I_0[mc_trial]
+        #         omega_GI_G[mc_trial, j] = R_IG[mc_trial, j].T @ omega_GI_I[mc_trial, j]
+        # elif config.rotMode_Gframe == "3":
+        R0 = R_XG_0[mc_trial]
+        # omega_GI_G_0 is (num_mc, 3) array - extract this trial's initial angular velocity
+        # Use retry loop to ensure sufficient omega excitation for inertia observability
+        # MAX_OMEGA_RETRIES = 10
+        # omega_excitation_validated = False
 
-            for omega_retry in range(MAX_OMEGA_RETRIES):
-                omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(
-                    nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.inertia_config.J
-                )
+        # for omega_retry in range(MAX_OMEGA_RETRIES):
+        omega_GI_G[mc_trial], R_IG[mc_trial] = solve_ne_equation(
+            nbSteps, tstep_eff, omega_GI_G_0[mc_trial], R0, config.inertia_config.J
+        )
 
-                # Validate omega timeseries has sufficient excitation
-                dt_array = np.full(nbSteps - 1, tstep_eff)
-                is_valid, validation_stats = validate_omega_timeseries_excitation(
-                    omega_GI_G[mc_trial], dt_array=dt_array, omega_dot_min=1e-5, off_axis_min=0.3
-                )
+        #     # Validate omega timeseries has sufficient excitation
+        #     dt_array = np.full(nbSteps - 1, tstep_eff)
+        #     is_valid, validation_stats = validate_omega_timeseries_excitation(
+        #         omega_GI_G[mc_trial], dt_array=dt_array, omega_dot_min=1e-5, off_axis_min=0.3
+        #     )
 
-                if is_valid:
-                    omega_excitation_validated = True
-                    break
-                else:
-                    # Resample omega_0 with inertia-aware sampling
-                    if omega_retry < MAX_OMEGA_RETRIES - 1:
-                        omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
-                        d_new, _ = sample_inertia_excited_omega_direction(
-                            rngs_mc[mc_trial], config.inertia_config.J, min_asymmetry_component=0.4, off_axis_min=0.3
-                        )
-                        omega_GI_G_0[mc_trial] = omega_mag * d_new
+        #     if is_valid:
+        #         omega_excitation_validated = True
+        #         break
+        #     else:
+        #         # Resample omega_0 with inertia-aware sampling
+        #         if omega_retry < MAX_OMEGA_RETRIES - 1:
+        #             omega_mag = np.linalg.norm(omega_GI_G_0[mc_trial])
+        #             d_new, _ = sample_inertia_excited_omega_direction(
+        #                 rngs_mc[mc_trial], config.inertia_config.J, min_asymmetry_component=0.4, off_axis_min=0.3
+        #             )
+        #             omega_GI_G_0[mc_trial] = omega_mag * d_new
 
-            if not omega_excitation_validated:
-                logger.warning(
-                    "MC trial %d omega excitation validation failed after %d retries",
-                    mc_trial,
-                    MAX_OMEGA_RETRIES,
-                )
-                logger.warning("           max_omega_dot=%s", validation_stats.get("max_omega_dot", "N/A"))
+        # if not omega_excitation_validated:
+        #     logger.warning(
+        #         "MC trial %d omega excitation validation failed after %d retries",
+        #         mc_trial,
+        #         MAX_OMEGA_RETRIES,
+        #     )
+        #     logger.warning("           max_omega_dot=%s", validation_stats.get("max_omega_dot", "N/A"))
 
-            for j in range(nbSteps):
-                omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
+        for j in range(nbSteps):
+            omega_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ omega_GI_G[mc_trial, j]
 
         # Sun alignment
         # When illumination_seed is provided, all sun-related randomness should
@@ -711,7 +743,7 @@ def generate_trajectories_dynamical(
         logger.info("  MC trial %d complete", mc_trial + 1)
 
     # ---------- Write output files ----------
-    logger.info("[STEP 4] Writing output files...")
+    logger.info("[STEP 3] Writing output files...")
     # Ensure the file exists
     os.makedirs(base_output_file, exist_ok=True)
     # Write the trajectory config for this run
@@ -721,6 +753,7 @@ def generate_trajectories_dynamical(
         json.dump(payload, f, indent=2)
 
     agent_folders = []
+    all_initial_configs = {}
 
     camera_obj = {
         "focal_length_px": camera_config.focal_length_px,
@@ -736,6 +769,8 @@ def generate_trajectories_dynamical(
             folder_name += f"_{model_name}"
         mc_folder = os.path.join(base_output_file, folder_name)
         os.makedirs(mc_folder, exist_ok=True)
+        mc_key = f"mc_{mc_trial:02d}"
+        all_initial_configs[mc_key] = {}
 
         # Select the monte carlo trial
         r_CG_G_mc = r_CG_G[mc_trial]
@@ -790,6 +825,24 @@ def generate_trajectories_dynamical(
             agent_folder = os.path.join(mc_folder, f"Agent_{agent_idx}")
             os.makedirs(agent_folder, exist_ok=True)
             agent_folders.append(agent_folder)
+            initial_config_payload = _build_initial_config_payload(
+                state_H=r_0[mc_trial, agent_idx],
+                omega_GI_G_0_trial=omega_GI_G_0[mc_trial],
+                inc=inc[mc_trial],
+                ecc=ecc[mc_trial],
+                el_I=el_I[mc_trial],
+                az_I=az_I[mc_trial],
+                yaw=yaw[mc_trial],
+                pitch=pitch[mc_trial],
+                roll=roll[mc_trial],
+                n_scalar=config.n_scalar,
+            )
+            resolved_trajectory_payload = _build_resolved_trajectory_config_payload(config, initial_config_payload)
+            with open(os.path.join(agent_folder, "trajectory_config.json"), "w") as f:
+                json.dump(resolved_trajectory_payload, f, indent=2)
+            with open(os.path.join(agent_folder, "initial_config.json"), "w") as f:
+                json.dump(initial_config_payload, f, indent=2)
+            all_initial_configs[mc_key][f"agent_{agent_idx:02d}"] = initial_config_payload
 
             # Compute and print range statistics
             ranges = np.linalg.norm(r_CG_G_mc_ag, axis=1)
@@ -879,6 +932,9 @@ def generate_trajectories_dynamical(
                     max_frames=scene_plot_max_frames,
                 )
 
+    with open(os.path.join(base_output_file, "initial_configs.json"), "w") as f:
+        json.dump(all_initial_configs, f, indent=2)
+
     logger.info("[DONE] Output written to: %s", base_output_file)
     logger.info("       Master seed: %s", config.seed)
     logger.info("       Mode: %s", config.path_mode)
@@ -891,18 +947,27 @@ def generate_trajectories_dynamical(
 # CLI Entry Point
 # ============================================================================
 def main():
+    setup_logger(log_file=None)
     logger.info("=" * 60)
     logger.info("UNIFIED TRAJECTORY GENERATOR")
     logger.info("=" * 60)
 
-    # ---------- User inputs ----------
-    num_agents = int(input("Number of agents for inspection scenario: ").strip())
-    rotMode_Gframe = input("Mode Setting (1: Inertial, 2: Hill, 3: Tumbling): ").strip()
-    num_mc = int(input("Number of samples for Monte Carlo Simulation: ").strip())
-
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int)
-    args, _ = parser.parse_known_args()
+    parser.add_argument("--config_path", type=str, help="Path to a SceneConfig or TrajectoryConfig JSON file")
+    parser.add_argument("--model_name", type=str, default="", help="Optional model token appended to folder names")
+    parser.add_argument(
+        "--disable_scene_plots",
+        action="store_true",
+        help="Disable trajectory plot generation for faster generator-only runs",
+    )
+    parser.add_argument(
+        "--scene_plot_max_frames",
+        type=int,
+        default=20,
+        help="Max frames to plot in scene plots (set lower for faster plotting, higher for more complete plots)",
+    )
+    args = parser.parse_args()
 
     seed = None
     if args.seed is not None:
@@ -910,6 +975,44 @@ def main():
     env_seed = os.getenv("SATSLAM_SEED")
     if env_seed:
         seed = int(env_seed)
+
+    if args.config_path:
+        with open(args.config_path) as f:
+            config_json = json.load(f)
+
+        if "base_config" in config_json:
+            scene_config = SceneConfig.model_validate(config_json["base_config"])
+        elif "trajectory" in config_json:
+            scene_config = SceneConfig.model_validate(config_json)
+        else:
+            trajectory = TrajectoryConfig.model_validate(config_json)
+            scene_config = SceneConfig(trajectory=trajectory)
+
+        if seed is not None:
+            scene_config.trajectory.seed = seed
+
+        now = datetime.today()
+        date_str = now.strftime("%m_%d_%y")
+        time_str = now.strftime("%Y_%m_%H%M")
+        output_dir = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{scene_config.trajectory.path_mode}_traj_only")
+
+        os.makedirs(output_dir, exist_ok=True)
+        setup_logger(log_file=os.path.join(output_dir, "run.log"))
+        generate_trajectories_dynamical(
+            config=scene_config.trajectory,
+            base_output_file=output_dir,
+            config_prefix="",
+            model_name=args.model_name or scene_config.selected_model,
+            camera_config=scene_config.camera,
+            save_scene_plots=not args.disable_scene_plots,
+            scene_plot_max_frames=args.scene_plot_max_frames,
+        )
+        return
+
+    # ---------- Interactive fallback ----------
+    num_agents = int(input("Number of agents for inspection scenario: ").strip())
+    rotMode_Gframe = input("Mode Setting (1: Inertial, 2: Hill, 3: Tumbling): ").strip()
+    num_mc = int(input("Number of samples for Monte Carlo Simulation: ").strip())
 
     if rotMode_Gframe == "1":
         path_mode = "inertial"
@@ -937,6 +1040,7 @@ def main():
     time_str = now.strftime("%Y_%m_%H%M")  # e.g., "2025_12_1430"
     base_output_file = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{config.path_mode}")
     os.makedirs(base_output_file, exist_ok=True)
+    setup_logger(log_file=os.path.join(base_output_file, "run.log"))
 
     generate_trajectories_dynamical(config=config, base_output_file=base_output_file)
 

@@ -153,6 +153,72 @@ class InertiaConfig(BaseModel):
             raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
 
 
+class InitialConditionConfig(BaseModel):
+    """
+    Parameters for defining the initial conditions of the trajectory
+
+    TODO make docs and test this out
+    """
+    R_mid: float | None = None
+    R_mid_range: tuple[float, float] = (15.0, 50.0)
+
+    span_frac: float | None = None
+    span_frac_range: tuple[float, float] = (1.0, 2.0)
+
+    phi: float | None = None
+    phi_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    x: float | None = None
+
+    y: float | None = None
+
+    z: float | None = None
+
+    xdot: float | None = None
+    xdot_range: tuple[float, float] = (-0.2, 0.2)
+
+    ydot: float | None = None
+    ydot_range: tuple[float, float] = (-0.2, 0.2)
+
+    zdot: float | None = None
+    zdot_range: tuple[float, float] = (-0.2, 0.2)
+
+    omega: tuple[float, float, float] | None = None
+    omega_mag_range: tuple[float, float] = (0.0872665, 0.349066)  # rad/s
+    min_asymmetry_component: float = 0.4
+    off_axis_min: float = 0.3
+    max_omega_retries: int = 5
+
+    # orbital parameters
+    inclination_rad: float | None = None
+    inclination_rad_range: tuple[float, float] = (0.0, np.pi / 2)
+
+    eccentricity: float | None = None
+    eccentricity_range: tuple[float, float] = (0.005, 0.05)
+
+    sun_elevation_I_rad: float | None = None
+    sun_elevation_I_rad_range: tuple[float, float] = (-np.pi / 2, np.pi / 2)
+
+    sun_azimuth_I_rad: float | None = None
+    sun_azimuth_I_rad_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    yaw: float | None = None
+    yaw_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    pitch: float | None = None
+    pitch_range: tuple[float, float] = (0.0, np.pi)
+
+    roll: float | None = None
+    roll_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    @property
+    def uses_cartesian_state(self) -> bool:
+        return any(
+            getattr(self, field_name) is not None
+            for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")
+        )
+
+
 def default_inertia_config(selected_model: str) -> InertiaConfig:
     model_defaults = require_spacecraft_defaults(selected_model)
     default_inertia = model_defaults["inertia"]
@@ -247,6 +313,7 @@ class TrajectoryConfig(BaseModel):
     MIN_F2F_PX_MED: float = 3.0
 
     inertia_config: InertiaConfig = Field(default_factory=InertiaConfig.model_construct)
+    init_condition_config: InitialConditionConfig = Field(default_factory=InitialConditionConfig.model_construct)
 
     @property
     def a_ref(self) -> float:
