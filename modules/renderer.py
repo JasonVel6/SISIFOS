@@ -32,10 +32,9 @@ class BlenderRenderer:
         self._target_blend_object_names = None
         self.logger = get_logger()
 
-        # Calculate rotation quaternions for spacecraft models based on config defaults.
+        # Calculate rotation quaternions for spacecraft models based on config defaults
         if not config.model_rotation_A_model_euler:
             raise ValueError("model_rotation_A_model_euler must be provided in config for each spacecraft")
-
         euler_A_model = Euler(
             (
                 math.radians(float(config.model_rotation_A_model_euler[0])),
@@ -146,13 +145,13 @@ class BlenderRenderer:
         append_blend_objects(self.config.objects["Earth"].blend_path)
 
         addon_path = os.path.join(os.path.dirname(__file__), "addon_ground_truth_generation.py")
+
         spec = importlib.util.spec_from_file_location("vision_blender_addon", addon_path)
         mod = importlib.util.module_from_spec(spec)
         sys.modules["vision_blender_addon"] = mod
         spec.loader.exec_module(mod)
         mod.register()  # installs scene.vision_blender and render handlers
         vb = self.scene.vision_blender
-
         world = bpy.context.scene.world
         world.use_nodes = True
 
@@ -172,6 +171,7 @@ class BlenderRenderer:
                 raise FileNotFoundError(bpy.path.abspath(self.config.hdri_path))
 
             img = bpy.data.images.load(bpy.path.abspath(self.config.hdri_path), check_existing=True)
+
             env_tex = nodes.new("ShaderNodeTexEnvironment")
             env_tex.image = img
             env_tex.image.colorspace_settings.name = "Non-Color"
@@ -217,7 +217,6 @@ class BlenderRenderer:
             c_links.new(glare.outputs["Image"], comp.inputs["Image"])
         else:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
-
         vb = self.scene.vision_blender
         vb.bool_save_depth = self.config.save_depth
         vb.bool_save_normals = self.config.save_normals
@@ -277,12 +276,6 @@ class BlenderRenderer:
             to_remove.add(root)
             to_remove.update(root.children_recursive)
         remove_objects_from_scene(list(to_remove))
-
-    def get_models_in_blend(self) -> list[str]:
-        """Inspect the blend file and return RF_* root names to render (without loading)."""
-        all_names = self._get_target_blend_object_names()
-        rf_names = sorted([n for n in all_names if n.startswith("RF_")], key=str.lower)
-        return rf_names
 
     def load_spacecraft(self, model_name: str) -> bpy.types.Object:
         """Load a single spacecraft (root + descendants) into the scene and return the root."""
@@ -405,8 +398,46 @@ class BlenderRenderer:
         # Option 1: Use stored orientation
         cam.rotation_quaternion = q_I_C
 
+        # Option 2: Enforce look-at (uncomment to use)
+        # direction = (model.location - cam.location).normalized()
+        # quat = direction.to_track_quat('-Z', 'Y')
+        # cam.rotation_quaternion = quat
         set_sun_direction(sun, sun_az, sun_el)
         bpy.context.view_layer.update()
+
+        # Debug: Log poses before rendering
+        # print("\n" + "="*80)
+        # print(f"[Frame {str(frame_id).zfill(N_digits)}] Rendering with exposure {exposure_time_s*1e6:.1f}µs")
+        # print("="*80)
+
+        # Model pose
+        # print(f"\n[Model] {model.name} (in inertial frame)")
+        # print(f"  Position:    ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
+        # print(f"  Rotation Q:  ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
+        # print(f"  Distance from origin: {p_G_I.length:.6f} m")
+
+        # Camera pose
+        # print(f"\n[Camera] {cam.name} (in inertial frame)")
+        # print(f"  Position:    ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
+        # print(f"  Rotation Q:  ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
+        # print(f"  Focal length: {cam.data.lens:.2f} mm")
+
+        # Trajectory info
+        # print(f"\n[Trajectory Frame {frame_id}] (Inertial Frame Reference)")
+        # print(f"  p_G_I (target pos in I):  ({p_G_I.x:12.6f}, {p_G_I.y:12.6f}, {p_G_I.z:12.6f})")
+        # print(f"  q_I_G (target orient):    ({q_I_G.w:8.6f}, {q_I_G.x:8.6f}, {q_I_G.y:8.6f}, {q_I_G.z:8.6f})")
+        # print(f"  p_C_I (camera pos in I):  ({p_C_I.x:12.6f}, {p_C_I.y:12.6f}, {p_C_I.z:12.6f})")
+        # print(f"  q_I_C (camera orient):    ({q_I_C.w:8.6f}, {q_I_C.x:8.6f}, {q_I_C.y:8.6f}, {q_I_C.z:8.6f})")
+        # print(f"  Sun azimuth: {sun_az:7.2f}°, elevation: {sun_el:7.2f}°")
+
+        # Render settings
+        # print(f"\n[Render Settings]")
+        # print(f"  Output:      {self.scene.render.filepath}")
+        # print(f"  Resolution:  {self.scene.render.resolution_x}x{self.scene.render.resolution_y}")
+        # print(f"  Engine:      {self.scene.render.engine}")
+        # if self.scene.render.engine == 'CYCLES':
+        #     print(f"  Samples:     {self.scene.cycles.samples}")
+        # print("="*80 + "\n")
 
         # Set exposure
         base_ev = self.scene.view_settings.exposure
@@ -414,7 +445,10 @@ class BlenderRenderer:
         self.scene.view_settings.exposure = base_ev + ev_shift
 
         # Render
+        # exp_tag = f"{int(round(exposure_time_s * 1e6)):08d}us"
+        # stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
         stem = f"{str(frame_id).zfill(N_digits)}"
+
         self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
         self.scene.frame_set(frame_id)
         bpy.ops.render.render(write_still=True)
@@ -489,18 +523,6 @@ class BlenderRenderer:
 
         return f"frame_{stem}.png"
 
-    @staticmethod
-    def _are_contiguous(frame_ids: list[int]) -> bool:
-        """Return True if *frame_ids* form a contiguous range min … max."""
-        if not frame_ids:
-            return False
-        return list(range(min(frame_ids), max(frame_ids) + 1)) == sorted(frame_ids)
-
-    def _keyframe_sun_direction(self, sun: bpy.types.Object, sun_az: float, sun_el: float, frame: int) -> None:
-        """Set the sun direction and insert a keyframe for it."""
-        set_sun_direction(sun, sun_az, sun_el)
-        sun.keyframe_insert(data_path="rotation_quaternion", frame=frame)
-
     def render_animation(
         self,
         cam: bpy.types.Object,
@@ -549,7 +571,8 @@ class BlenderRenderer:
 
             keyframe_pose(model, fid)
             keyframe_pose(cam, fid)
-            self._keyframe_sun_direction(sun, fdata["sun_az"], fdata["sun_el"], fid)
+            set_sun_direction(sun, fdata["sun_az"], fdata["sun_el"])
+            sun.keyframe_insert(data_path="rotation_quaternion", frame=fid)
 
         # Frame range
         self.scene.frame_start = min(frame_ids)
