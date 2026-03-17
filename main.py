@@ -128,16 +128,20 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("%s", config.setup)
     cam, sun = renderer.setup_total()
 
+    all_models = renderer.get_models_in_blend()
+    logger.info(f"Available models in the blend: {all_models}")
+
+    model = renderer.load_spacecraft(model_name=config.selected_model)
+
+    all_models = renderer.get_all_models()
+    logger.info(f"Models loaded in scene: {[m.name for m in all_models]}")
+
     trajectory_file = renders_base_dir / "camera_traj.csv"
 
     trajectory = read_camera_trajectory(str(trajectory_file))
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
     logger.info("[Session] Renders output: %s/", renders_base_dir)
-
-    model = renderer.select_model_to_render()
-    logger.info("Rendering model: %s", model.name)
-    all_models = renderer.get_all_models()
 
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
 
@@ -165,8 +169,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         "gt_seg": ensure_dir(gt_root / "Seg"),
     }
 
-    if config.model_rotation_z_deg != 0:
-        renderer.rotate_z(model, config.model_rotation_z_deg)
 
     logger.info("Enabling blur is: %s", config.setup.enable_blur)
 

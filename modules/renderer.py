@@ -326,29 +326,6 @@ class BlenderRenderer:
         """Get all RF_* models."""
         return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
 
-    def select_model_to_render(self) -> bpy.types.Object:
-        """Select currently loaded model by name, else load it."""
-        for model in self.get_all_models():
-            if model.name == self.config.selected_model:
-                return model
-        return self.load_spacecraft(self.config.selected_model)
-
-    def hide_all_except(self, target_root: bpy.types.Object, all_roots: list[bpy.types.Object]) -> None:
-        """Hide all RF_* roots except the target root (and their descendants)."""
-        for root in all_roots:
-            hide = root != target_root
-            root.hide_render = hide
-            for child in root.children_recursive:
-                child.hide_render = hide
-        bpy.context.view_layer.update()
-
-    def rotate_z(self, obj: bpy.types.Object, deg: float) -> None:
-        """Apply an additional local-Z rotation to the model."""
-        obj.rotation_mode = "QUATERNION"
-        q_rot = Quaternion((0, 0, 1), math.radians(deg))
-        obj.rotation_quaternion = q_rot @ obj.rotation_quaternion
-        bpy.context.view_layer.update()
-
     def render_frame_v2(
         self,
         cam: bpy.types.Object,
