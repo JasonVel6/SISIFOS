@@ -74,6 +74,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             sun_az=config.trajectory_sampling.sun_az,
             sun_el=config.trajectory_sampling.sun_el,
         )
+
     elif config.trajectory_type == "const_rotate":
         agent_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
         agent_folders = write_camera_trajectory_const_rotation(
@@ -86,6 +87,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             sun_az=config.trajectory_const_rotate.sun_az,
             sun_el=config.trajectory_const_rotate.sun_el,
         )
+
     elif config.trajectory_type == "filepath":
         if not config.trajectory_filepath:
             raise ValueError(
@@ -219,6 +221,7 @@ def run_sweep(sweep_config: SweepConfig):
 
     output_dir = Path("./renders") / get_timestamp_folder()
     ensure_dir(output_dir)
+
     setup_logger(log_file=output_dir / "run.log")
     logger = get_logger()
     logger.info("Running sweep with %d configurations. Output base dir: %s", len(configs), output_dir)
@@ -278,12 +281,10 @@ if __name__ == "__main__":
                 "Cannot specify --sweep_config_path together with --config_path. Please provide only one of these options."
             )
 
-        print(f"[SISFOS] Loading sweep config from: {args.sweep_config_path}")
         sweep_config_json = json.load(open(args.sweep_config_path))
         sweep_config = SweepConfig.model_validate(sweep_config_json)
 
     elif args.config_path:
-        print(f"[SISFOS] Loading config from: {args.config_path}")
         base_config_json = json.load(open(args.config_path))
 
         sweep_config_json = {}
