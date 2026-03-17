@@ -3,11 +3,13 @@ Module for reading and writing trajectory related files
 """
 
 import csv
+import json
 import os
 
 import numpy as np
 # from mathutils import Quaternion
 
+from modules.config import TrajectoryConfig
 from modules.log_utils import get_logger
 
 logger = get_logger()
@@ -22,6 +24,134 @@ camera_trajectory_header = [
     "# Earth/atmosphere at origin with fixed orientation",
     "#",
 ]
+
+
+def _derive_cro_fields_from_state(state_H: np.ndarray, n_scalar: float) -> dict:
+    x, y, z, xdot, ydot, zdot = [float(v) for v in np.asarray(state_H, dtype=float)]
+    A = float(np.hypot(x, y / 2.0))
+    if A > 1e-12:
+        phi = float(np.arctan2(-y / (2.0 * A), x / A))
+    else:
+        phi = 0.0
+    B = float(np.hypot(z, zdot / max(n_scalar, 1e-12)))
+    r_min = A
+    r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
+    R_mid = 0.5 * (r_min + r_max)
+    span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
+    return {
+        "A": A,
+        "B": B,
+        "phi": phi,
+        "R_mid": R_mid,
+        "span_frac": span_frac,
+    }
+
+
+def build_initial_config_payload(
+    state_H: np.ndarray,
+    omega_GI_G_0_trial: np.ndarray,
+    inc: float,
+    ecc: float,
+    el_I: float,
+    az_I: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
+    n_scalar: float,
+) -> dict:
+    state_H = np.asarray(state_H, dtype=float)
+    cro_fields = _derive_cro_fields_from_state(state_H, n_scalar)
+    return {
+        "x": float(state_H[0]),
+        "y": float(state_H[1]),
+        "z": float(state_H[2]),
+        "xdot": float(state_H[3]),
+        "ydot": float(state_H[4]),
+        "zdot": float(state_H[5]),
+        "A": cro_fields["A"],
+        "B": cro_fields["B"],
+        "phi": cro_fields["phi"],
+        "R_mid": cro_fields["R_mid"],
+        "span_frac": cro_fields["span_frac"],
+        "omega": np.asarray(omega_GI_G_0_trial, dtype=float).tolist(),
+        "inclination_rad": float(inc),
+        "eccentricity": float(ecc),
+        "sun_elevation_I_rad": float(el_I),
+        "sun_azimuth_I_rad": float(az_I),
+        "yaw": float(yaw),
+        "pitch": float(pitch),
+        "roll": float(roll),
+    }
+
+
+def build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_config: dict) -> dict:
+    payload = config.model_dump()
+    payload["init_condition_config"] = {
+        key: initial_config[key]
+        for key in (
+            "x",
+            "y",
+            "z",
+            "xdot",
+            "ydot",
+            "zdot",
+            "R_mid",
+            "span_frac",
+            "phi",
+            "omega",
+            "inclination_rad",
+            "eccentricity",
+            "sun_elevation_I_rad",
+            "sun_azimuth_I_rad",
+            "yaw",
+            "pitch",
+            "roll",
+        )
+    }
+    return payload
+
+
+def write_json_payload(output_path: str, payload: dict) -> str:
+    with open(output_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return output_path
+
+
+def write_run_trajectory_config(output_dir: str, config_prefix: str, config: TrajectoryConfig) -> str:
+    trajectory_config_filepath = os.path.join(output_dir, f"{config_prefix}_trajectory.json")
+    return write_json_payload(trajectory_config_filepath, config.model_dump())
+
+
+def write_agent_config_files(
+    output_dir: str,
+    config: TrajectoryConfig,
+    state_H: np.ndarray,
+    omega_GI_G_0_trial: np.ndarray,
+    inc: float,
+    ecc: float,
+    el_I: float,
+    az_I: float,
+    yaw: float,
+    pitch: float,
+    roll: float,
+    n_scalar: float,
+) -> tuple[dict, dict]:
+    initial_config_payload = build_initial_config_payload(
+        state_H=state_H,
+        omega_GI_G_0_trial=omega_GI_G_0_trial,
+        inc=inc,
+        ecc=ecc,
+        el_I=el_I,
+        az_I=az_I,
+        yaw=yaw,
+        pitch=pitch,
+        roll=roll,
+        n_scalar=n_scalar,
+    )
+    resolved_trajectory_payload = build_resolved_trajectory_config_payload(config, initial_config_payload)
+    write_json_payload(os.path.join(output_dir, "trajectory_config.json"), resolved_trajectory_payload)
+    write_json_payload(os.path.join(output_dir, "initial_config.json"), initial_config_payload)
+    return initial_config_payload, resolved_trajectory_payload
 
 
 def write_camera_trajectory(

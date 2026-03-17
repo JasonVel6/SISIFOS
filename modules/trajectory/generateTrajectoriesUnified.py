@@ -38,12 +38,12 @@ import math
 import os
 import sys
 import time
-from datetime import datetime
 
 import numpy as np
 from scipy.linalg import expm
 
 from modules.log_utils import get_logger, setup_logger
+from modules.io_utils import get_timestamp_folder
 
 # Add project root to path so imports work both when running directly and when imported
 _SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -63,9 +63,11 @@ from modules.trajectory.motion_cases import (
 )
 from modules.trajectory.plot_figure import generate_scene_plots, plot_trial_trajectories
 from modules.trajectory.trajectory_io import (
+    write_agent_config_files,
     write_camera_trajectory,
     write_config,
     write_gtvalues,
+    write_run_trajectory_config,
     write_sensormeasurements,
 )
 from modules.trajectory.trajectory_math import (
@@ -98,92 +100,6 @@ def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
     delta_cam = so3_log_vec(R_IC_lookat.T @ R_IC_follow)
     gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
     return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
-
-# TODO we should prob move this to file io utils
-def _derive_cro_fields_from_state(state_H: np.ndarray, n_scalar: float) -> dict:
-    x, y, z, xdot, ydot, zdot = [float(v) for v in np.asarray(state_H, dtype=float)]
-    A = float(np.hypot(x, y / 2.0))
-    if A > 1e-12:
-        phi = float(np.arctan2(-y / (2.0 * A), x / A))
-    else:
-        phi = 0.0
-    B = float(np.hypot(z, zdot / max(n_scalar, 1e-12)))
-    r_min = A
-    r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
-    R_mid = 0.5 * (r_min + r_max)
-    span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
-    return {
-        "A": A,
-        "B": B,
-        "phi": phi,
-        "R_mid": R_mid,
-        "span_frac": span_frac,
-    }
-
-
-def _build_initial_config_payload(
-    state_H: np.ndarray,
-    omega_GI_G_0_trial: np.ndarray,
-    inc: float,
-    ecc: float,
-    el_I: float,
-    az_I: float,
-    yaw: float,
-    pitch: float,
-    roll: float,
-    n_scalar: float,
-) -> dict:
-    state_H = np.asarray(state_H, dtype=float)
-    cro_fields = _derive_cro_fields_from_state(state_H, n_scalar)
-    return {
-        "x": float(state_H[0]),
-        "y": float(state_H[1]),
-        "z": float(state_H[2]),
-        "xdot": float(state_H[3]),
-        "ydot": float(state_H[4]),
-        "zdot": float(state_H[5]),
-        "A": cro_fields["A"],
-        "B": cro_fields["B"],
-        "phi": cro_fields["phi"],
-        "R_mid": cro_fields["R_mid"],
-        "span_frac": cro_fields["span_frac"],
-        "omega": np.asarray(omega_GI_G_0_trial, dtype=float).tolist(),
-        "inclination_rad": float(inc),
-        "eccentricity": float(ecc),
-        "sun_elevation_I_rad": float(el_I),
-        "sun_azimuth_I_rad": float(az_I),
-        "yaw": float(yaw),
-        "pitch": float(pitch),
-        "roll": float(roll),
-    }
-
-
-def _build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_config: dict) -> dict:
-    payload = config.model_dump()
-    payload["init_condition_config"] = {
-        key: initial_config[key]
-        for key in (
-            "x",
-            "y",
-            "z",
-            "xdot",
-            "ydot",
-            "zdot",
-            "R_mid",
-            "span_frac",
-            "phi",
-            "omega",
-            "inclination_rad",
-            "eccentricity",
-            "sun_elevation_I_rad",
-            "sun_azimuth_I_rad",
-            "yaw",
-            "pitch",
-            "roll",
-        )
-    }
-    return payload
-
 
 # ============================================================================
 # MAIN Function
@@ -747,10 +663,7 @@ def generate_trajectories_dynamical(
     # Ensure the file exists
     os.makedirs(base_output_file, exist_ok=True)
     # Write the trajectory config for this run
-    trajectory_config_filepath = os.path.join(base_output_file, f"{config_prefix}_trajectory.json")
-    with open(trajectory_config_filepath, "w") as f:
-        payload = config.model_dump()
-        json.dump(payload, f, indent=2)
+    write_run_trajectory_config(base_output_file, config_prefix, config)
 
     agent_folders = []
     all_initial_configs = {}
@@ -825,7 +738,9 @@ def generate_trajectories_dynamical(
             agent_folder = os.path.join(mc_folder, f"Agent_{agent_idx}")
             os.makedirs(agent_folder, exist_ok=True)
             agent_folders.append(agent_folder)
-            initial_config_payload = _build_initial_config_payload(
+            initial_config_payload, _ = write_agent_config_files(
+                output_dir=agent_folder,
+                config=config,
                 state_H=r_0[mc_trial, agent_idx],
                 omega_GI_G_0_trial=omega_GI_G_0[mc_trial],
                 inc=inc[mc_trial],
@@ -837,11 +752,6 @@ def generate_trajectories_dynamical(
                 roll=roll[mc_trial],
                 n_scalar=config.n_scalar,
             )
-            resolved_trajectory_payload = _build_resolved_trajectory_config_payload(config, initial_config_payload)
-            with open(os.path.join(agent_folder, "trajectory_config.json"), "w") as f:
-                json.dump(resolved_trajectory_payload, f, indent=2)
-            with open(os.path.join(agent_folder, "initial_config.json"), "w") as f:
-                json.dump(initial_config_payload, f, indent=2)
             all_initial_configs[mc_key][f"agent_{agent_idx:02d}"] = initial_config_payload
 
             # Compute and print range statistics
@@ -991,17 +901,15 @@ def main():
         if seed is not None:
             scene_config.trajectory.seed = seed
 
-        now = datetime.today()
-        date_str = now.strftime("%m_%d_%y")
-        time_str = now.strftime("%Y_%m_%H%M")
-        output_dir = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{scene_config.trajectory.path_mode}_traj_only")
+        timestamp_folder = get_timestamp_folder()
+        output_dir = os.path.join(DEFAULT_OUTPUT_BASE, f"{timestamp_folder}_{scene_config.trajectory.path_mode}_traj_only")
 
         os.makedirs(output_dir, exist_ok=True)
         setup_logger(log_file=os.path.join(output_dir, "run.log"))
         generate_trajectories_dynamical(
             config=scene_config.trajectory,
             base_output_file=output_dir,
-            config_prefix="",
+            config_prefix="Trial",
             model_name=args.model_name or scene_config.selected_model,
             camera_config=scene_config.camera,
             save_scene_plots=not args.disable_scene_plots,
@@ -1035,10 +943,8 @@ def main():
     logger.info("[INFO] Mode: %s", path_mode)
     logger.info("[INFO] Agents: %s, MC trials: %s", num_agents, num_mc)
 
-    now = datetime.today()
-    date_str = now.strftime("%m_%d_%y")  # e.g., "1207"
-    time_str = now.strftime("%Y_%m_%H%M")  # e.g., "2025_12_1430"
-    base_output_file = os.path.join(DEFAULT_OUTPUT_BASE, f"{date_str}_{time_str}_{config.path_mode}")
+    timestamp_folder = get_timestamp_folder()
+    base_output_file = os.path.join(DEFAULT_OUTPUT_BASE, f"{timestamp_folder}_{config.path_mode}")
     os.makedirs(base_output_file, exist_ok=True)
     setup_logger(log_file=os.path.join(base_output_file, "run.log"))
 
