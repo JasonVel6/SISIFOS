@@ -10,10 +10,12 @@ Iason Georgios Velentzas (ivelentzas3@gatech.edu)
 """
 
 import argparse
+import datetime
 import json
 import math
 import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +30,11 @@ from modules.io_utils import (
     images_to_video_blender_sequence,
     vprint,
 )
+from modules.log_utils import get_logger, setup_logger
 from modules.renderer import BlenderRenderer
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 from modules.trajectory.sampling_trajectory import (
+    write_camera_trajectory_const_rotation,
     write_camera_trajectory_fib,
 )
 from modules.trajectory.trajectory_io import (
@@ -57,6 +61,8 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             config_prefix=config_prefix,
             model_name=model_token,
             camera_config=config.camera,
+            save_scene_plots=config.save_scene_plots,
+            scene_plot_max_frames=config.scene_plot_max_frames,
         )
 
     elif config.trajectory_type == "sampling_trajectory":
@@ -68,6 +74,18 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             R_RPO=config.trajectory_sampling.R_RPO,
             sun_az=config.trajectory_sampling.sun_az,
             sun_el=config.trajectory_sampling.sun_el,
+        )
+    elif config.trajectory_type == "const_rotate":
+        agent_folder = ensure_dir(output_dir / f"{config_prefix}_{model_token}")
+        agent_folders = write_camera_trajectory_const_rotation(
+            str(agent_folder),
+            R_LEO=config.trajectory_const_rotate.R_LEO,
+            R_RPO=config.trajectory_const_rotate.R_RPO,
+            tstep=config.trajectory_const_rotate.tstep,
+            tend=config.trajectory_const_rotate.tend,
+            angular_velocity=config.trajectory_const_rotate.angular_velocity,
+            sun_az=config.trajectory_const_rotate.sun_az,
+            sun_el=config.trajectory_const_rotate.sun_el,
         )
     elif config.trajectory_type == "filepath":
         if not config.trajectory_filepath:
@@ -97,15 +115,16 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
         agent_folders = [str(dest_folder)]
     else:
         raise ValueError(
-            f"Invalid trajectory type: {config.trajectory_type}. Must be 'trajectory_generator' or 'sampling_trajectory'."
+            f"Invalid trajectory type: {config.trajectory_type}. Must be one of 'trajectory_generator', 'sampling_trajectory', 'const_rotate', or 'filepath'."
         )
 
     return agent_folders
 
 
 def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
+    logger = get_logger()
     renderer = BlenderRenderer(config, verbose=True)
-    print(config.setup)
+    logger.info("%s", config.setup)
     cam, sun = renderer.setup_total()
 
     trajectory_file = renders_base_dir / "camera_traj.csv"
@@ -113,14 +132,13 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     trajectory = read_camera_trajectory(str(trajectory_file))
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
-    print(f"[Session] Renders output: {renders_base_dir}/")
+    logger.info("[Session] Renders output: %s/", renders_base_dir)
 
     model = renderer.select_model_to_render()
     vprint(f"Rendering model: {model.name}", True)
     all_models = renderer.get_all_models()
 
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
-    res_x, res_y = config.camera.resolution
 
     # Keep frame filenames at least 4-digit zero-padded for downstream tooling.
     N_digits = max(4, int(math.log10(len(frames))) + 1)
@@ -149,11 +167,18 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     if config.model_rotation_z_deg != 0:
         renderer.rotate_z(model, config.model_rotation_z_deg)
 
-    print("Enabling blur is: ", config.setup.enable_blur)
+    logger.info("Enabling blur is: %s", config.setup.enable_blur)
+
+    render_start_time = time.time()
 
     image_filenames = renderer.render_animation(
         cam, model, sun, frames, frame_ids, image_out_dir, config.camera.exposure_time_s, N_digits
     )
+
+    elapsed = time.time() - render_start_time
+    if frame_ids:
+        logger.info("Rendered %d frame(s) in %.2f seconds (%.2f s/frame)", len(frame_ids), elapsed, elapsed / len(frame_ids))
+        logger.info("Render completed at: %s", datetime.datetime.now())
 
     # Post-process NPZ ground truth data
     for idx, i in enumerate(frame_ids):
@@ -177,9 +202,9 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)
 
-    print(f"Finished rendering frames for {model.name}. Output directory: {renders_base_dir}")
+    logger.info("Finished rendering frames for %s. Output directory: %s", model.name, renders_base_dir)
     if config.setup.generate_video:
-        print("Saving video")
+        logger.info("Saving video")
         images_to_video_blender_sequence(
             image_dir=image_out_dir,
             image_filenames=image_filenames,
@@ -193,7 +218,9 @@ def run_sweep(sweep_config: SweepConfig):
 
     output_dir = Path("./renders") / get_timestamp_folder()
     ensure_dir(output_dir)
-    print(f"Running sweep with {len(configs)} configurations. Output base dir: {output_dir}")
+    setup_logger(log_file=output_dir / "run.log")
+    logger = get_logger()
+    logger.info("Running sweep with %d configurations. Output base dir: %s", len(configs), output_dir)
 
     # Save the config for reproducibility
     with open(output_dir / "sweep_configs.json", "w") as f:

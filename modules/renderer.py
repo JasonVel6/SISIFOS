@@ -21,6 +21,16 @@ class BlenderRenderer:
         self.scene = bpy.context.scene
         self.world = self.scene.world
 
+    def _set_pass_index_recursive(self, root_name: str, pass_index: int) -> None:
+        root = bpy.data.objects.get(root_name)
+        if root is None:
+            vprint(f"Segmentation pass index skipped; object '{root_name}' not found", self.verbose)
+            return
+
+        root.pass_index = pass_index
+        for child in root.children_recursive:
+            child.pass_index = pass_index
+
     def setup_total(self):
         vprint(f"Loading scene: {self.config.scene_blend_path}", self.verbose)
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
@@ -70,7 +80,7 @@ class BlenderRenderer:
             output = nodes.new(type="ShaderNodeOutputWorld")
             links.new(env_tex.outputs["Color"], background.inputs["Color"])
             links.new(background.outputs["Background"], output.inputs["Surface"])
-            print("Loaded stars HDRI:", self.config.hdri_path)
+            vprint(f"Loaded stars HDRI: {self.config.hdri_path}", self.verbose)
 
         def set_earth_visibility(enable: bool):
             for name in ["Earth", "Clouds", "Atmo"]:
@@ -108,13 +118,27 @@ class BlenderRenderer:
         else:
             c_links.new(rl.outputs["Image"], comp.inputs["Image"])
         vb = self.scene.vision_blender
-        vb.bool_save_gt_data = True
-        vb.bool_save_depth = True
-        vb.bool_save_normals = True
+        vb.bool_save_depth = self.config.save_depth
+        vb.bool_save_normals = self.config.save_normals
         vb.bool_save_cam_param = True
-        vb.bool_save_opt_flow = True  # needs Cycles' Vector pass
-        vb.bool_save_segmentation_masks = True  # needs object pass_index > 0
-        vb.bool_save_obj_poses = True
+        vb.bool_save_opt_flow = self.config.save_optical_flow
+        vb.bool_save_segmentation_masks = self.config.save_segmentation
+        vb.bool_save_obj_poses = self.config.save_obj_poses
+        vb.bool_save_gt_data = any(
+            [
+                vb.bool_save_depth,
+                vb.bool_save_normals,
+                vb.bool_save_cam_param,
+                vb.bool_save_opt_flow,
+                vb.bool_save_segmentation_masks,
+                vb.bool_save_obj_poses,
+            ]
+        )
+
+        # Assign pass indices for segmentation masks.
+        self._set_pass_index_recursive("Target", 1)
+        for pass_index, object_name in enumerate(["Earth", "Clouds", "Atmo"], start=2):
+            self._set_pass_index_recursive(object_name, pass_index)
 
         vprint("Vision Blender addon configured", self.verbose)
         cam = bpy.data.objects.get("Camera")
