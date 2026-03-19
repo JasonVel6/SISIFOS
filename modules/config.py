@@ -161,10 +161,10 @@ class InitialConditionConfig(BaseModel):
     """
 
     R_mid: float | None = None
-    R_mid_range: tuple[float, float] = (15.0, 50.0)
+    R_mid_range: tuple[float, float] = (10.0, 50.0)
 
     span_frac: float | None = None
-    span_frac_range: tuple[float, float] = (1.0, 2.0)
+    span_frac_range: tuple[float, float] = (0.1, 0.8)
 
     phi: float | None = None
     phi_range: tuple[float, float] = (0.0, 2 * np.pi)
@@ -176,16 +176,16 @@ class InitialConditionConfig(BaseModel):
     z: float | None = None
 
     xdot: float | None = None
-    xdot_range: tuple[float, float] = (-0.2, 0.2)
+    xdot_range: tuple[float, float] = (-0.05, 0.05)
 
     ydot: float | None = None
-    ydot_range: tuple[float, float] = (-0.2, 0.2)
+    ydot_range: tuple[float, float] = (-0.05, 0.05)
 
     zdot: float | None = None
-    zdot_range: tuple[float, float] = (-0.2, 0.2)
+    zdot_range: tuple[float, float] = (-0.05, 0.05)
 
     omega: tuple[float, float, float] | None = None
-    omega_mag_range: tuple[float, float] = (0.0872665, 0.349066)  # rad/s
+    omega_mag_range: tuple[float, float] = (0.0175, 0.175)  # rad/s (1-10 deg/s)
     min_asymmetry_component: float = 0.4
     off_axis_min: float = 0.3
     max_omega_retries: int = 5

@@ -884,7 +884,7 @@ def init_tumbling_new(
     return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, cro_fields_all
 
 
-def initial_condititions_orbital(
+def initial_conditions_orbital(
     num_mc: int,
     rngs_mc: list[np.random.Generator],
     initial_condition_config: InitialConditionConfig,

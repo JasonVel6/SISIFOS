@@ -54,7 +54,7 @@ if _PROJECT_ROOT not in sys.path:
 from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectoryConfig
 from modules.trajectory.motion_cases import (
     init_tumbling_new,
-    initial_condititions_orbital,
+    initial_conditions_orbital,
 )
 from modules.trajectory.plot_figure import generate_scene_plots, plot_trial_trajectories
 from modules.trajectory.trajectory_io import (
@@ -178,7 +178,7 @@ def generate_trajectories_dynamical(
                 zdot_0[mc_trial, a],
             ]
 
-    inc, ecc, el_I, az_I, yaw, pitch, roll = initial_condititions_orbital(
+    inc, ecc, el_I, az_I, yaw, pitch, roll = initial_conditions_orbital(
         num_mc=config.num_mc,
         rngs_mc=rngs_mc,
         initial_condition_config=config.init_condition_config,
