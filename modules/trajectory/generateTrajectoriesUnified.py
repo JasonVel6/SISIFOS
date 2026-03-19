@@ -142,6 +142,7 @@ def generate_trajectories_dynamical(
 
     # ---------- Generate initial conditions ----------
     logger.info("[STEP 1] Generating initial conditions...")
+    logger.info("  Tumbling initial-condition sampling mode: %s", config.init_condition_config.sampling_mode)
 
     # Getting rid of all motion cases besides tumbling for now to focus on inertia observability these should be re added once observability is debugged
 

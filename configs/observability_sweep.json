@@ -3,7 +3,7 @@
     "seed": 42,
     "illumination_seed": null,
     "num_agents": 1,
-    "num_mc": 10,
+    "num_mc": 100,
     "r_AG_G": [0.1, 0.05, 0.15],
     "R0_const": 30.0,
     "pointing_offset_G": [0.0, 0.0, 0.0],
@@ -16,20 +16,10 @@
     "h_orbit": 550000.0,
     "R_earth": 6371000.0,
     "IMAGE_MAX_DT_S": 1.0,
-    "tend": 200.0,
-    "tstep": 1.0,
+    "tend": 100.0,
+    "tstep": 0.1,
     "MIN_F2F_PX_MED": 3.0,
     "init_condition_config": {
-        "R_mid": null,
-        "R_mid_range": [15.0, 60.0],
-        "span_frac": null,
-        "span_frac_range": [0.1, 2.0],
-        "phi": null,
-        "phi_range": [0.0, 6.283185307],
-        "omega": null,
-        "omega_mag_range": [0.0, 0.175],
-        "min_asymmetry_component": 0.4,
-        "off_axis_min": 0.3,
-        "max_omega_retries": 5
+        "sampling_mode": "grid sampling"
     }
 }

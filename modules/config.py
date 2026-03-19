@@ -160,6 +160,8 @@ class InitialConditionConfig(BaseModel):
     TODO make docs and test this out
     """
 
+    sampling_mode: Literal["random sampling", "grid sampling"] = "random sampling"
+
     R_mid: float | None = None
     R_mid_range: tuple[float, float] = (10.0, 50.0)
 

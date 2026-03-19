@@ -1,9 +1,9 @@
 {
     "path_mode": "tumbling",
-    "seed": 887863346,
+    "seed": null,
     "illumination_seed": null,
-    "num_agents": 3,
-    "num_mc": 5,
+    "num_agents": 1,
+    "num_mc": 100,
     "r_AG_G": [
     0.1,
     0.05,
@@ -36,6 +36,9 @@
     "R_earth": 6371000.0,
     "IMAGE_MAX_DT_S": 1.0,
     "tend": 100.0,
-    "tstep": 1.0,
-    "MIN_F2F_PX_MED": 3.0
+    "tstep": 0.1,
+    "MIN_F2F_PX_MED": 3.0,
+    "init_condition_config": {
+        "sampling_mode": "grid sampling"
+    }
 }

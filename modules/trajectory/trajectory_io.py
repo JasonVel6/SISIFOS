@@ -30,6 +30,7 @@ def build_initial_config_payload(
     state_H: np.ndarray,
     cro_fields: dict[str, float],
     omega_GI_G_0_trial: np.ndarray,
+    sampling_mode: str,
     inc: float,
     ecc: float,
     el_I: float,
@@ -40,6 +41,7 @@ def build_initial_config_payload(
 ) -> dict:
     state_H = np.asarray(state_H, dtype=float)
     return {
+        "sampling_mode": sampling_mode,
         "x": float(state_H[0]),
         "y": float(state_H[1]),
         "z": float(state_H[2]),
@@ -67,6 +69,7 @@ def build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_c
     payload["init_condition_config"] = {
         key: initial_config[key]
         for key in (
+            "sampling_mode",
             "x",
             "y",
             "z",
@@ -118,6 +121,7 @@ def write_agent_config_files(
         state_H=state_H,
         cro_fields=cro_fields,
         omega_GI_G_0_trial=omega_GI_G_0_trial,
+        sampling_mode=config.init_condition_config.sampling_mode,
         inc=inc,
         ecc=ecc,
         el_I=el_I,

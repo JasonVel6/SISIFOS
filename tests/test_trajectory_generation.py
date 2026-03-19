@@ -5,6 +5,7 @@ import numpy as np
 
 from modules.config import CameraConfig, InitialConditionConfig, TrajectoryConfig, default_inertia_config
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
+from modules.trajectory.motion_cases import init_tumbling_new
 from modules.trajectory.trajectory_io import read_camera_trajectory
 
 
@@ -119,3 +120,72 @@ class TestTrajectoryGenerationSmoke:
 
         assert resolved_initial["omega"] == [0.04, -0.01, 0.02]
         assert resolved_trajectory["init_condition_config"]["x"] == 80.0
+
+    def test_tumbling_grid_sampling_spreads_cro_ranges_evenly(self):
+        rngs_mc = [np.random.default_rng(100), np.random.default_rng(101)]
+        init_cfg = InitialConditionConfig(
+            sampling_mode="grid sampling",
+            R_mid_range=(10.0, 40.0),
+            span_frac_range=(1.0, 2.0),
+            phi=0.0,
+            omega_mag_range=(0.1, 0.4),
+        )
+
+        _, _, _, _, _, _, omega_GI_G_0, cro_fields = init_tumbling_new(
+            num_mc=2,
+            num_agents=2,
+            rngs_mc=rngs_mc,
+            n_scalar=0.05,
+            init_condition_config=init_cfg,
+            J=default_inertia_config("RF_Hubble").J,
+        )
+
+        observed_pairs = {
+            (round(float(r_mid), 6), round(float(span_frac), 6))
+            for r_mid, span_frac in zip(cro_fields["R_mid"].ravel(), cro_fields["span_frac"].ravel())
+        }
+        assert observed_pairs == {
+            (10.0, 1.0),
+            (10.0, 2.0),
+            (40.0, 1.0),
+            (40.0, 2.0),
+        }
+        np.testing.assert_allclose(np.sort(cro_fields["phi"].ravel()), np.zeros(4))
+        np.testing.assert_allclose(np.linalg.norm(omega_GI_G_0, axis=1), np.array([0.1, 0.4]))
+
+    def test_grid_sampling_mode_is_saved_to_output_configs(self, tmp_path):
+        run_dir = tmp_path / "run_grid_cfg"
+        config = TrajectoryConfig(
+            inertia_config=default_inertia_config("RF_Hubble"),
+            path_mode="tumbling",
+            seed=24680,
+            illumination_seed=13579,
+            num_agents=1,
+            num_mc=1,
+            tend=2.0,
+            tstep=1.0,
+            MIN_F2F_PX_MED=1.0,
+            init_condition_config=InitialConditionConfig(
+                sampling_mode="grid sampling",
+                R_mid_range=(20.0, 30.0),
+                span_frac=1.5,
+                phi=0.25,
+            ),
+        )
+
+        folders = generate_trajectories_dynamical(
+            config=config,
+            base_output_file=str(run_dir),
+            config_prefix="GridCfg",
+            camera_config=CameraConfig(resolution=(64, 64)),
+            save_scene_plots=False,
+        )
+
+        agent_dir = Path(folders[0])
+        with open(agent_dir / "initial_config.json") as f:
+            resolved_initial = json.load(f)
+        with open(agent_dir / "trajectory_config.json") as f:
+            resolved_trajectory = json.load(f)
+
+        assert resolved_initial["sampling_mode"] == "grid sampling"
+        assert resolved_trajectory["init_condition_config"]["sampling_mode"] == "grid sampling"

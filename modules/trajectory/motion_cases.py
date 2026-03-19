@@ -3,6 +3,102 @@ import numpy as np
 from modules.config import InitialConditionConfig
 
 
+def _evenly_spaced_values(value_range: tuple[float, float], count: int) -> np.ndarray:
+    low, high = map(float, value_range)
+    if count <= 1:
+        return np.array([0.5 * (low + high)], dtype=float)
+    return np.linspace(low, high, count, dtype=float)
+
+
+def _build_balanced_grid_counts(num_samples: int, num_dims: int) -> list[int]:
+    if num_dims <= 0:
+        return []
+
+    counts = [1] * num_dims
+    while int(np.prod(counts, dtype=int)) < num_samples:
+        dim_idx = min(range(num_dims), key=lambda idx: (counts[idx], idx))
+        counts[dim_idx] += 1
+    return counts
+
+
+def _select_grid_parameter_sets(
+    num_samples: int,
+    parameter_specs: list[tuple[str, float | None, tuple[float, float] | None]],
+) -> list[dict[str, float]]:
+    varying_specs = [(name, value_range) for name, fixed_value, value_range in parameter_specs if fixed_value is None]
+    if not varying_specs:
+        return [{name: float(fixed_value) for name, fixed_value, _ in parameter_specs} for _ in range(num_samples)]
+
+    grid_counts = _build_balanced_grid_counts(num_samples, len(varying_specs))
+    grid_axes = [_evenly_spaced_values(value_range, count) for (_, value_range), count in zip(varying_specs, grid_counts)]
+    total_grid_points = int(np.prod(grid_counts, dtype=int))
+    grid_point_indices = np.floor(np.linspace(0, total_grid_points, num_samples, endpoint=False)).astype(int)
+
+    parameter_sets: list[dict[str, float]] = []
+    for flat_idx in grid_point_indices:
+        point = {name: float(fixed_value) for name, fixed_value, _ in parameter_specs if fixed_value is not None}
+        axis_indices = np.unravel_index(int(flat_idx), tuple(grid_counts))
+        for (name, _value_range), axis_idx, axis_values in zip(varying_specs, axis_indices, grid_axes):
+            point[name] = float(axis_values[axis_idx])
+        parameter_sets.append(point)
+
+    return parameter_sets
+
+
+def _sample_tumbling_grid_states(
+    num_mc: int,
+    num_agents: int,
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+) -> list[tuple[float, float, float, float, float, float, dict[str, float]]]:
+    total_samples = num_mc * num_agents
+
+    if init_condition_config.uses_cartesian_state:
+        raise ValueError("grid sampling is currently only supported for the CRO-style tumbling parameters.")
+
+    parameter_specs = [
+        ("R_mid", init_condition_config.R_mid, init_condition_config.R_mid_range),
+        ("span_frac", init_condition_config.span_frac, init_condition_config.span_frac_range),
+        ("phi", init_condition_config.phi, init_condition_config.phi_range),
+    ]
+    parameter_sets = _select_grid_parameter_sets(total_samples, parameter_specs)
+
+    sampled_states = []
+    for parameter_set in parameter_sets:
+        R_mid = parameter_set["R_mid"]
+        span_frac = parameter_set["span_frac"]
+        phi = parameter_set["phi"]
+        A = R_mid * (1.0 - span_frac)
+        B = R_mid * (1.0 + span_frac)
+
+        x0 = A * np.cos(phi)
+        y0 = -2.0 * A * np.sin(phi)
+        z0 = 0.0
+        vx0 = -n_scalar * A * np.sin(phi)
+        vy0 = -2.0 * n_scalar * A * np.cos(phi)
+        vz0 = n_scalar * B
+
+        sampled_states.append(
+            (
+                float(x0),
+                float(y0),
+                float(z0),
+                float(vx0),
+                float(vy0),
+                float(vz0),
+                {
+                    "A": float(A),
+                    "B": float(B),
+                    "phi": float(phi),
+                    "R_mid": float(R_mid),
+                    "span_frac": float(span_frac),
+                },
+            )
+        )
+
+    return sampled_states
+
+
 def _sample_fixed_or_range(
     rng: np.random.Generator,
     fixed_value: float | None,
@@ -837,6 +933,9 @@ def init_tumbling_new(
         "R_mid": np.zeros((num_mc, num_agents), dtype=float),
         "span_frac": np.zeros((num_mc, num_agents), dtype=float),
     }
+    sampling_mode = init_condition_config.sampling_mode
+    if sampling_mode not in {"random sampling", "grid sampling"}:
+        raise ValueError(f"Unsupported sampling_mode: {sampling_mode}")
 
     # Initialize omega_GI_G_0 based on config: use fixed value if provided, otherwise sample with excitation checks
     if init_condition_config.omega is not None:
@@ -844,6 +943,10 @@ def init_tumbling_new(
         omega_GI_G_0 = np.tile(omega.reshape(1, 3), (num_mc, 1))
     else:
         omega_GI_G_0 = np.zeros((num_mc, 3), dtype=float)
+        if sampling_mode == "grid sampling":
+            omega_magnitudes = _evenly_spaced_values(init_condition_config.omega_mag_range, num_mc)
+        else:
+            omega_magnitudes = None
         for i in range(num_mc):
             rng = rngs_mc[i]
             if J is not None:
@@ -861,17 +964,29 @@ def init_tumbling_new(
                     max_retries=init_condition_config.max_omega_retries,
                 )
 
-            omega_sampled_rad = float(
-                rng.uniform(init_condition_config.omega_mag_range[0], init_condition_config.omega_mag_range[1])
-            )
+            if sampling_mode == "grid sampling":
+                omega_sampled_rad = float(omega_magnitudes[i])
+            else:
+                omega_sampled_rad = float(
+                    rng.uniform(init_condition_config.omega_mag_range[0], init_condition_config.omega_mag_range[1])
+                )
             omega_GI_G_0[i] = omega_sampled_rad * d
+
+    if sampling_mode == "grid sampling":
+        sampled_states = _sample_tumbling_grid_states(num_mc, num_agents, n_scalar, init_condition_config)
+    else:
+        sampled_states = None
 
     for mc_trial in range(num_mc):
         rng = rngs_mc[mc_trial]
         for agent_idx in range(num_agents):
-            x0, y0, z0, vx0, vy0, vz0, cro_fields = _sample_tumbling_cartesian_state(
-                rng, n_scalar, init_condition_config
-            )
+            if sampling_mode == "grid sampling":
+                sample_idx = mc_trial * num_agents + agent_idx
+                x0, y0, z0, vx0, vy0, vz0, cro_fields = sampled_states[sample_idx]
+            else:
+                x0, y0, z0, vx0, vy0, vz0, cro_fields = _sample_tumbling_cartesian_state(
+                    rng, n_scalar, init_condition_config
+                )
             x_0[mc_trial, agent_idx] = x0
             y_0[mc_trial, agent_idx] = y0
             z_0[mc_trial, agent_idx] = z0
