@@ -18,11 +18,12 @@ dependencies = [
     "tqdm>=4.67.1",
     "trimesh>=4.11.1",
     "pyyaml>=6.0.3",
-    "ruff>=0.15.6",
 ]
 
 [project.optional-dependencies]
-dev = []
+dev = [
+    "ruff>=0.15.6",
+]
 
 [tool.setuptools]
 py-modules = ["main", "video_gen", "build_model_scene", "addon_ground_truth_generation"]

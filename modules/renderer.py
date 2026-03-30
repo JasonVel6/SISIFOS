@@ -406,18 +406,20 @@ class BlenderRenderer:
         else:
             self.scene.render.use_motion_blur = False
 
-        #  Output settings
+        # Output settings
         output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         self.scene.render.image_settings.file_format = "PNG"
         self.scene.render.use_file_extension = True
 
+        total = len(frame_ids)
         try:
             # Render frame-by-frame with keyframed data in place.
-            for fid in frame_ids:
+            for idx, fid in enumerate(frame_ids, 1):
                 stem = str(fid).zfill(N_digits)
                 self.scene.render.filepath = str(output_dir / f"frame_{stem}")
                 self.scene.frame_set(fid)
+                self.logger.info("Rendering frame %d (%d/%d)", fid, idx, total)
                 bpy.ops.render.render(write_still=True)
         finally:
             if _exposure_handler in bpy.app.handlers.frame_change_pre:
