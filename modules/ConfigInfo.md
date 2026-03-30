@@ -175,8 +175,6 @@ string literal: on or off
 float for rendering motion blur and shutter speed
 #### blur_shutter_factor
 float for rendering motion blur and shutter speed
-#### blur_motion_factor
-float for rendering motion blur and shutter speed
 #### glare_threshold:
 float for calculating glare
 #### glare_size:

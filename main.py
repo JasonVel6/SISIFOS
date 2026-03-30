@@ -19,7 +19,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-from tqdm import tqdm
 
 sys.path.append(os.getcwd())
 from modules.config import SceneConfig, SweepConfig
@@ -34,7 +33,6 @@ from modules.log_utils import get_logger, setup_logger
 from modules.renderer import BlenderRenderer
 from modules.trajectory.generateTrajectoriesUnified import generate_trajectories_dynamical
 from modules.trajectory.sampling_trajectory import (
-    make_fake_frame_from_frame0,
     write_camera_trajectory_const_rotation,
     write_camera_trajectory_fib,
 )
@@ -144,7 +142,6 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     trajectory = get_scaled_trajectory_in_ECI(trajectory, earth_dist_scale_factor=config.render.earth_dist_scale_factor)
     frames = make_frames_from_trajectory(trajectory)
     logger.info("[Session] Renders output: %s/", renders_base_dir)
-    frame_start_time = time.time()
 
     frame_ids = config.frame_ids if config.frame_ids else list(range(len(frames)))
 
@@ -171,82 +168,39 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         "gt_seg": ensure_dir(gt_root / "Seg"),
     }
 
-    total = len(frame_ids)
     logger.info("Enabling blur is: %s", config.setup.enable_blur)
 
-    avg_frame_time = 0.0
+    render_start_time = time.time()
 
-    avg_frame_time = 0.0
+    image_filenames = renderer.render_animation(
+        cam, model, sun, frames, frame_ids, image_out_dir, config.camera.exposure_time_s, N_digits
+    )
 
-    with tqdm(total=total, desc=f"Rendering {model.name}") as pbar:
-        image_filenames = []
-        for i in frame_ids:
-            frame_start_time = time.time()
-            fr = frames[i]
-            fake_fr2 = None
-            if str(config.setup.enable_blur).casefold() == "on":
-                fake_fr2 = make_fake_frame_from_frame0(
-                    fr,
-                    seed=12345 + i,
-                    cam_dir_max_deg=0.6 * config.setup.blur_motion_factor,
-                    cam_radius_scale_sigma=0.01 * config.setup.blur_motion_factor,
-                    target_rot_max_deg=1.0 * config.setup.blur_motion_factor,
-                    force_camera_lookat=True,
-                )
+    elapsed = time.time() - render_start_time
+    if frame_ids:
+        logger.info(
+            "Rendered %d frame(s) in %.2f seconds (%.2f s/frame)", len(frame_ids), elapsed, elapsed / len(frame_ids)
+        )
+        logger.info("Render completed at: %s", datetime.datetime.now())
 
-            if str(config.setup.enable_blur).casefold() == "on" and fake_fr2 is not None:
-                fps = renderer.scene.render.fps / renderer.scene.render.fps_base
-                shutter_frames = config.camera.exposure_time_s * fps * config.setup.blur_shutter_factor
-                image_filename = renderer.render_frame_motion_blur_traj(
-                    cam,
-                    model,
-                    sun,
-                    fr,
-                    fake_fr2,
-                    i,
-                    shutter_frames,
-                    image_out_dir,
-                    config.camera.exposure_time_s,
-                    N_digits,
-                )
-            else:
-                image_filename = renderer.render_frame_v2(
-                    cam, model, sun, fr, i, image_out_dir, config.camera.exposure_time_s, N_digits
-                )
-
-            image_filenames.append(image_filename)
-            pbar.update(1)
-
-            # Post-process NPZ
-            target_dist = float(np.linalg.norm(fr["p_G_I"] - fr["p_C_I"]))
-            npz_src = Path(os.path.join(image_out_dir, f"{i:04d}.npz"))
-            if npz_src.exists():
-                handle_gt_from_npz(
-                    npz_src,
-                    gt_dirs["gt_npz"],
-                    gt_dirs["gt_depth"],
-                    gt_dirs["gt_norm"],
-                    gt_dirs["gt_flow"],
-                    gt_dirs["gt_seg"],
-                    target_dist,
-                    raw_image_filename=image_filename,
-                    raw_images_dir=str(image_out_dir),
-                    masked_images_dir=str(masked_out_dir),
-                )
-
-            current_frame_time = time.time() - frame_start_time
-            avg_frame_time = (avg_frame_time * i + current_frame_time) / (i + 1)
-            time_remaining_estimate = avg_frame_time * (total - i - 1)
-            time_delta_str = str(datetime.timedelta(seconds=int(time_remaining_estimate)))
-            logger.info("Generated frame %d in %.2f seconds. Output: %s", i, current_frame_time, image_filename)
-            logger.info("Average frame time: %.2f seconds.", avg_frame_time)
-            logger.info("Estimated time remaining: %s", time_delta_str)
-            logger.info(
-                "Estimated time of completion: %s",
-                datetime.datetime.now() + datetime.timedelta(seconds=int(time_remaining_estimate)),
+    # Post-process NPZ ground truth data
+    for idx, i in enumerate(frame_ids):
+        fr = frames[i]
+        target_dist = float(np.linalg.norm(fr["p_G_I"] - fr["p_C_I"]))
+        npz_src = Path(os.path.join(image_out_dir, f"{i:04d}.npz"))
+        if npz_src.exists():
+            handle_gt_from_npz(
+                npz_src,
+                gt_dirs["gt_npz"],
+                gt_dirs["gt_depth"],
+                gt_dirs["gt_norm"],
+                gt_dirs["gt_flow"],
+                gt_dirs["gt_seg"],
+                target_dist,
+                raw_image_filename=image_filenames[idx],
+                raw_images_dir=str(image_out_dir),
+                masked_images_dir=str(masked_out_dir),
             )
-
-    # End of frames loop
     timestamps = [float(trajectory["t"][fid]) for fid in frame_ids]
     image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
     create_image_list(str(renders_base_dir), timestamps, image_paths)

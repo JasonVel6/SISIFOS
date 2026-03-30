@@ -72,7 +72,6 @@ class SetupConfig(BaseModel):
     enable_glare: Literal["on", "off"] = "off"
     t_ref_s: float = 0.01666667  # TODO why is this deffined here and in the camera config
     blur_shutter_factor: float = 0.8
-    blur_motion_factor: float = 0.8
     glare_threshold: float = 0.95
     glare_size: int = 6
     generate_video: bool = True

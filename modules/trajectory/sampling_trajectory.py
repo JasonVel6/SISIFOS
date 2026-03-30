@@ -1,4 +1,3 @@
-import math
 import random
 from pathlib import Path
 
@@ -9,97 +8,9 @@ from modules.io_utils import ensure_dir
 from modules.log_utils import get_logger
 from modules.trajectory.plot_figure import generate_scene_plots
 from modules.trajectory.trajectory_io import write_camera_trajectory
-from modules.trajectory.trajectory_math import (
-    _rand_quat_uniform,
-    _rand_unit_vec,
-    _small_random_rotation,
-    fibonacci_sphere,
-    quat_to_wxyz,
-)
+from modules.trajectory.trajectory_math import _rand_quat_uniform, fibonacci_sphere, quat_to_wxyz
 
 logger = get_logger()
-
-
-def make_fake_frame_from_frame0(
-    frame0: dict,
-    seed: int,
-    cam_dir_max_deg: float = 0.5,  # how much to "swing" camera direction around target
-    cam_radius_scale_sigma: float = 0.0,  # optional: random radial scaling (e.g. 0.01 = 1%)
-    target_rot_max_deg: float = 0.0,  # optional: random target rotation
-    force_camera_lookat: bool = True,  # recommended
-) -> dict:
-    """
-    Create an artificial 'next frame' using only frame0, by perturbing camera pose
-    (and optionally target orientation). Keeps target position fixed.
-
-    TODO we may want to find another place for this method
-
-    frame0 keys: p_G_I, q_I_G, p_C_I, q_I_C
-    returns dict with same keys.
-    """
-    rng = random.Random(seed)
-
-    p_G_I0: Vector = frame0["p_G_I"]
-    q_I_G0: Quaternion = frame0["q_I_G"]
-    p_C_I0: Vector = frame0["p_C_I"]
-    q_I_C0: Quaternion = frame0["q_I_C"]
-
-    # --- target: keep position, optionally perturb orientation ---
-    dq_t = _small_random_rotation(rng, target_rot_max_deg)
-    q_I_G1 = (dq_t @ q_I_G0).normalized()
-    p_G_I1 = p_G_I0.copy()
-
-    # --- camera: perturb direction around target ---
-    r = p_C_I0 - p_G_I0
-    r_len = r.length
-    if r_len < 1e-9:
-        # degenerate: invent a radius
-        r = Vector((0.0, 0.0, 1.0))
-        r_len = 1.0
-    r_hat = (r / r_len).normalized()
-
-    # choose a random axis perpendicular to r_hat (tangent direction)
-    a = _rand_unit_vec(rng)
-    # remove component along r_hat
-    a = a - a.dot(r_hat) * r_hat
-    if a.length < 1e-9:
-        # fallback: pick any perpendicular
-        a = r_hat.orthogonal()
-    a.normalize()
-
-    # rotate r_hat by a small angle around axis a
-    ang = math.radians(rng.uniform(-cam_dir_max_deg, cam_dir_max_deg))
-    dq_cam_dir = Quaternion(a, ang).normalized()
-    r_hat_1 = (dq_cam_dir @ r_hat).normalized()
-
-    # optional radial scale
-    if cam_radius_scale_sigma > 0.0:
-        scale = max(1e-6, rng.gauss(1.0, cam_radius_scale_sigma))
-    else:
-        scale = 1.0
-
-    r1 = r_hat_1 * (r_len * scale)
-    p_C_I1 = p_G_I0 + r1
-
-    # --- camera orientation ---
-    if force_camera_lookat:
-        look_dir = p_G_I0 - p_C_I1
-        if look_dir.length < 1e-12:
-            look_dir = Vector((0.0, 0.0, -1.0))
-        else:
-            look_dir.normalize()
-        q_I_C1 = look_dir.to_track_quat("-Z", "Y").normalized()
-    else:
-        # small random perturbation of existing q_I_C0
-        dq_c = _small_random_rotation(rng, cam_dir_max_deg)
-        q_I_C1 = (dq_c @ q_I_C0).normalized()
-
-    return {
-        "p_G_I": p_G_I1,
-        "q_I_G": q_I_G1,
-        "p_C_I": p_C_I1,
-        "q_I_C": q_I_C1,
-    }
 
 
 def write_camera_trajectory_fib(

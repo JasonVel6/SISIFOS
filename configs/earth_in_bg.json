@@ -48,7 +48,6 @@
       "enable_glare": "off",
       "t_ref_s": 0.01666667,
       "blur_shutter_factor": 8.8,
-      "blur_motion_factor": 8.8,
       "glare_threshold": 0.95,
       "glare_size": 6,
       "generate_video": true,
