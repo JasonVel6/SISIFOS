@@ -1,0 +1,38 @@
+{
+    "base_config": {
+        "path_mode": "tumbling",
+        "seed": null,
+        "illumination_seed": null,
+        "num_agents": 1,
+        "num_mc": 100,
+        "r_AG_G": [0.1, 0.05, 0.15],
+        "R0_const": 30.0,
+        "pointing_offset_G": [0.0, 0.0, 0.0],
+        "camera_lookat_mode": "I",
+        "camera_pitchyaw_follow_gain": 0.0,
+        "camera_roll_follow_gain": 0.0,
+        "SUN_ALIGN_ENABLE": false,
+        "EARTH_BACKGROUND_ENABLE": false,
+        "mu_ref": 398600441800000.0,
+        "h_orbit": 550000.0,
+        "R_earth": 6371000.0,
+        "IMAGE_MAX_DT_S": 0.1,
+        "tend": 100.0,
+        "tstep": 0.1,
+        "MIN_F2F_PX_MED": 3.0,
+        "inertia_config": {
+            "inertia_type": "box",
+            "m": 4000.0,
+            "l": 5.0,
+            "w": 3.2,
+            "h": 2.8
+        },
+        "init_condition_config": {
+            "sampling_mode": "grid sampling",
+            "max_omega_retries": 100
+        }
+    },
+    "sweep_parameters": {
+        "camera_lookat_mode": ["I", "G", "hybrid"]
+    }
+}

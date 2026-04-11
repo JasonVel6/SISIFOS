@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import bpy
+# import bpy
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -122,83 +122,83 @@ def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
     return imglist_path
 
 
-def images_to_video_blender_sequence(
-    image_dir: str | Path,
-    image_filenames: list[str],
-    output_path: str | Path,
-    fps: int = 24,
-) -> str:
-    """
-    Assemble a video from pre-rendered frames using Blender's sequence editor.
+# def images_to_video_blender_sequence(
+#     image_dir: str | Path,
+#     image_filenames: list[str],
+#     output_path: str | Path,
+#     fps: int = 24,
+# ) -> str:
+#     """
+#     Assemble a video from pre-rendered frames using Blender's sequence editor.
 
-    Args:
-        image_dir: Directory containing rendered frames.
-        image_filenames: Ordered list of image filenames to include.
-        output_path: Target .mp4 filepath.
-        fps: Output frames per second.
-    """
-    if not image_filenames:
-        raise ValueError("Cannot generate video: no image filenames provided.")
+#     Args:
+#         image_dir: Directory containing rendered frames.
+#         image_filenames: Ordered list of image filenames to include.
+#         output_path: Target .mp4 filepath.
+#         fps: Output frames per second.
+#     """
+#     if not image_filenames:
+#         raise ValueError("Cannot generate video: no image filenames provided.")
 
-    image_dir = Path(image_dir)
-    output_path = Path(output_path)
-    abs_output = output_path.resolve()
+#     image_dir = Path(image_dir)
+#     output_path = Path(output_path)
+#     abs_output = output_path.resolve()
 
-    abs_dir = image_dir.resolve()
-    frames = []
-    for name in image_filenames:
-        p = abs_dir / name
-        if p.exists():
-            frames.append({"name": p.name})
-        else:
-            logger.warning("Skipping missing frame in video assembly: %s", p)
+#     abs_dir = image_dir.resolve()
+#     frames = []
+#     for name in image_filenames:
+#         p = abs_dir / name
+#         if p.exists():
+#             frames.append({"name": p.name})
+#         else:
+#             logger.warning("Skipping missing frame in video assembly: %s", p)
 
-    if not frames:
-        raise ValueError("Cannot generate video: no existing frames found in image_dir.")
+#     if not frames:
+#         raise ValueError("Cannot generate video: no existing frames found in image_dir.")
 
-    render_scene = bpy.data.scenes.new(name="SISIFOS_VideoAssembly")
-    try:
-        render_scene.sequence_editor_create()
-        seq = render_scene.sequence_editor
-        first_frame_path = abs_dir / frames[0]["name"]
+#     render_scene = bpy.data.scenes.new(name="SISIFOS_VideoAssembly")
+#     try:
+#         render_scene.sequence_editor_create()
+#         seq = render_scene.sequence_editor
+#         first_frame_path = abs_dir / frames[0]["name"]
 
-        seq.sequences.new_image(
-            name="RenderFrames",
-            filepath=str(first_frame_path),
-            channel=1,
-            frame_start=1,
-        )
-        image_strip = seq.sequences_all["RenderFrames"]
-        # new_image already creates the first element, so append the rest.
-        for frame in frames[1:]:
-            image_strip.elements.append(frame["name"])
+#         seq.sequences.new_image(
+#             name="RenderFrames",
+#             filepath=str(first_frame_path),
+#             channel=1,
+#             frame_start=1,
+#         )
+#         image_strip = seq.sequences_all["RenderFrames"]
+#         # new_image already creates the first element, so append the rest.
+#         for frame in frames[1:]:
+#             image_strip.elements.append(frame["name"])
 
-        # Match output dimensions to source frames to avoid stretching/cropping.
-        first_img = bpy.data.images.load(str(first_frame_path), check_existing=True)
-        src_w, src_h = int(first_img.size[0]), int(first_img.size[1])
+#         # Match output dimensions to source frames to avoid stretching/cropping.
+#         first_img = bpy.data.images.load(str(first_frame_path), check_existing=True)
+#         src_w, src_h = int(first_img.size[0]), int(first_img.size[1])
 
-        render_scene.frame_start = 1
-        render_scene.frame_end = len(frames)
-        render_scene.render.use_sequencer = True
-        render_scene.render.resolution_x = src_w
-        render_scene.render.resolution_y = src_h
-        bpy.data.images.remove(first_img)  # cleanup loaded image to avoid memory bloat
-        render_scene.render.resolution_percentage = 100
-        render_scene.render.pixel_aspect_x = 1.0
-        render_scene.render.pixel_aspect_y = 1.0
-        render_scene.render.fps = int(fps)
-        render_scene.render.fps_base = 1.0
-        render_scene.render.image_settings.file_format = "FFMPEG"
-        render_scene.render.ffmpeg.format = "MPEG4"
-        render_scene.render.ffmpeg.codec = "H264"
-        render_scene.render.ffmpeg.constant_rate_factor = "HIGH"
-        render_scene.render.ffmpeg.ffmpeg_preset = "GOOD"
-        render_scene.render.ffmpeg.gopsize = 12
-        render_scene.render.ffmpeg.audio_codec = "NONE"
-        render_scene.render.filepath = str(abs_output)
+#         render_scene.frame_start = 1
+#         render_scene.frame_end = len(frames)
+#         render_scene.render.use_sequencer = True
+#         render_scene.render.resolution_x = src_w
+#         render_scene.render.resolution_y = src_h
+#         bpy.data.images.remove(first_img)  # cleanup loaded image to avoid memory bloat
+#         render_scene.render.resolution_percentage = 100
+#         render_scene.render.pixel_aspect_x = 1.0
+#         render_scene.render.pixel_aspect_y = 1.0
+#         render_scene.render.fps = int(fps)
+#         render_scene.render.fps_base = 1.0
+#         render_scene.render.image_settings.file_format = "FFMPEG"
+#         render_scene.render.ffmpeg.format = "MPEG4"
+#         render_scene.render.ffmpeg.codec = "H264"
+#         render_scene.render.ffmpeg.constant_rate_factor = "HIGH"
+#         render_scene.render.ffmpeg.ffmpeg_preset = "GOOD"
+#         render_scene.render.ffmpeg.gopsize = 12
+#         render_scene.render.ffmpeg.audio_codec = "NONE"
+#         render_scene.render.filepath = str(abs_output)
 
-        bpy.ops.render.render(animation=True, scene=render_scene.name)
-        logger.info("Video generated successfully: %s", abs_output)
-        return str(abs_output)
-    finally:
-        bpy.data.scenes.remove(render_scene)
+#         bpy.ops.render.render(animation=True, scene=render_scene.name)
+#         logger.info("Video generated successfully: %s", abs_output)
+#         return str(abs_output)
+#     finally:
+#         bpy.data.scenes.remove(render_scene)

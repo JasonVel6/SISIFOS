@@ -1,5 +1,280 @@
 import numpy as np
 
+from modules.config import InitialConditionConfig
+
+
+def _evenly_spaced_values(value_range: tuple[float, float], count: int) -> np.ndarray:
+    low, high = map(float, value_range)
+    if count <= 1:
+        return np.array([0.5 * (low + high)], dtype=float)
+    return np.linspace(low, high, count, dtype=float)
+
+
+def _build_balanced_grid_counts(num_samples: int, num_dims: int) -> list[int]:
+    if num_dims <= 0:
+        return []
+
+    counts = [1] * num_dims
+    while int(np.prod(counts, dtype=int)) < num_samples:
+        dim_idx = min(range(num_dims), key=lambda idx: (counts[idx], idx))
+        counts[dim_idx] += 1
+    return counts
+
+
+def _select_grid_parameter_sets(
+    num_samples: int,
+    parameter_specs: list[tuple[str, float | None, tuple[float, float] | None]],
+) -> list[dict[str, float]]:
+    varying_specs = [(name, value_range) for name, fixed_value, value_range in parameter_specs if fixed_value is None]
+    if not varying_specs:
+        return [{name: float(fixed_value) for name, fixed_value, _ in parameter_specs} for _ in range(num_samples)]
+
+    grid_counts = _build_balanced_grid_counts(num_samples, len(varying_specs))
+    grid_axes = [_evenly_spaced_values(value_range, count) for (_, value_range), count in zip(varying_specs, grid_counts)]
+    total_grid_points = int(np.prod(grid_counts, dtype=int))
+    grid_point_indices = np.floor(np.linspace(0, total_grid_points, num_samples, endpoint=False)).astype(int)
+
+    parameter_sets: list[dict[str, float]] = []
+    for flat_idx in grid_point_indices:
+        point = {name: float(fixed_value) for name, fixed_value, _ in parameter_specs if fixed_value is not None}
+        axis_indices = np.unravel_index(int(flat_idx), tuple(grid_counts))
+        for (name, _value_range), axis_idx, axis_values in zip(varying_specs, axis_indices, grid_axes):
+            point[name] = float(axis_values[axis_idx])
+        parameter_sets.append(point)
+
+    return parameter_sets
+
+
+def _select_single_sweep_parameter_sets(
+    num_samples: int,
+    parameter_specs: list[tuple[str, float | None, tuple[float, float] | None]],
+    sweep_parameter: str,
+    rng: np.random.Generator,
+) -> list[dict[str, float]]:
+    valid_parameters = {name for name, _, _ in parameter_specs}
+    if sweep_parameter not in valid_parameters:
+        supported = ", ".join(sorted(valid_parameters))
+        raise ValueError(f"Unsupported single_sweep_parameter '{sweep_parameter}'. Supported parameters: {supported}")
+
+    baseline_values: dict[str, float] = {}
+    sweep_values: np.ndarray | None = None
+    for name, fixed_value, value_range in parameter_specs:
+        if name == sweep_parameter:
+            if value_range is None:
+                if fixed_value is None:
+                    raise ValueError(f"Cannot sweep parameter '{name}' without a fixed value or range.")
+                sweep_values = np.full(num_samples, float(fixed_value), dtype=float)
+            else:
+                sweep_values = _evenly_spaced_values(value_range, num_samples)
+            continue
+
+        if fixed_value is not None:
+            baseline_values[name] = float(fixed_value)
+        else:
+            if value_range is None:
+                raise ValueError(f"Cannot sample baseline value for parameter '{name}' without a range.")
+            baseline_values[name] = float(rng.uniform(value_range[0], value_range[1]))
+
+    if sweep_values is None:
+        raise ValueError(f"Failed to construct sweep values for parameter '{sweep_parameter}'.")
+
+    return [{**baseline_values, sweep_parameter: float(sweep_value)} for sweep_value in sweep_values]
+
+
+def _sample_tumbling_grid_states(
+    num_mc: int,
+    num_agents: int,
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+) -> list[tuple[float, float, float, float, float, float, dict[str, float]]]:
+    total_samples = num_mc * num_agents
+
+    if init_condition_config.uses_cartesian_state:
+        raise ValueError("grid sampling is currently only supported for the CRO-style tumbling parameters.")
+
+    parameter_specs = [
+        ("R_mid", init_condition_config.R_mid, init_condition_config.R_mid_range),
+        ("span_frac", init_condition_config.span_frac, init_condition_config.span_frac_range),
+        ("phi", init_condition_config.phi, init_condition_config.phi_range),
+    ]
+    parameter_sets = _select_grid_parameter_sets(total_samples, parameter_specs)
+
+    sampled_states = []
+    for parameter_set in parameter_sets:
+        R_mid = parameter_set["R_mid"]
+        span_frac = parameter_set["span_frac"]
+        phi = parameter_set["phi"]
+        A = R_mid * (1.0 - span_frac)
+        B = R_mid * (1.0 + span_frac)
+
+        x0 = A * np.cos(phi)
+        y0 = -2.0 * A * np.sin(phi)
+        z0 = 0.0
+        vx0 = -n_scalar * A * np.sin(phi)
+        vy0 = -2.0 * n_scalar * A * np.cos(phi)
+        vz0 = n_scalar * B
+
+        sampled_states.append(
+            (
+                float(x0),
+                float(y0),
+                float(z0),
+                float(vx0),
+                float(vy0),
+                float(vz0),
+                {
+                    "A": float(A),
+                    "B": float(B),
+                    "phi": float(phi),
+                    "R_mid": float(R_mid),
+                    "span_frac": float(span_frac),
+                },
+            )
+        )
+
+    return sampled_states
+
+
+def _sample_tumbling_single_sweep_states(
+    num_mc: int,
+    num_agents: int,
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+    rng: np.random.Generator,
+) -> list[tuple[float, float, float, float, float, float, dict[str, float]]]:
+    total_samples = num_mc * num_agents
+
+    if init_condition_config.uses_cartesian_state:
+        raise ValueError("single parameter sweep is currently only supported for the CRO-style tumbling parameters.")
+
+    parameter_specs = [
+        ("R_mid", init_condition_config.R_mid, init_condition_config.R_mid_range),
+        ("span_frac", init_condition_config.span_frac, init_condition_config.span_frac_range),
+        ("phi", init_condition_config.phi, init_condition_config.phi_range),
+    ]
+    supported_sweep_parameters = {name for name, _, _ in parameter_specs}
+    if init_condition_config.single_sweep_parameter in supported_sweep_parameters:
+        parameter_sets = _select_single_sweep_parameter_sets(
+            total_samples,
+            parameter_specs,
+            init_condition_config.single_sweep_parameter,
+            rng,
+        )
+    else:
+        baseline_state = _sample_tumbling_cartesian_state(rng, n_scalar, init_condition_config)
+        return [baseline_state for _ in range(total_samples)]
+
+    sampled_states = []
+    for parameter_set in parameter_sets:
+        R_mid = parameter_set["R_mid"]
+        span_frac = parameter_set["span_frac"]
+        phi = parameter_set["phi"]
+        A = R_mid * (1.0 - span_frac)
+        B = R_mid * (1.0 + span_frac)
+
+        x0 = A * np.cos(phi)
+        y0 = -2.0 * A * np.sin(phi)
+        z0 = 0.0
+        vx0 = -n_scalar * A * np.sin(phi)
+        vy0 = -2.0 * n_scalar * A * np.cos(phi)
+        vz0 = n_scalar * B
+
+        sampled_states.append(
+            (
+                float(x0),
+                float(y0),
+                float(z0),
+                float(vx0),
+                float(vy0),
+                float(vz0),
+                {
+                    "A": float(A),
+                    "B": float(B),
+                    "phi": float(phi),
+                    "R_mid": float(R_mid),
+                    "span_frac": float(span_frac),
+                },
+            )
+        )
+
+    return sampled_states
+
+
+def _sample_fixed_or_range(
+    rng: np.random.Generator,
+    fixed_value: float | None,
+    value_range: tuple[float, float],
+) -> float:
+    if fixed_value is not None:
+        return float(fixed_value)
+    low, high = value_range
+    return float(rng.uniform(low, high))
+
+
+def _sample_tumbling_cartesian_state(
+    rng: np.random.Generator,
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+) -> tuple[float, float, float, float, float, float, dict[str, float]]:
+    if init_condition_config.uses_cartesian_state:
+        x0 = init_condition_config.x
+        y0 = init_condition_config.y
+        z0 = init_condition_config.z
+        vx0 = init_condition_config.xdot
+        vy0 = init_condition_config.ydot
+        vz0 = init_condition_config.zdot
+
+        if any(type(val) is not float for val in (x0, y0, z0, vx0, vy0, vz0)):
+            raise ValueError("All of x, y, z, xdot, ydot, and zdot must be specified for Cartesian state sampling.")
+
+        A = float(np.hypot(x0, y0 / 2.0))
+        if A > 1e-12:
+            phi = float(np.arctan2(-y0 / (2.0 * A), x0 / A))
+        else:
+            phi = 0.0
+        B = float(np.hypot(z0, vz0 / max(n_scalar, 1e-12)))
+        r_min = A
+        r_max = float(np.sqrt((2.0 * A) ** 2 + B**2))
+        R_mid = 0.5 * (r_min + r_max)
+        span_frac = float((r_max - r_min) / (r_max + r_min)) if (r_max + r_min) > 1e-12 else 0.0
+
+        return (
+            x0,
+            y0,
+            z0,
+            vx0,
+            vy0,
+            vz0,
+            {
+                "A": A,
+                "B": B,
+                "phi": phi,
+                "R_mid": R_mid,
+                "span_frac": span_frac,
+            },
+        )
+
+    R_mid = _sample_fixed_or_range(rng, init_condition_config.R_mid, init_condition_config.R_mid_range)
+    span_frac = _sample_fixed_or_range(rng, init_condition_config.span_frac, init_condition_config.span_frac_range)
+    phi = _sample_fixed_or_range(rng, init_condition_config.phi, init_condition_config.phi_range)
+
+    A = R_mid * (1.0 - span_frac)
+    B = R_mid * (1.0 + span_frac)
+
+    x0 = A * np.cos(phi)
+    y0 = -2.0 * A * np.sin(phi)
+    z0 = 0.0
+    vx0 = -n_scalar * A * np.sin(phi)
+    vy0 = -2.0 * n_scalar * A * np.cos(phi)
+    vz0 = n_scalar * B
+    return x0, y0, z0, vx0, vy0, vz0, {
+        "A": float(A),
+        "B": float(B),
+        "phi": float(phi),
+        "R_mid": float(R_mid),
+        "span_frac": float(span_frac),
+    }
+
 
 def _ic_geom_from_state(r0, v0, f_px, dt):
     R = np.linalg.norm(r0)
@@ -735,6 +1010,237 @@ def init_hill(num_mc, num_agents, n_scalar, rngs_mc=None, focal_length_px=None, 
 
 
 # ------------------ Tumbling Case ----------------------------------------------
+
+
+def init_tumbling_new(
+    num_mc: int,
+    num_agents: int,
+    rngs_mc: list[np.random.Generator],
+    n_scalar: float,
+    init_condition_config: InitialConditionConfig,
+    J: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict[str, np.ndarray]]:
+    if n_scalar is None:
+        raise ValueError("n_scalar must be provided (mean motion, rad/s).")
+    if (rngs_mc is not None) and (len(rngs_mc) != num_mc):
+        raise ValueError("rngs_mc must have length num_mc.")
+    x_0 = np.zeros((num_mc, num_agents))
+    y_0 = np.zeros((num_mc, num_agents))
+    z_0 = np.zeros((num_mc, num_agents))
+    xdot_0 = np.zeros((num_mc, num_agents))
+    ydot_0 = np.zeros((num_mc, num_agents))
+    zdot_0 = np.zeros((num_mc, num_agents))
+    cro_fields_all = {
+        "A": np.zeros((num_mc, num_agents), dtype=float),
+        "B": np.zeros((num_mc, num_agents), dtype=float),
+        "phi": np.zeros((num_mc, num_agents), dtype=float),
+        "R_mid": np.zeros((num_mc, num_agents), dtype=float),
+        "span_frac": np.zeros((num_mc, num_agents), dtype=float),
+    }
+    sampling_mode = init_condition_config.sampling_mode
+    if sampling_mode not in {"random sampling", "grid sampling", "single parameter sweep"}:
+        raise ValueError(f"Unsupported sampling_mode: {sampling_mode}")
+
+    # Initialize omega_GI_G_0 based on config: use fixed value if provided, otherwise sample with excitation checks
+    if init_condition_config.omega is not None:
+        omega = np.array(init_condition_config.omega)
+        omega_GI_G_0 = np.tile(omega.reshape(1, 3), (num_mc, 1))
+    else:
+        omega_GI_G_0 = np.zeros((num_mc, 3), dtype=float)
+        if sampling_mode == "grid sampling":
+            omega_magnitudes = _evenly_spaced_values(init_condition_config.omega_mag_range, num_mc)
+        else:
+            omega_magnitudes = None
+        shared_omega_direction = None
+        shared_omega_magnitude = None
+        for i in range(num_mc):
+            rng = rngs_mc[i]
+            if sampling_mode == "single parameter sweep":
+                if shared_omega_direction is None:
+                    if J is not None:
+                        shared_omega_direction, _ = sample_inertia_excited_omega_direction(
+                            rng,
+                            J,
+                            min_asymmetry_component=init_condition_config.min_asymmetry_component,
+                            off_axis_min=init_condition_config.off_axis_min,
+                            max_retries=init_condition_config.max_omega_retries,
+                        )
+                    else:
+                        shared_omega_direction, _ = sample_excited_omega_direction(
+                            rng,
+                            off_axis_min=init_condition_config.off_axis_min,
+                            max_retries=init_condition_config.max_omega_retries,
+                        )
+                d = shared_omega_direction
+            else:
+                if J is not None:
+                    d, _ = sample_inertia_excited_omega_direction(
+                        rng,
+                        J,
+                        min_asymmetry_component=init_condition_config.min_asymmetry_component,
+                        off_axis_min=init_condition_config.off_axis_min,
+                        max_retries=init_condition_config.max_omega_retries,
+                    )
+                else:
+                    d, _ = sample_excited_omega_direction(
+                        rng,
+                        off_axis_min=init_condition_config.off_axis_min,
+                        max_retries=init_condition_config.max_omega_retries,
+                    )
+
+            if sampling_mode == "grid sampling":
+                omega_sampled_rad = float(omega_magnitudes[i])
+            elif sampling_mode == "single parameter sweep":
+                if shared_omega_magnitude is None:
+                    shared_omega_magnitude = float(
+                        rng.uniform(init_condition_config.omega_mag_range[0], init_condition_config.omega_mag_range[1])
+                    )
+                omega_sampled_rad = shared_omega_magnitude
+            else:
+                omega_sampled_rad = float(
+                    rng.uniform(init_condition_config.omega_mag_range[0], init_condition_config.omega_mag_range[1])
+                )
+            omega_GI_G_0[i] = omega_sampled_rad * d
+
+    if sampling_mode == "grid sampling":
+        sampled_states = _sample_tumbling_grid_states(num_mc, num_agents, n_scalar, init_condition_config)
+    elif sampling_mode == "single parameter sweep":
+        sampled_states = _sample_tumbling_single_sweep_states(num_mc, num_agents, n_scalar, init_condition_config, rngs_mc[0])
+    else:
+        sampled_states = None
+
+    for mc_trial in range(num_mc):
+        rng = rngs_mc[mc_trial]
+        for agent_idx in range(num_agents):
+            if sampling_mode in {"grid sampling", "single parameter sweep"}:
+                sample_idx = mc_trial * num_agents + agent_idx
+                x0, y0, z0, vx0, vy0, vz0, cro_fields = sampled_states[sample_idx]
+            else:
+                x0, y0, z0, vx0, vy0, vz0, cro_fields = _sample_tumbling_cartesian_state(
+                    rng, n_scalar, init_condition_config
+                )
+            x_0[mc_trial, agent_idx] = x0
+            y_0[mc_trial, agent_idx] = y0
+            z_0[mc_trial, agent_idx] = z0
+            xdot_0[mc_trial, agent_idx] = vx0
+            ydot_0[mc_trial, agent_idx] = vy0
+            zdot_0[mc_trial, agent_idx] = vz0
+            for key, value in cro_fields.items():
+                cro_fields_all[key][mc_trial, agent_idx] = value
+
+    return x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, cro_fields_all
+
+
+def initial_conditions_orbital(
+    num_mc: int,
+    rngs_mc: list[np.random.Generator],
+    initial_condition_config: InitialConditionConfig,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    inc = np.zeros(num_mc)
+    ecc = np.zeros(num_mc)
+    el_I = np.zeros(num_mc)
+    az_I = np.zeros(num_mc)
+    yaw = np.zeros(num_mc)
+    pitch = np.zeros(num_mc)
+    roll = np.zeros(num_mc)
+
+    if initial_condition_config.sampling_mode == "single parameter sweep":
+        parameter_specs = [
+            ("inclination_rad", initial_condition_config.inclination_rad, initial_condition_config.inclination_rad_range),
+            ("eccentricity", initial_condition_config.eccentricity, initial_condition_config.eccentricity_range),
+            (
+                "sun_elevation_I_rad",
+                initial_condition_config.sun_elevation_I_rad,
+                initial_condition_config.sun_elevation_I_rad_range,
+            ),
+            (
+                "sun_azimuth_I_rad",
+                initial_condition_config.sun_azimuth_I_rad,
+                initial_condition_config.sun_azimuth_I_rad_range,
+            ),
+            ("yaw", initial_condition_config.yaw, initial_condition_config.yaw_range),
+            ("pitch", initial_condition_config.pitch, initial_condition_config.pitch_range),
+            ("roll", initial_condition_config.roll, initial_condition_config.roll_range),
+        ]
+        supported_sweep_parameters = {name for name, _, _ in parameter_specs}
+        if initial_condition_config.single_sweep_parameter in supported_sweep_parameters:
+            parameter_sets = _select_single_sweep_parameter_sets(
+                num_mc,
+                parameter_specs,
+                initial_condition_config.single_sweep_parameter,
+                rngs_mc[0],
+            )
+        else:
+            baseline_rng = rngs_mc[0]
+            baseline_parameter_set = {
+                "inclination_rad": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.inclination_rad,
+                    initial_condition_config.inclination_rad_range,
+                ),
+                "eccentricity": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.eccentricity,
+                    initial_condition_config.eccentricity_range,
+                ),
+                "sun_elevation_I_rad": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.sun_elevation_I_rad,
+                    initial_condition_config.sun_elevation_I_rad_range,
+                ),
+                "sun_azimuth_I_rad": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.sun_azimuth_I_rad,
+                    initial_condition_config.sun_azimuth_I_rad_range,
+                ),
+                "yaw": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.yaw,
+                    initial_condition_config.yaw_range,
+                ),
+                "pitch": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.pitch,
+                    initial_condition_config.pitch_range,
+                ),
+                "roll": _sample_fixed_or_range(
+                    baseline_rng,
+                    initial_condition_config.roll,
+                    initial_condition_config.roll_range,
+                ),
+            }
+            parameter_sets = [baseline_parameter_set.copy() for _ in range(num_mc)]
+        for mc_trial, parameter_set in enumerate(parameter_sets):
+            inc[mc_trial] = parameter_set["inclination_rad"]
+            ecc[mc_trial] = parameter_set["eccentricity"]
+            el_I[mc_trial] = parameter_set["sun_elevation_I_rad"]
+            az_I[mc_trial] = parameter_set["sun_azimuth_I_rad"]
+            yaw[mc_trial] = parameter_set["yaw"]
+            pitch[mc_trial] = parameter_set["pitch"]
+            roll[mc_trial] = parameter_set["roll"]
+    else:
+        for mc_trial in range(num_mc):
+            rng = rngs_mc[mc_trial]
+            inc[mc_trial] = _sample_fixed_or_range(
+                rng, initial_condition_config.inclination_rad, initial_condition_config.inclination_rad_range
+            )
+            ecc[mc_trial] = _sample_fixed_or_range(
+                rng, initial_condition_config.eccentricity, initial_condition_config.eccentricity_range
+            )
+            # Always draw from the main RNG to preserve downstream state.
+            el_I[mc_trial] = _sample_fixed_or_range(
+                rng, initial_condition_config.sun_elevation_I_rad, initial_condition_config.sun_elevation_I_rad_range
+            )
+            az_I[mc_trial] = _sample_fixed_or_range(
+                rng, initial_condition_config.sun_azimuth_I_rad, initial_condition_config.sun_azimuth_I_rad_range
+            )
+            yaw[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.yaw, initial_condition_config.yaw_range)
+            pitch[mc_trial] = _sample_fixed_or_range(
+                rng, initial_condition_config.pitch, initial_condition_config.pitch_range
+            )
+            roll[mc_trial] = _sample_fixed_or_range(rng, initial_condition_config.roll, initial_condition_config.roll_range)
+
+    return inc, ecc, el_I, az_I, yaw, pitch, roll
 
 
 def init_tumbling(

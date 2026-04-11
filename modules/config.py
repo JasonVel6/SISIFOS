@@ -152,6 +152,78 @@ class InertiaConfig(BaseModel):
             raise ValueError(f"Invalid or not implemented inertia_type: {self.inertia_type}")
 
 
+class InitialConditionConfig(BaseModel):
+    """
+    Parameters for defining the initial conditions of the trajectory
+
+    TODO make docs and test this out
+    """
+
+    sampling_mode: Literal["random sampling", "grid sampling", "single parameter sweep"] = "random sampling"
+    single_sweep_parameter: str | None = None
+
+    R_mid: float | None = None
+    R_mid_range: tuple[float, float] = (10.0, 50.0)
+
+    span_frac: float | None = None
+    span_frac_range: tuple[float, float] = (0.1, 0.8)
+
+    phi: float | None = None
+    phi_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    x: float | None = None
+
+    y: float | None = None
+
+    z: float | None = None
+
+    xdot: float | None = None
+    xdot_range: tuple[float, float] = (-0.05, 0.05)
+
+    ydot: float | None = None
+    ydot_range: tuple[float, float] = (-0.05, 0.05)
+
+    zdot: float | None = None
+    zdot_range: tuple[float, float] = (-0.05, 0.05)
+
+    omega: tuple[float, float, float] | None = None
+    omega_mag_range: tuple[float, float] = (0.0175, 0.175)  # rad/s (1-10 deg/s)
+    min_asymmetry_component: float = 0.4
+    off_axis_min: float = 0.3
+    max_omega_retries: int = 5
+
+    # orbital parameters
+    inclination_rad: float | None = None
+    inclination_rad_range: tuple[float, float] = (0.0, np.pi / 2)
+
+    eccentricity: float | None = None
+    eccentricity_range: tuple[float, float] = (0.005, 0.05)
+
+    sun_elevation_I_rad: float | None = None
+    sun_elevation_I_rad_range: tuple[float, float] = (-np.pi / 2, np.pi / 2)
+
+    sun_azimuth_I_rad: float | None = None
+    sun_azimuth_I_rad_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    yaw: float | None = None
+    yaw_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    pitch: float | None = None
+    pitch_range: tuple[float, float] = (0.0, np.pi)
+
+    roll: float | None = None
+    roll_range: tuple[float, float] = (0.0, 2 * np.pi)
+
+    @property
+    def uses_cartesian_state(self) -> bool:
+        if any(getattr(self, field_name) is not None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")):
+            if any(getattr(self, field_name) is None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")):
+                raise ValueError("If using Cartesian state for initial conditions, all of x, y, z, xdot, ydot, and zdot must be specified")
+            return True
+    
+        return False
+
+
 def default_inertia_config(selected_model: str) -> InertiaConfig:
     model_defaults = require_spacecraft_defaults(selected_model)
     default_inertia = model_defaults["inertia"]
@@ -208,7 +280,7 @@ class TrajectoryConfig(BaseModel):
     # CRO out-of-plane amplitude for tumbling mode.
     # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
     # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
-    tumbling_span_frac: float = 0.20
+    # tumbling_span_frac: float = 0.20
     # Camera pointing offset — look at a point offset from geometric center G
     # in body frame. For tumbling targets, the tumble sweeps this offset through
     # inertial space, providing parallax diversity that breaks monocular VO
@@ -246,6 +318,7 @@ class TrajectoryConfig(BaseModel):
     MIN_F2F_PX_MED: float = 3.0
 
     inertia_config: InertiaConfig = Field(default_factory=InertiaConfig.model_construct)
+    init_condition_config: InitialConditionConfig = Field(default_factory=InitialConditionConfig.model_construct)
 
     @property
     def a_ref(self) -> float:
@@ -352,6 +425,63 @@ class SceneConfig(BaseModel):
         return self
 
 
+def _set_nested_attr(obj: Any, param_path: str, value: Any) -> None:
+    """Set a nested attribute or dict key using a dot-delimited path."""
+    parts = param_path.split(".")
+    if not parts:
+        raise ValueError("param_path must be non-empty")
+
+    target = obj
+    for part in parts[:-1]:
+        if isinstance(target, dict):
+            if part not in target:
+                raise KeyError(f"Missing key '{part}' in path '{param_path}'")
+            target = target[part]
+        else:
+            if not hasattr(target, part):
+                raise AttributeError(f"Missing attribute '{part}' in path '{param_path}'")
+            target = getattr(target, part)
+
+    last = parts[-1]
+    if isinstance(target, dict):
+        if last not in target:
+            raise KeyError(f"Missing key '{last}' in path '{param_path}'")
+        target[last] = value
+    else:
+        if not hasattr(target, last):
+            raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
+        setattr(target, last, value)
+
+
+class TrajectorySweepConfig(BaseModel):
+    """
+    Configuration for parameter sweeps over trajectory generation only (no rendering).
+    base_config is a TrajectoryConfig; sweep_parameters map dot-delimited attribute
+    paths to lists of values to sweep over.
+    """
+
+    base_config: TrajectoryConfig
+    sweep_parameters: dict[str, list[Any]] = Field(default_factory=dict)
+
+    def generate_sweep_configs(self) -> list[tuple[TrajectoryConfig, dict[str, Any]]]:
+        """Return (config, combo) pairs for every combination of sweep parameters."""
+        if not self.sweep_parameters:
+            return [(copy.deepcopy(self.base_config), {})]
+
+        keys, values = zip(*self.sweep_parameters.items(), strict=False)
+        combinations = [dict(zip(keys, v, strict=False)) for v in itertools.product(*values)]
+
+        result = []
+        for combo in combinations:
+            config_copy = copy.deepcopy(self.base_config)
+            for param_path, value in combo.items():
+                _set_nested_attr(config_copy, param_path, value)
+            validated = TrajectoryConfig.model_validate(config_copy.model_dump())
+            result.append((validated, combo))
+
+        return result
+
+
 class SweepConfig(BaseModel):
     """
     Configuration for parameter sweeps
@@ -367,30 +497,7 @@ class SweepConfig(BaseModel):
     @staticmethod
     def _set_nested_attr(obj: Any, param_path: str, value: Any) -> None:
         """Set a nested attribute or dict key using a dot-delimited path."""
-        parts = param_path.split(".")
-        if not parts:
-            raise ValueError("param_path must be non-empty")
-
-        target = obj
-        for part in parts[:-1]:
-            if isinstance(target, dict):
-                if part not in target:
-                    raise KeyError(f"Missing key '{part}' in path '{param_path}'")
-                target = target[part]
-            else:
-                if not hasattr(target, part):
-                    raise AttributeError(f"Missing attribute '{part}' in path '{param_path}'")
-                target = getattr(target, part)
-
-        last = parts[-1]
-        if isinstance(target, dict):
-            if last not in target:
-                raise KeyError(f"Missing key '{last}' in path '{param_path}'")
-            target[last] = value
-        else:
-            if not hasattr(target, last):
-                raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
-            setattr(target, last, value)
+        _set_nested_attr(obj, param_path, value)
 
     @staticmethod
     def _sync_selected_model_dependents(config: SceneConfig, combo: dict[str, Any]) -> None:
