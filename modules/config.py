@@ -426,6 +426,63 @@ class SceneConfig(BaseModel):
         return self
 
 
+def _set_nested_attr(obj: Any, param_path: str, value: Any) -> None:
+    """Set a nested attribute or dict key using a dot-delimited path."""
+    parts = param_path.split(".")
+    if not parts:
+        raise ValueError("param_path must be non-empty")
+
+    target = obj
+    for part in parts[:-1]:
+        if isinstance(target, dict):
+            if part not in target:
+                raise KeyError(f"Missing key '{part}' in path '{param_path}'")
+            target = target[part]
+        else:
+            if not hasattr(target, part):
+                raise AttributeError(f"Missing attribute '{part}' in path '{param_path}'")
+            target = getattr(target, part)
+
+    last = parts[-1]
+    if isinstance(target, dict):
+        if last not in target:
+            raise KeyError(f"Missing key '{last}' in path '{param_path}'")
+        target[last] = value
+    else:
+        if not hasattr(target, last):
+            raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
+        setattr(target, last, value)
+
+
+class TrajectorySweepConfig(BaseModel):
+    """
+    Configuration for parameter sweeps over trajectory generation only (no rendering).
+    base_config is a TrajectoryConfig; sweep_parameters map dot-delimited attribute
+    paths to lists of values to sweep over.
+    """
+
+    base_config: TrajectoryConfig
+    sweep_parameters: dict[str, list[Any]] = Field(default_factory=dict)
+
+    def generate_sweep_configs(self) -> list[tuple[TrajectoryConfig, dict[str, Any]]]:
+        """Return (config, combo) pairs for every combination of sweep parameters."""
+        if not self.sweep_parameters:
+            return [(copy.deepcopy(self.base_config), {})]
+
+        keys, values = zip(*self.sweep_parameters.items(), strict=False)
+        combinations = [dict(zip(keys, v, strict=False)) for v in itertools.product(*values)]
+
+        result = []
+        for combo in combinations:
+            config_copy = copy.deepcopy(self.base_config)
+            for param_path, value in combo.items():
+                _set_nested_attr(config_copy, param_path, value)
+            validated = TrajectoryConfig.model_validate(config_copy.model_dump())
+            result.append((validated, combo))
+
+        return result
+
+
 class SweepConfig(BaseModel):
     """
     Configuration for parameter sweeps
@@ -441,30 +498,7 @@ class SweepConfig(BaseModel):
     @staticmethod
     def _set_nested_attr(obj: Any, param_path: str, value: Any) -> None:
         """Set a nested attribute or dict key using a dot-delimited path."""
-        parts = param_path.split(".")
-        if not parts:
-            raise ValueError("param_path must be non-empty")
-
-        target = obj
-        for part in parts[:-1]:
-            if isinstance(target, dict):
-                if part not in target:
-                    raise KeyError(f"Missing key '{part}' in path '{param_path}'")
-                target = target[part]
-            else:
-                if not hasattr(target, part):
-                    raise AttributeError(f"Missing attribute '{part}' in path '{param_path}'")
-                target = getattr(target, part)
-
-        last = parts[-1]
-        if isinstance(target, dict):
-            if last not in target:
-                raise KeyError(f"Missing key '{last}' in path '{param_path}'")
-            target[last] = value
-        else:
-            if not hasattr(target, last):
-                raise AttributeError(f"Missing attribute '{last}' in path '{param_path}'")
-            setattr(target, last, value)
+        _set_nested_attr(obj, param_path, value)
 
     @staticmethod
     def _sync_selected_model_dependents(config: SceneConfig, combo: dict[str, Any]) -> None:

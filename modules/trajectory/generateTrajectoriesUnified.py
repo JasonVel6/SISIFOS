@@ -51,7 +51,7 @@ _PROJECT_ROOT = os.path.abspath(os.path.join(_SCRIPT_DIR, os.pardir, os.pardir))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectoryConfig
+from modules.config import CameraConfig, InertiaConfig, SceneConfig, TrajectorySweepConfig, TrajectoryConfig
 from modules.trajectory.motion_cases import (
     init_tumbling_new,
     initial_conditions_orbital,
@@ -886,6 +886,33 @@ def main():
     if args.config_path:
         with open(args.config_path) as f:
             config_json = json.load(f)
+
+        # Trajectory-only sweep: base_config is a TrajectoryConfig
+        if "sweep_parameters" in config_json and "base_config" in config_json and "trajectory" not in config_json.get("base_config", {}):
+            sweep_config = TrajectorySweepConfig.model_validate(config_json)
+            timestamp_folder = get_timestamp_folder()
+            sweep_output_base = os.path.join(DEFAULT_OUTPUT_BASE, f"{timestamp_folder}_traj_sweep")
+            os.makedirs(sweep_output_base, exist_ok=True)
+            setup_logger(log_file=os.path.join(sweep_output_base, "run.log"))
+
+            sweep_entries = sweep_config.generate_sweep_configs()
+            logger.info("Running trajectory sweep: %d configurations", len(sweep_entries))
+            for i, (traj_config, combo) in enumerate(sweep_entries):
+                if seed is not None:
+                    traj_config.seed = seed
+                suffix = "_".join(f"{k.split('.')[-1]}_{v}" for k, v in combo.items()) if combo else f"{i:03d}"
+                output_dir = os.path.join(sweep_output_base, f"{i:03d}_{suffix}")
+                os.makedirs(output_dir, exist_ok=True)
+                logger.info("Sweep config %d/%d: %s -> %s", i + 1, len(sweep_entries), combo, output_dir)
+                generate_trajectories_dynamical(
+                    config=traj_config,
+                    base_output_file=output_dir,
+                    config_prefix="Trial",
+                    model_name=args.model_name,
+                    save_scene_plots=not args.disable_scene_plots,
+                    scene_plot_max_frames=args.scene_plot_max_frames,
+                )
+            return
 
         if "base_config" in config_json:
             scene_config = SceneConfig.model_validate(config_json["base_config"])
