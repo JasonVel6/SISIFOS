@@ -160,7 +160,8 @@ class InitialConditionConfig(BaseModel):
     TODO make docs and test this out
     """
 
-    sampling_mode: Literal["random sampling", "grid sampling"] = "random sampling"
+    sampling_mode: Literal["random sampling", "grid sampling", "single parameter sweep"] = "random sampling"
+    single_sweep_parameter: str | None = None
 
     R_mid: float | None = None
     R_mid_range: tuple[float, float] = (10.0, 50.0)
@@ -216,7 +217,12 @@ class InitialConditionConfig(BaseModel):
 
     @property
     def uses_cartesian_state(self) -> bool:
-        return any(getattr(self, field_name) is not None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot"))
+        if any(getattr(self, field_name) is not None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")):
+            if any(getattr(self, field_name) is None for field_name in ("x", "y", "z", "xdot", "ydot", "zdot")):
+                raise ValueError("If using Cartesian state for initial conditions, all of x, y, z, xdot, ydot, and zdot must be specified")
+            return True
+    
+        return False
 
 
 def default_inertia_config(selected_model: str) -> InertiaConfig:
@@ -275,7 +281,7 @@ class TrajectoryConfig(BaseModel):
     # CRO out-of-plane amplitude for tumbling mode.
     # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
     # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
-    tumbling_span_frac: float = 0.20
+    # tumbling_span_frac: float = 0.20
     # Camera pointing offset — look at a point offset from geometric center G
     # in body frame. For tumbling targets, the tumble sweeps this offset through
     # inertial space, providing parallax diversity that breaks monocular VO

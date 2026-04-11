@@ -70,6 +70,7 @@ def build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_c
         key: initial_config[key]
         for key in (
             "sampling_mode",
+            "single_sweep_parameter",
             "x",
             "y",
             "z",
@@ -88,7 +89,10 @@ def build_resolved_trajectory_config_payload(config: TrajectoryConfig, initial_c
             "pitch",
             "roll",
         )
+        if key in initial_config
     }
+    if "single_sweep_parameter" not in payload["init_condition_config"]:
+        payload["init_condition_config"]["single_sweep_parameter"] = config.init_condition_config.single_sweep_parameter
     return payload
 
 
