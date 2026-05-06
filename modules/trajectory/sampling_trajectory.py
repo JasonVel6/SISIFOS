@@ -112,6 +112,7 @@ def write_camera_trajectory_fib(
     shuffle_points: bool = False,
     seed: int = 0,
     verbose: bool = True,
+    fixed_q_IG_wxyz: tuple[float, float, float, float] | None = None,
 ) -> list[str]:
     """
     Generate camera Fibonacci-style trajectory in ECI arrays and write using
@@ -151,9 +152,14 @@ def write_camera_trajectory_fib(
         # Camera position at radius R_LEO + R_RPO (same direction)
         p_C_I_front = direction_radial * (R_LEO + R_RPO)
 
-        # Random target orientation in inertial frame
-        rng = random.Random(seed + i)
-        q_IG = _rand_quat_uniform(rng)
+        # Target orientation in inertial frame: deterministic if requested,
+        # otherwise per-frame uniform random for natural orientation diversity.
+        if fixed_q_IG_wxyz is not None:
+            q_IG_wxyz_front = np.asarray(fixed_q_IG_wxyz, dtype=float)
+        else:
+            rng = random.Random(seed + i)
+            q_IG = _rand_quat_uniform(rng)
+            q_IG_wxyz_front = quat_to_wxyz(q_IG)
 
         # Camera orientation: looking toward origin (nadir/Earth-pointed)
         # Direction from camera toward sc/origin (negative radial direction)
@@ -161,9 +167,6 @@ def write_camera_trajectory_fib(
 
         # Create quaternion that aligns -Z axis (camera forward) with look direction
         q_IC = look_direction.to_track_quat("-Z", "Y").normalized()
-
-        # Convert quaternions to wxyz format
-        q_IG_wxyz_front = quat_to_wxyz(q_IG)
         q_IC_wxyz_front = quat_to_wxyz(q_IC)
 
         p_G_I[idx_front] = (p_G_I_front.x, p_G_I_front.y, p_G_I_front.z)
@@ -180,9 +183,13 @@ def write_camera_trajectory_fib(
         # Camera position at radius R_LEO - R_RPO (no Earth)
         p_C_I_back = direction_radial * (R_LEO - R_RPO)
 
-        # Random target orientation in inertial frame
-        rng = random.Random(seed + i)
-        q_IG = _rand_quat_uniform(rng)
+        # Target orientation: deterministic if requested, else per-frame random.
+        if fixed_q_IG_wxyz is not None:
+            q_IG_wxyz_back = np.asarray(fixed_q_IG_wxyz, dtype=float)
+        else:
+            rng = random.Random(seed + i)
+            q_IG = _rand_quat_uniform(rng)
+            q_IG_wxyz_back = quat_to_wxyz(q_IG)
 
         # Camera orientation: looking toward OUT (-nadir/Earth-pointed from the other side)
         # Direction from camera toward sc (negative of negative already radial direction)
@@ -190,9 +197,6 @@ def write_camera_trajectory_fib(
 
         # Create quaternion that aligns -Z axis (camera forward) with look direction
         q_IC = look_direction.to_track_quat("-Z", "Y").normalized()
-
-        # Convert quaternions to wxyz format
-        q_IG_wxyz_back = quat_to_wxyz(q_IG)
         q_IC_wxyz_back = quat_to_wxyz(q_IC)
 
         p_G_I[idx_back] = (p_G_I_back.x, p_G_I_back.y, p_G_I_back.z)

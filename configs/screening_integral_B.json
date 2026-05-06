@@ -1,4 +1,5 @@
 {
+  "_comment": "Screening trial B for the positive-edge trust-gate demo. Identical to screening_integral_A except omega bounds are 1-3 deg/s instead of 3-5 deg/s. Trial A on integral-com showed excellent I/c convergence (window 0.919, constraint 1e-4 at frame 780) but crashed at frame 840 via PnP quality-gate rejection (rotDiff=71 deg between PnP and CV) injecting a bad CV pose the optimizer could not absorb. Slower omega -> smaller per-KF rotation -> PnP stays within quality gate -> no CV injection. Other levers (COM=0.37m, CRO span=1.5, R0=50m, tend=500s, pointing gains) held constant to isolate the omega variable.",
   "base_config": {
     "scene_blend_path": "assets/scene.blend",
     "hdri_path": "assets/starmap_2020_16k.exr",
@@ -60,15 +61,17 @@
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 887863346,
+      "seed": null,
       "illumination_seed": null,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
-        0.1,
         0.05,
-        0.15
+        0.05,
+        0.35
       ],
+      "omega_min_deg": 1.0,
+      "omega_max_deg": 3.0,
       "sigma_Rxy_aps3": 3.878509448876288e-06,
       "sigma_Rz_aps3": 3.393695767766752e-05,
       "sigma_omega": 1.626114521074242e-06,
@@ -82,12 +85,11 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
+      "R0_const": 50.0,
+      "tumbling_span_frac": 1.5,
       "pointing_offset_G": [0.8, 0.5, 0.2],
       "camera_pitchyaw_follow_gain": 0.55,
       "camera_roll_follow_gain": 0.2,
-      "strict_roll_continuity": true,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -96,7 +98,7 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 250.0,
+      "tend": 500.0,
       "tstep": 0.1,
       "MIN_F2F_PX_MED": 3.0
     },

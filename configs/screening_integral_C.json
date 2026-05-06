@@ -1,4 +1,5 @@
 {
+  "_comment": "Screening trial C for the positive-edge trust-gate demo. Identical to screening_integral_B (omega 1-3 deg/s) except r_AG_G dominant component is moved from Z (shortest physical dim, highest inertia) to X (longest physical dim, lowest inertia). Rationale: screening B achieved a 131-KF Trusted window but the COM estimate never left the origin (comErr stuck at 0.356 m = ||r_AG_G||, meaning estimate near zero). Root cause hypothesis is that COM along the wrong physical axis weakened observability for INTEGRAL, whose real PLM-SVM mass asymmetry is along the long axis (X in the code convention = l = 5.0 m). r_AG_G=[0.35, 0.05, 0.05] magnitude 0.357 m, dominant along X. Everything else identical to B to isolate the axis variable. If this converges with monitor staying Healthy, we have a real positive-edge window.",
   "base_config": {
     "scene_blend_path": "assets/scene.blend",
     "hdri_path": "assets/starmap_2020_16k.exr",
@@ -60,15 +61,17 @@
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 887863346,
+      "seed": null,
       "illumination_seed": null,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
-        0.1,
+        0.35,
         0.05,
-        0.15
+        0.05
       ],
+      "omega_min_deg": 3.0,
+      "omega_max_deg": 5.0,
       "sigma_Rxy_aps3": 3.878509448876288e-06,
       "sigma_Rz_aps3": 3.393695767766752e-05,
       "sigma_omega": 1.626114521074242e-06,
@@ -82,12 +85,11 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
+      "R0_const": 50.0,
+      "tumbling_span_frac": 1.5,
       "pointing_offset_G": [0.8, 0.5, 0.2],
       "camera_pitchyaw_follow_gain": 0.55,
       "camera_roll_follow_gain": 0.2,
-      "strict_roll_continuity": true,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -96,7 +98,7 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 250.0,
+      "tend": 500.0,
       "tstep": 0.1,
       "MIN_F2F_PX_MED": 3.0
     },

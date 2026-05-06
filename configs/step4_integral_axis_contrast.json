@@ -1,4 +1,5 @@
 {
+  "_comment": "Step 4 controlled contrast pair for the slow-tumble COM-direction observability test. Derived from screening_integral_B, not screening_integral_C. Hold the RF_Integral model, 1-3 deg/s tumble regime, camera/render settings, CRO geometry, and both RNG seeds fixed; sweep only trajectory.r_AG_G. The two COM vectors have identical magnitude ||r_AG_G|| = 0.357071 m: Z-dominant control [0.05, 0.05, 0.35] and X-dominant hypothesis case [0.35, 0.05, 0.05]. Primary readout in SatSLAM: does X-dominant escape the screening-B stuck-at-origin pattern while Z-dominant reproduces it? Secondary readout: does the matched-seed axis flip also change late-run scale behavior.",
   "base_config": {
     "scene_blend_path": "assets/scene.blend",
     "hdri_path": "assets/starmap_2020_16k.exr",
@@ -55,20 +56,23 @@
       "blur_shutter_factor": 8.8,
       "blur_motion_factor": 8.8,
       "glare_threshold": 0.95,
-      "glare_size": 6
+      "glare_size": 6,
+      "render_frames": false
     },
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 887863346,
-      "illumination_seed": null,
+      "seed": 24042601,
+      "illumination_seed": 24042699,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
-        0.1,
         0.05,
-        0.15
+        0.05,
+        0.35
       ],
+      "omega_min_deg": 1.0,
+      "omega_max_deg": 3.0,
       "sigma_Rxy_aps3": 3.878509448876288e-06,
       "sigma_Rz_aps3": 3.393695767766752e-05,
       "sigma_omega": 1.626114521074242e-06,
@@ -82,12 +86,11 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
+      "R0_const": 50.0,
+      "tumbling_span_frac": 1.5,
       "pointing_offset_G": [0.8, 0.5, 0.2],
       "camera_pitchyaw_follow_gain": 0.55,
       "camera_roll_follow_gain": 0.2,
-      "strict_roll_continuity": true,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -96,7 +99,7 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 250.0,
+      "tend": 500.0,
       "tstep": 0.1,
       "MIN_F2F_PX_MED": 3.0
     },
@@ -106,10 +109,23 @@
     "save_segmentation": false,
     "save_obj_poses": false,
     "save_scene_plots": false,
-    "scene_plot_max_frames": 100,
+    "scene_plot_max_frames": 200,
     "frame_ids": null,
     "selected_model": "RF_Integral",
     "model_rotation_z_deg": 45.0
   },
-  "sweep_parameters": {}
+  "sweep_parameters": {
+    "trajectory.r_AG_G": [
+      [
+        0.05,
+        0.05,
+        0.35
+      ],
+      [
+        0.35,
+        0.05,
+        0.05
+      ]
+    ]
+  }
 }

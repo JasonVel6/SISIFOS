@@ -1,0 +1,72 @@
+{
+  "base_config": {
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
+    "objects": {
+      "Target": {
+        "name": "Target",
+        "blend_path": "assets/spacecraft_models_0_5.blend"
+      },
+      "Earth": {
+        "name": "Earth",
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
+      },
+      "Clouds": {
+        "name": "Clouds",
+        "blend_path": null,
+        "scale_factor": 10.0
+      },
+      "Atmo": {
+        "name": "Atmo",
+        "blend_path": null,
+        "scale_factor": 10.0
+      }
+    },
+    "camera": {
+      "focal_length": 170.0,
+      "sensor_width": 36.0,
+      "clip_start": 1e-05,
+      "clip_end": 5000000.0,
+      "resolution": [1024, 1024],
+      "lens_flare": 0.01,
+      "exposure_time_s": 0.016666666666666666
+    },
+    "render": {
+      "engine": "CYCLES",
+      "samples": 32,
+      "earth_dist_scale_factor": 0.001
+    },
+    "setup": {
+      "earth_mode": "off",
+      "stars_mode": "off",
+      "enable_blur": "off",
+      "enable_glare": "off",
+      "render_frames": true,
+      "generate_video": false
+    },
+    "trajectory_type": "sampling_trajectory",
+    "trajectory_sampling": {
+      "num_frames": 1,
+      "R_RPO": 200.0,
+      "R_LEO": 8000000.0,
+      "sun_az": 30.0,
+      "sun_el": 20.0
+    },
+    "save_depth": true,
+    "save_normals": false,
+    "save_optical_flow": false,
+    "save_segmentation": false,
+    "save_obj_poses": false,
+    "save_scene_plots": false,
+    "frame_ids": [0],
+    "selected_model": "RF_Hubble",
+    "model_scale_xyz": [1.0, 1.0, 1.0]
+  },
+  "sweep_parameters": {
+    "model_scale_xyz": [
+      [1.0, 1.0, 1.0],
+      [1.0, 0.2, 0.2]
+    ]
+  }
+}

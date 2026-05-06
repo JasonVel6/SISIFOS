@@ -40,7 +40,25 @@ class CameraConfig(BaseModel):
 
     # TODO auto-compute from R0_const, target size, and desired fill fraction
     focal_length: float = 400.0  # mm (matches Blender default)
-    sensor_width: float = 36.0  # mm (matches Blender default)
+    sensor_width: float = 36.0  # mm (matches Blender default; ignored if pixel_size_um is set)
+
+    # Real-camera optics. All optional; when None the legacy `sensor_width` /
+    # pinhole / no-blur path is preserved so existing configs behave the same.
+    # When `pixel_size_um` is set, sensor_width is derived as
+    #   pixel_size_um * resolution[0] / 1000  [mm]
+    # and `effective_sensor_width_mm` exposes the value actually pushed to
+    # Blender. `f_number` records the lens f/# and (with `dof_focus_distance_m`)
+    # enables Cycles depth-of-field. `psf_fwhm_px` is the optical PSF FWHM in
+    # pixels from aberrations only; the compositor adds a Gaussian blur whose
+    # sigma is the quadrature combination of this term and the diffraction
+    # FWHM at `wavelength_nm`.
+    pixel_size_um: float | None = None
+    f_number: float | None = None
+    dof_focus_distance_m: float | None = None
+    psf_fwhm_px: float | None = None
+    wavelength_nm: float = 550.0
+    sensor_fit: Literal["AUTO", "HORIZONTAL", "VERTICAL"] = "HORIZONTAL"
+
     clip_start: float = 0.00001  # m
     clip_end: float = 5000000.0  # m
     resolution: tuple[int, int] = (480, 480)
@@ -48,9 +66,46 @@ class CameraConfig(BaseModel):
     exposure_time_s: float = 1.0 / 60.0  # s
 
     @property
+    def effective_sensor_width_mm(self) -> float:
+        """Sensor width in mm; derived from pixel pitch when provided."""
+        if self.pixel_size_um is not None:
+            return float(self.pixel_size_um) * float(self.resolution[0]) / 1000.0
+        return float(self.sensor_width)
+
+    @property
     def focal_length_px(self) -> float:
         """Pixel focal length derived from mm focal length, sensor width, and resolution."""
-        return self.focal_length / self.sensor_width * self.resolution[0]
+        return self.focal_length / self.effective_sensor_width_mm * self.resolution[0]
+
+    @property
+    def diffraction_fwhm_px(self) -> float | None:
+        """Diffraction-limited PSF FWHM in pixels at `wavelength_nm` and `f_number`.
+
+        Uses FWHM = 1.028 * lambda * N (in linear units at the focal plane),
+        converted to pixels via `pixel_size_um` (or via sensor_width / res[0]).
+        Returns None if `f_number` is not set.
+        """
+        if self.f_number is None:
+            return None
+        if self.pixel_size_um is not None:
+            pixel_pitch_um = float(self.pixel_size_um)
+        else:
+            pixel_pitch_um = self.effective_sensor_width_mm * 1000.0 / float(self.resolution[0])
+        # 1.028 * lambda(nm) * N / pixel_pitch(nm) — convert pitch um -> nm
+        return 1.028 * float(self.wavelength_nm) * float(self.f_number) / (pixel_pitch_um * 1000.0)
+
+    @property
+    def combined_psf_fwhm_px(self) -> float | None:
+        """Combined optical PSF FWHM in pixels (quadrature of aberration + diffraction).
+
+        Returns None if neither `psf_fwhm_px` nor `f_number` is set.
+        """
+        aberr = float(self.psf_fwhm_px) if self.psf_fwhm_px is not None else None
+        diff = self.diffraction_fwhm_px
+        if aberr is None and diff is None:
+            return None
+        terms = [t for t in (aberr, diff) if t is not None]
+        return float(np.sqrt(sum(t * t for t in terms)))
 
 
 class RenderConfig(BaseModel):
@@ -75,6 +130,7 @@ class SetupConfig(BaseModel):
     blur_motion_factor: float = 0.8
     glare_threshold: float = 0.95
     glare_size: int = 6
+    render_frames: bool = True
     generate_video: bool = True
     video_fps: int = 10
 
@@ -87,6 +143,12 @@ class SamplingTrajectoryConfig(BaseModel):
     R_LEO: float = 8000000.0
     sun_az: float = 0.0
     sun_el: float = 0.0
+    # Optional fixed target orientation in inertial frame (wxyz). If set, every
+    # frame uses this quaternion in place of the per-frame random orientation.
+    # Use this when you want a deterministic broadside (or otherwise specific)
+    # view of the target across the whole sweep — e.g. for illumination
+    # experiments where shape contrast must be controlled.
+    fixed_q_IG_wxyz: tuple[float, float, float, float] | None = None
 
 
 class ConstantRotationConfig(BaseModel):
@@ -210,6 +272,15 @@ class TrajectoryConfig(BaseModel):
     # span_frac controls range variation: r_max = (1+span_frac)*R0_const.
     # 0.20 = conservative (low camera motion), 2.0 = matches inertial CRO (high camera motion).
     tumbling_span_frac: float = 0.20
+    # Tumbling angular-velocity magnitude bounds (deg/s). Only consumed by
+    # the unified generator's tumbling branch. `None` (default) preserves
+    # the generator's historical 3-5 deg/s override; set both to opt into
+    # a custom range (e.g. 1-3 deg/s for slower tumbling where full-coupling
+    # linearization drift is a concern). `init_tumbling`'s own documented
+    # default is 0.5-2 deg/s, so leaving these `None` does NOT fall back to
+    # that — it falls back to the unified generator's override.
+    omega_min_deg: float | None = None
+    omega_max_deg: float | None = None
     # Camera pointing offset — look at a point offset from geometric center G
     # in body frame. For tumbling targets, the tumble sweeps this offset through
     # inertial space, providing parallax diversity that breaks monocular VO
@@ -229,6 +300,11 @@ class TrajectoryConfig(BaseModel):
     # 0.0 = pure inertial look-at, 1.0 = full body-frame co-rotation.
     camera_pitchyaw_follow_gain: float = 0.0
     camera_roll_follow_gain: float = 0.0
+
+    # Raise on flagged roll discontinuities instead of warning. Default on so
+    # dataset generation fails before wasting render time on a bad trajectory;
+    # exploratory sweeps can opt out explicitly.
+    strict_roll_continuity: bool = True
 
     # Sun alignment
     SUN_ALIGN_ENABLE: bool = True
@@ -314,6 +390,11 @@ class SceneConfig(BaseModel):
     trajectory_filepath: str | None = ""
 
     model_rotation_A_model_euler: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+    # Non-uniform scale applied to the loaded RF_* root in Blender. Use this to
+    # render a model whose visible envelope (e.g. deployed solar panels) differs
+    # from the dense-bus dimensions used for inertia. Defaults to (1, 1, 1).
+    model_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0)
 
     @model_validator(mode="before")
     @classmethod

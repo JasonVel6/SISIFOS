@@ -75,6 +75,7 @@ def generate_trajectories(config: SceneConfig, output_dir: Path, config_prefix: 
             R_RPO=config.trajectory_sampling.R_RPO,
             sun_az=config.trajectory_sampling.sun_az,
             sun_el=config.trajectory_sampling.sun_el,
+            fixed_q_IG_wxyz=config.trajectory_sampling.fixed_q_IG_wxyz,
         )
 
     elif config.trajectory_type == "const_rotate":
@@ -262,6 +263,33 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
         )
 
 
+def prepare_image_list(config: SceneConfig, renders_base_dir: Path):
+    """Emit imgList.txt immediately from trajectory timestamps and expected filenames.
+
+    This keeps the dataset bookkeeping complete before rendering starts and also
+    supports GT-only / no-render runs used by the synthetic frontend.
+    """
+    logger = get_logger()
+    trajectory_file = renders_base_dir / "camera_traj.csv"
+    trajectory = read_camera_trajectory(str(trajectory_file))
+    n_frames = int(trajectory["N"])
+    frame_ids = config.frame_ids if config.frame_ids else list(range(n_frames))
+    N_digits = max(4, int(math.log10(n_frames)) + 1)
+
+    blur_enabled = str(config.setup.enable_blur).casefold() == "on"
+    image_filenames = []
+    for i in frame_ids:
+        stem = f"{str(i).zfill(N_digits)}"
+        if blur_enabled:
+            stem = f"{stem}_blurred"
+        image_filenames.append(f"frame_{stem}.png")
+
+    timestamps = [float(trajectory["timestamps"][fid]) for fid in frame_ids]
+    image_paths = [os.path.join("images", image_filename) for image_filename in image_filenames]
+    create_image_list(str(renders_base_dir), timestamps, image_paths)
+    logger.info("Prepared dataset bookkeeping before rendering for: %s", renders_base_dir)
+
+
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
 
@@ -298,7 +326,16 @@ def run_sweep(sweep_config: SweepConfig):
 
         agent_folders = generate_trajectories(config, output_dir, config_prefix=config_prefix)
         for agent_folder in agent_folders:
-            run_sisfos_with_config(config, Path(agent_folder))
+            prepare_image_list(config, Path(agent_folder))
+            if config.setup.render_frames:
+                run_sisfos_with_config(config, Path(agent_folder))
+            else:
+                logger.info(
+                    "Skipping frame rendering for %s because setup.render_frames=false. "
+                    "Trajectory and GT files were still generated in: %s",
+                    config_prefix,
+                    agent_folder,
+                )
 
 
 if __name__ == "__main__":

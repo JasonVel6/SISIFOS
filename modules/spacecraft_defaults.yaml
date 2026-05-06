@@ -41,3 +41,23 @@ RF_Target:
         x: 0.0
         y: 0.0
         z: 0.0
+RF_CubeSat12U:
+    # Canonical 12U CubeSat (dense bus only): 0.30 x 0.20 x 0.20 m, m = 24 kg.
+    # Long axis along Z (h=0.30) so X/Y are the high-inertia directions per
+    # the "X = highest inertial axis" convention in InertiaConfig.
+    # A square 0.20 x 0.20 cross-section makes Jx = Jy (axisymmetric) which is
+    # a tumbling-observability degeneracy; we use `custom` with a small Jx
+    # perturbation (+5%) to break the symmetry without changing the physical
+    # geometry. Edit the Jx number if you want stricter axisymmetry.
+    inertia:
+        inertia_type: custom
+        Jx: 0.273   # 1.05 * (1/12) * 24 * (0.20^2 + 0.30^2)
+        Jy: 0.260   # (1/12) * 24 * (0.20^2 + 0.30^2)
+        Jz: 0.160   # (1/12) * 24 * (0.20^2 + 0.20^2)
+    # The .blend asset is currently a unit cube (RF_Target); the visible 1.0 x
+    # 0.2 x 0.2 m envelope (deployed solar panels) is realised via SceneConfig
+    # `model_scale_xyz`, not by editing the .blend.
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0

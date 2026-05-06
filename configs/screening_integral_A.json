@@ -1,4 +1,5 @@
 {
+  "_comment": "Screening trial A for the positive-edge trust-gate demo. Derived from test_integral.json. Changes (vs baseline): r_AG_G magnitude 0.19->0.37 m concentrated along Z (long PLM-SVM axis); omega bounds explicitly 3-5 deg/s (matches unified-generator default but now config-driven); R0_const 30->50 m + tumbling_span_frac 0.2->1.5 for meaningful VO parallax; tend 250s->700s for ~580 KFs at 12-frame KF cadence. See docs/convergence-confidence-signal.md 'Deployability-gap investigation' for rationale.",
   "base_config": {
     "scene_blend_path": "assets/scene.blend",
     "hdri_path": "assets/starmap_2020_16k.exr",
@@ -60,15 +61,17 @@
     "trajectory_type": "trajectory_generator",
     "trajectory": {
       "path_mode": "tumbling",
-      "seed": 887863346,
+      "seed": null,
       "illumination_seed": null,
       "num_agents": 1,
       "num_mc": 1,
       "r_AG_G": [
-        0.1,
         0.05,
-        0.15
+        0.05,
+        0.35
       ],
+      "omega_min_deg": 3.0,
+      "omega_max_deg": 5.0,
       "sigma_Rxy_aps3": 3.878509448876288e-06,
       "sigma_Rz_aps3": 3.393695767766752e-05,
       "sigma_omega": 1.626114521074242e-06,
@@ -82,12 +85,11 @@
       "GYRO_BIAS_TAU_S": 3600.0,
       "ACCEL_BIAS_SIGMA_UG": 10.0,
       "ACCEL_BIAS_TAU_S": 3600.0,
-      "R0_const": 30.0,
-      "tumbling_span_frac": 0.2,
+      "R0_const": 50.0,
+      "tumbling_span_frac": 1.5,
       "pointing_offset_G": [0.8, 0.5, 0.2],
       "camera_pitchyaw_follow_gain": 0.55,
       "camera_roll_follow_gain": 0.2,
-      "strict_roll_continuity": true,
       "SUN_ALIGN_ENABLE": false,
       "SUN_ALIGN_CONE_DEG": 12.0,
       "SUN_ALIGN_JITTER_D": 4.0,
@@ -96,7 +98,7 @@
       "h_orbit": 550000.0,
       "R_earth": 6371000.0,
       "IMAGE_MAX_DT_S": 0.1,
-      "tend": 250.0,
+      "tend": 500.0,
       "tstep": 0.1,
       "MIN_F2F_PX_MED": 3.0
     },

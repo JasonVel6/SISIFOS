@@ -199,24 +199,48 @@ class BlenderRenderer:
         c_nodes.clear()
 
         rl = c_nodes.new("CompositorNodeRLayers")
-        rl.location = (-300, 0)
+        rl.location = (-600, 0)
 
         comp = c_nodes.new("CompositorNodeComposite")
-        comp.location = (300, 0)
+        comp.location = (600, 0)
+
+        # Build the chain RL -> [PSF blur] -> [Glare] -> Composite. PSF blur is
+        # placed before glare so the optical PSF is applied to the radiometric
+        # image before any saturation-driven post effects.
+        prev_socket = rl.outputs["Image"]
+
+        combined_fwhm_px = self.config.camera.combined_psf_fwhm_px
+        if combined_fwhm_px is not None and combined_fwhm_px > 0.0:
+            sigma_px = combined_fwhm_px / 2.355
+            kernel_radius = max(1, int(math.ceil(3.0 * sigma_px)))
+            blur = c_nodes.new("CompositorNodeBlur")
+            blur.filter_type = "GAUSS"
+            blur.use_relative = False
+            blur.size_x = kernel_radius
+            blur.size_y = kernel_radius
+            blur.use_extended_bounds = True
+            blur.location = (-300, 0)
+            c_links.new(prev_socket, blur.inputs["Image"])
+            prev_socket = blur.outputs["Image"]
+            self._log_info(
+                "PSF compositor blur enabled: combined FWHM=%.3f px, sigma=%.3f px, kernel_radius=%d px",
+                combined_fwhm_px,
+                sigma_px,
+                kernel_radius,
+            )
 
         glare = c_nodes.new("CompositorNodeGlare")
+        glare.location = (0, 0)
         if str(self.config.setup.enable_glare).casefold() == "on":
-            glare.location = (0, 0)
             glare.glare_type = "FOG_GLOW"
             glare.quality = "HIGH"
             glare.threshold = self.config.setup.glare_threshold
             glare.mix = 0.5
             glare.size = self.config.setup.glare_size
+            c_links.new(prev_socket, glare.inputs["Image"])
+            prev_socket = glare.outputs["Image"]
 
-            c_links.new(rl.outputs["Image"], glare.inputs["Image"])
-            c_links.new(glare.outputs["Image"], comp.inputs["Image"])
-        else:
-            c_links.new(rl.outputs["Image"], comp.inputs["Image"])
+        c_links.new(prev_socket, comp.inputs["Image"])
         vb = self.scene.vision_blender
         vb.bool_save_depth = self.config.save_depth
         vb.bool_save_normals = self.config.save_normals
@@ -244,9 +268,66 @@ class BlenderRenderer:
         cam = bpy.data.objects.get("Camera")
         cam.rotation_mode = "QUATERNION"
         cam.data.lens = self.config.camera.focal_length
-        cam.data.sensor_width = self.config.camera.sensor_width
+        sensor_w_mm = self.config.camera.effective_sensor_width_mm
+        cam.data.sensor_width = sensor_w_mm
+        cam.data.sensor_fit = self.config.camera.sensor_fit
         cam.data.clip_start = self.config.camera.clip_start
         cam.data.clip_end = self.config.camera.clip_end
+
+        # Depth-of-field. Both `f_number` and `dof_focus_distance_m` must be
+        # provided for Cycles to actually render defocus; setting just one is
+        # ambiguous so we keep DoF off and record the f/# only via the camera
+        # data block for downstream provenance.
+        if self.config.camera.f_number is not None:
+            cam.data.dof.aperture_fstop = float(self.config.camera.f_number)
+            if self.config.camera.dof_focus_distance_m is not None:
+                cam.data.dof.use_dof = True
+                cam.data.dof.focus_distance = float(self.config.camera.dof_focus_distance_m)
+                self._log_info(
+                    "Cycles DoF enabled: aperture_fstop=%.3f, focus_distance=%.3f m",
+                    cam.data.dof.aperture_fstop,
+                    cam.data.dof.focus_distance,
+                )
+            else:
+                cam.data.dof.use_dof = False
+                self._log_info(
+                    "f_number=%.3f recorded on camera; DoF rendering disabled "
+                    "(set camera.dof_focus_distance_m to enable Cycles defocus).",
+                    cam.data.dof.aperture_fstop,
+                )
+
+        # Derived camera metrics for sanity-checking the spec.
+        res_x, res_y = self.config.camera.resolution
+        focal_mm = self.config.camera.focal_length
+        fov_x_deg = math.degrees(2.0 * math.atan((sensor_w_mm * 0.5) / focal_mm))
+        sensor_h_mm = sensor_w_mm * res_y / res_x
+        fov_y_deg = math.degrees(2.0 * math.atan((sensor_h_mm * 0.5) / focal_mm))
+        sensor_diag_mm = math.sqrt(sensor_w_mm**2 + sensor_h_mm**2)
+        fov_diag_deg = math.degrees(2.0 * math.atan((sensor_diag_mm * 0.5) / focal_mm))
+        ifov_per_px_urad = (sensor_w_mm / focal_mm / res_x) * 1e6
+        diff_fwhm_px = self.config.camera.diffraction_fwhm_px
+        aberr_fwhm_px = self.config.camera.psf_fwhm_px
+        combined_fwhm_px = self.config.camera.combined_psf_fwhm_px
+        self._log_info(
+            "Camera optics summary: focal=%.3f mm | sensor=%.3f x %.3f mm (diag %.3f mm) "
+            "| res=%dx%d | FOV(h/v/diag)=%.3f / %.3f / %.3f deg | IFOV=%.3f urad/px",
+            focal_mm,
+            sensor_w_mm,
+            sensor_h_mm,
+            sensor_diag_mm,
+            res_x,
+            res_y,
+            fov_x_deg,
+            fov_y_deg,
+            fov_diag_deg,
+            ifov_per_px_urad,
+        )
+        self._log_info(
+            "Camera PSF summary: aberration FWHM=%s px | diffraction FWHM=%s px | combined FWHM=%s px",
+            f"{aberr_fwhm_px:.3f}" if aberr_fwhm_px is not None else "n/a",
+            f"{diff_fwhm_px:.3f}" if diff_fwhm_px is not None else "n/a",
+            f"{combined_fwhm_px:.3f}" if combined_fwhm_px is not None else "n/a",
+        )
 
         earth = bpy.data.objects["Earth"]
         clouds = bpy.data.objects["Clouds"]
@@ -267,15 +348,29 @@ class BlenderRenderer:
         return self._target_blend_object_names
 
     def _remove_existing_spacecraft(self) -> None:
-        """Remove RF_* roots (and descendants) already present in the current scene."""
-        roots = [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
-        if not roots:
-            return
+        """Remove RF_* roots (and descendants) and any orphan spacecraft debris.
+
+        scene.blend can ship with stale spacecraft meshes parented under the
+        bare `Target` empty (e.g. INTEGRAL_polySurface25_SPI from a prior
+        session). Those meshes sit at the world origin and overflow the camera
+        FOV at typical RPO ranges, masking distance-driven scaling. We clean
+        them out here before any new spacecraft is appended.
+        """
         to_remove = set()
-        for root in roots:
-            to_remove.add(root)
-            to_remove.update(root.children_recursive)
-        remove_objects_from_scene(list(to_remove))
+
+        for o in bpy.data.objects:
+            if o.parent is None and o.name.startswith("RF_"):
+                to_remove.add(o)
+                to_remove.update(o.children_recursive)
+
+        target_empty = bpy.data.objects.get("Target")
+        if target_empty is not None:
+            for child in list(target_empty.children_recursive):
+                to_remove.add(child)
+
+        if to_remove:
+            remove_objects_from_scene(list(to_remove))
+            self._log_info("Removed %d stale spacecraft objects from scene", len(to_remove))
 
     def get_models_in_blend(self) -> list[str]:
         """Inspect the blend file and return RF_* root names to render (without loading)."""
@@ -323,6 +418,20 @@ class BlenderRenderer:
             raise RuntimeError(
                 f"Expected exactly one loaded spacecraft root '{model_name}', found: "
                 f"{[o.name for o in rf_roots_in_scene]}"
+            )
+
+        scale_xyz = tuple(float(s) for s in self.config.model_scale_xyz)
+        if scale_xyz != (1.0, 1.0, 1.0):
+            if any(s <= 0.0 for s in scale_xyz):
+                raise ValueError(
+                    f"model_scale_xyz must be strictly positive, got {scale_xyz}"
+                )
+            root.scale = scale_xyz
+            bpy.context.view_layer.update()
+            self._log_info(
+                "Applied model_scale_xyz to '%s': (%.4f, %.4f, %.4f)",
+                model_name,
+                *scale_xyz,
             )
 
         self._log_info("Loaded spacecraft '%s' (%d objects)", model_name, 1 + len(list(root.children_recursive)))

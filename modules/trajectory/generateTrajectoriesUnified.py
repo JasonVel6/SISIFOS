@@ -81,7 +81,9 @@ from modules.trajectory.trajectory_math import (
     rodrigues,
     sk,
     so3_log_vec,
+    so3_log_vec_continuous,
     solve_ne_equation,
+    validate_lookat_roll_continuity,
 )
 
 # ---------------- Paths ----------------
@@ -91,11 +93,19 @@ DEFAULT_OUTPUT_BASE = os.path.join(SISIFOS_ROOT, "renders")
 logger = get_logger()
 
 
-def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain):
-    """Blend inertial look-at and body-follow attitudes in the camera frame."""
-    delta_cam = so3_log_vec(R_IC_lookat.T @ R_IC_follow)
+def _blend_camera_attitude(R_IC_lookat, R_IC_follow, pitchyaw_gain, roll_gain,
+                           prev_delta=None):
+    """Blend inertial look-at and body-follow attitudes in the camera frame.
+
+    Returns (R_blend, delta_cam). `delta_cam` is the so3 log of the relative
+    rotation between lookat and follow, unwrapped to stay continuous with
+    `prev_delta`. Feeding it back in on the next call prevents the log
+    branch-cut at θ=π from turning a smooth SO(3) path into a pure-LOS twist
+    spike (the 72° roll discontinuity the guard catches in hybrid mode).
+    """
+    delta_cam = so3_log_vec_continuous(R_IC_lookat.T @ R_IC_follow, prev_delta)
     gain_vec = np.array([pitchyaw_gain, pitchyaw_gain, roll_gain], dtype=float)
-    return R_IC_lookat @ expm(sk(gain_vec * delta_cam))
+    return R_IC_lookat @ expm(sk(gain_vec * delta_cam)), delta_cam
 
 
 # ============================================================================
@@ -173,10 +183,28 @@ def generate_trajectories_dynamical(
         )
     elif config.rotMode_Gframe == "3":
         logger.info("  Tumbling mode (CRO trajectory + target tumbling)")
-        # Use faster tumbling (3-5 deg/s) for better inertia observability.
-        # This is within the conservative design envelope (~5 deg/s upper bound).
-        # Slower rates (0.5-2 deg/s default) have near-zero omega_dot, making
-        # inertia poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0.
+        # Default tumbling is 3-5 deg/s for strong inertia observability
+        # (within the conservative design envelope ~5 deg/s upper bound).
+        # Slower rates (0.5-2 deg/s) have small omega_dot, making inertia
+        # poorly observable from Euler's equation I·ω̇ + ω×(I·ω) = 0, but
+        # reduce per-KF excitation of linearization drift in downstream
+        # smoother consumers. Config can override both bounds via
+        # omega_min_deg / omega_max_deg; `None` preserves the 3-5 default.
+        tumbling_omega_min = (
+            config.omega_min_deg if config.omega_min_deg is not None else 3.0
+        )
+        tumbling_omega_max = (
+            config.omega_max_deg if config.omega_max_deg is not None else 5.0
+        )
+        if tumbling_omega_min > tumbling_omega_max:
+            raise ValueError(
+                f"omega_min_deg ({tumbling_omega_min}) must be <= "
+                f"omega_max_deg ({tumbling_omega_max})"
+            )
+        logger.info(
+            f"    tumbling omega bounds: {tumbling_omega_min:.2f}-"
+            f"{tumbling_omega_max:.2f} deg/s"
+        )
         x_0, y_0, z_0, xdot_0, ydot_0, zdot_0, omega_GI_G_0, _ = init_tumbling(
             num_mc=config.num_mc,
             num_agents=config.num_agents,
@@ -187,8 +215,8 @@ def generate_trajectories_dynamical(
             px_min=config.MIN_F2F_PX_MED,
             rho_max=0.95,
             R0_const=config.R0_const,
-            omega_min_deg=3.0,
-            omega_max_deg=5.0,
+            omega_min_deg=tumbling_omega_min,
+            omega_max_deg=tumbling_omega_max,
             J=config.inertia_config.J,
             min_asymmetry_component=0.4,
             span_frac=config.tumbling_span_frac,
@@ -479,6 +507,9 @@ def generate_trajectories_dynamical(
         # Continuous look-at per agent
         x_right_prev = [None] * config.num_agents
         x_right_prev_follow = [None] * config.num_agents
+        f_prev_lookat = [None] * config.num_agents
+        f_prev_follow = [None] * config.num_agents
+        prev_blend_delta = [None] * config.num_agents
         q_IC_prev = [None] * config.num_agents
 
         # Pointing offset: body-frame offset from geometric center G
@@ -554,9 +585,9 @@ def generate_trajectories_dynamical(
                     fwd_I=lookat_vec_I,
                     world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev[agent_idx],
-                    cos_thr=0.9995,
-                    sin_thr=0.03,
+                    f_prev=f_prev_lookat[agent_idx],
                 )
+                f_prev_lookat[agent_idx] = lookat_vec_I
 
                 # Express the same off-center look-at vector in the target body frame
                 # so the follow attitude co-rotates about the selected body point.
@@ -565,20 +596,23 @@ def generate_trajectories_dynamical(
                     fwd_I=fwd_G,
                     world_up_I=np.array([0.0, 0.0, 1.0]),
                     x_prev=x_right_prev_follow[agent_idx],
-                    cos_thr=0.9995,
-                    sin_thr=0.03,
+                    f_prev=f_prev_follow[agent_idx],
                 )
+                f_prev_follow[agent_idx] = fwd_G
                 R_IC_follow = R_IG[mc_trial, j] @ R_GC_follow
 
                 if lookat_mode == "G":
                     R_IC[mc_trial, agent_idx, j] = R_IC_follow
                 elif lookat_mode == "hybrid":
-                    R_IC[mc_trial, agent_idx, j] = _blend_camera_attitude(
+                    R_blend, delta_cam_new = _blend_camera_attitude(
                         R_IC_lookat=R_IC_lookat,
                         R_IC_follow=R_IC_follow,
                         pitchyaw_gain=pitchyaw_follow_gain,
                         roll_gain=roll_follow_gain,
+                        prev_delta=prev_blend_delta[agent_idx],
                     )
+                    R_IC[mc_trial, agent_idx, j] = R_blend
+                    prev_blend_delta[agent_idx] = delta_cam_new
                 else:
                     R_IC[mc_trial, agent_idx, j] = R_IC_lookat
 
@@ -596,6 +630,37 @@ def generate_trajectories_dynamical(
         for agent_idx in range(config.num_agents):
             enforce_quat_series_continuity(q_GC[mc_trial, agent_idx, :])
             enforce_quat_series_continuity(q_IC[mc_trial, agent_idx, :])
+
+        # Roll-discontinuity guardrail: large full-attitude step paired with a small
+        # boresight step is a line-of-sight twist spike that the parallel-transport
+        # look-at was intended to prevent. Flag any survivors before writing outputs;
+        # if strict mode is on, raise instead of rendering a bad dataset.
+        total_flagged = 0
+        for agent_idx in range(config.num_agents):
+            flagged_GC = validate_lookat_roll_continuity(
+                q_GC[mc_trial, agent_idx, :], R_GC[mc_trial, agent_idx, :]
+            )
+            flagged_IC = validate_lookat_roll_continuity(
+                q_IC[mc_trial, agent_idx, :], R_IC[mc_trial, agent_idx, :]
+            )
+            for (k, dq, db) in flagged_GC:
+                logger.warning(
+                    f"[roll-guard] mc={mc_trial} agent={agent_idx} frame={k} "
+                    f"q_GC step: delta_q={dq:.2f} deg, delta_boresight={db:.2f} deg"
+                )
+            for (k, dq, db) in flagged_IC:
+                logger.warning(
+                    f"[roll-guard] mc={mc_trial} agent={agent_idx} frame={k} "
+                    f"q_IC step: delta_q={dq:.2f} deg, delta_boresight={db:.2f} deg"
+                )
+            total_flagged += len(flagged_GC) + len(flagged_IC)
+
+        if total_flagged > 0 and getattr(config, "strict_roll_continuity", False):
+            raise RuntimeError(
+                f"[roll-guard] mc={mc_trial}: {total_flagged} roll-discontinuity "
+                f"frame(s) flagged (see warnings above). strict_roll_continuity "
+                f"is on; aborting before writing outputs."
+            )
 
         """
         Angular velocity computation - CONSISTENT with dynamics

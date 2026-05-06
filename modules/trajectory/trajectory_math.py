@@ -326,6 +326,38 @@ def so3_log_vec(R):
     return (theta / (2.0 * math.sin(theta))) * vee(R - R.T)
 
 
+def so3_log_vec_continuous(R, prev_logvec=None, eps=1e-9):
+    # so3_log_vec(R), with the branch re-picked to stay continuous w.r.t. prev.
+    #
+    # For any rotation R, the set of valid so3 log representations is
+    # {(θ + 2πk)·u : k ∈ ℤ} where (θ, u) is the canonical log in [0, π].
+    # The canonical choice jumps by 2π whenever θ crosses π (axis flips) or
+    # when R winds through identity (θ returns to 0). Scaled by a per-axis
+    # blend gain and fed into expm, either jump produces the line-of-sight
+    # twist spike the roll-guard catches. Here we pick the integer k whose
+    # (θ + 2πk)·u lands closest to prev, including the degenerate R ≈ I case
+    # where any axis is valid and we follow prev's direction.
+    v = so3_log_vec(R)
+    if prev_logvec is None:
+        return v
+    n_v = float(np.linalg.norm(v))
+    n_p = float(np.linalg.norm(prev_logvec))
+    two_pi = 2.0 * math.pi
+    if n_v > eps:
+        u = v / n_v
+        # Along axis u, valid logs differ by multiples of 2π.
+        # Optimal continuous value: (θ + 2π k) where k = round((prev·u − θ)/2π).
+        k = round(float(np.dot(prev_logvec, u) - n_v) / two_pi)
+        return (n_v + two_pi * k) * u
+    # R ≈ identity: any axis is valid. Keep prev's direction and snap to the
+    # nearest multiple of 2π along it (preserves winding across full cycles).
+    if n_p > eps:
+        u = prev_logvec / n_p
+        k = round(n_p / two_pi)
+        return u * two_pi * k
+    return v
+
+
 def rodrigues(u, k, ang):
     k = k / (np.linalg.norm(k) + 1e-12)
     u_par = (u @ k) * k
@@ -352,30 +384,92 @@ def _seed_right(f):
     return x / (np.linalg.norm(x) + 1e-12)
 
 
-def _lookat_continuous(fwd_I, world_up_I, x_prev=None, cos_thr=0.9995, sin_thr=0.03, eps=1e-8):
+def _parallel_transport_right(x_prev, f_prev, f_curr, eps=1e-12):
+    # Rotate x_prev by the minimal rotation mapping f_prev -> f_curr.
+    # Returns a unit vector orthogonal to f_curr, or None if the transport
+    # is singular (antipodal or numerically degenerate).
+    fp = np.asarray(f_prev, dtype=float)
+    fc = np.asarray(f_curr, dtype=float)
+    fp = fp / (np.linalg.norm(fp) + 1e-12)
+    fc = fc / (np.linalg.norm(fc) + 1e-12)
+    c = float(np.clip(np.dot(fp, fc), -1.0, 1.0))
+    if c < -1.0 + 1e-8:
+        return None
+    x_in = np.asarray(x_prev, dtype=float)
+    if c > 1.0 - 1e-12:
+        x = x_in - fc * float(np.dot(fc, x_in))
+    else:
+        v = np.cross(fp, fc)
+        s = float(np.linalg.norm(v))
+        if s < eps:
+            return None
+        k = v / s
+        # Rodrigues rotation of x_in by angle theta (sin=s, cos=c) around k:
+        #   x' = x*c + (k × x)*s + k*(k·x)*(1-c)
+        x = x_in * c + np.cross(k, x_in) * s + k * float(np.dot(k, x_in)) * (1.0 - c)
+        x = x - fc * float(np.dot(fc, x))
+    n = float(np.linalg.norm(x))
+    if n < eps:
+        return None
+    return x / n
+
+
+def _lookat_continuous(fwd_I, world_up_I, x_prev=None, f_prev=None, eps=1e-8, **_unused):
+    # Build R from a look-at forward vector with parallel-transport roll continuity.
+    #
+    # When (x_prev, f_prev) are supplied, the previous right-axis is rotated by
+    # the minimal rotation mapping f_prev -> fwd_I. This gives the smallest roll
+    # change compatible with the new boresight and avoids the line-of-sight-twist
+    # jumps that the old world-up branch selector could introduce at sign flips
+    # of (world_up × f).
+    #
+    # world_up_I is only a weak bias: used for the initial frame (x_prev is None)
+    # or as a fallback when parallel transport is singular. ``**_unused`` swallows
+    # legacy ``cos_thr``/``sin_thr`` kwargs from older call sites.
     f = fwd_I / (np.linalg.norm(fwd_I) + 1e-12)
 
-    use_prev = x_prev is not None
-    x_proj = None
-    n_proj = 0.0
+    x = None
+    if x_prev is not None and f_prev is not None:
+        x = _parallel_transport_right(x_prev, f_prev, f)
 
-    if use_prev:
-        x_proj = x_prev - f * (f @ x_prev)
-        n_proj = np.linalg.norm(x_proj)
-
-    x_up = np.cross(world_up_I, f)
-    n_up = np.linalg.norm(x_up)
-
-    if use_prev and n_proj > eps:
-        x = x_proj / n_proj
-    elif n_up > eps:
-        x = x_up / n_up
-    else:
-        x = _seed_right(f)
+    if x is None:
+        x_up = np.cross(world_up_I, f)
+        n_up = np.linalg.norm(x_up)
+        if n_up > eps:
+            x = x_up / n_up
+        else:
+            x = _seed_right(f)
 
     y = np.cross(f, x)
     R = np.column_stack((x, y, f))
     return R, x
+
+
+def validate_lookat_roll_continuity(q_series, R_series, delta_q_thr_deg=15.0, delta_b_thr_deg=5.0):
+    # Flag frame indices with a large full-attitude step but a small boresight step.
+    # A non-empty result indicates a line-of-sight twist discontinuity (roll spike)
+    # that survived into the exported attitude.
+    # Returns a list of (k, delta_q_deg, delta_boresight_deg) for flagged transitions.
+    flagged = []
+    q = np.asarray(q_series)
+    R = np.asarray(R_series)
+    if q.shape[0] < 2:
+        return flagged
+    for k in range(1, q.shape[0]):
+        q0 = q[k - 1] / (np.linalg.norm(q[k - 1]) + 1e-12)
+        q1 = q[k] / (np.linalg.norm(q[k]) + 1e-12)
+        dot = min(1.0, max(-1.0, abs(float(np.dot(q0, q1)))))
+        dq_deg = math.degrees(2.0 * math.acos(dot))
+
+        b0 = R[k - 1, :, 2]
+        b1 = R[k, :, 2]
+        denom = float(np.linalg.norm(b0) * np.linalg.norm(b1)) + 1e-12
+        cb = min(1.0, max(-1.0, float(np.dot(b0, b1)) / denom))
+        db_deg = math.degrees(math.acos(cb))
+
+        if dq_deg > delta_q_thr_deg and db_deg < delta_b_thr_deg:
+            flagged.append((k, dq_deg, db_deg))
+    return flagged
 
 
 def _quat_hemi_continuous(q, q_prev):
