@@ -27,6 +27,93 @@ RF_Hubble:
         x: 0.0
         y: 0.0
         z: 0.0
+RF_Bepi-mcs:
+    # BepiColombo Mercury Composite Spacecraft, launch mass ~4100 kg. PARAMETRIC,
+    # MESH-INFORMED: ratios set from the exported mesh (bepi.obj) uniform-areal-
+    # density (thin-shell) inertia, which gave principal moments ~[0.49, 6.57,
+    # 6.77] -> strongly PROLATE, hi/lo ~13.8, near-axisymmetric (two high axes
+    # within 3%), spin/low axis = the mesh's long (solar-array span) axis. We
+    # encode a clean tensor at hi/lo ~13.6 and widen the two high axes to ~10%
+    # apart (the uniform-shell model understates real bus/MMO/sunshield mass
+    # asymmetry, and a wider split keeps both high axes observable). Absolute
+    # scale is arbitrary (torque-free tumble depends only on ratios). The strong
+    # long-axis case -- cf. Hubble's mild 2.1x null-space finding at 13x.
+    inertia:
+        inertia_type: custom
+        Jx: 38000.0   # high  (perp to array span)
+        Jy: 34000.0   # high  (perp to array span)
+        Jz: 2800.0    # low   (along solar-array span = natural spin axis)
+    # TODO verify with a test render (as Hubble/Integral did): set so the mesh's
+    # solar-array span axis aligns with the body low-inertia (Jz) spin axis. The
+    # OBJ-export axis remap makes the rotation unreliable to derive analytically.
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+RF_IBEX_final:
+    # IBEX (Interstellar Boundary Explorer): small sun-pointing SPINNER, ~107 kg,
+    # octagonal drum ~0.95 m across x ~0.5 m tall (eoPortal: spins about its
+    # MAJOR / max-inertia axis = OBLATE). PARAMETRIC, MESH-INFORMED: ibex.obj is
+    # a closed compact body so the uniform-density SOLID (voxel-fill, ~67k voxels
+    # -- the one reliable solid here) is trustworthy and gave hi/lo ~1.49 oblate.
+    # Encoded as a cylinder whose axial (Z) inertia is the max: r=0.475,h=0.50
+    # gives oblate ~1.46, matching the mesh. The disk/spinner archetype that
+    # complements the prolate cases; axisymmetric transverse = a mild degeneracy.
+    inertia:
+        inertia_type: cylinder
+        m: 107.0
+        r: 0.475
+        h: 0.50
+    # TODO verify with a test render: set so the mesh's spin/symmetry axis aligns
+    # with body Z (the cylinder axial / max-inertia axis).
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+RF_Juice:
+    # ESA JUICE: large bus + very large cross-shaped solar arrays (~85 m^2) plus
+    # a 10.6 m magnetometer boom. PARAMETRIC, MESH-INFORMED: ratios from juice.obj
+    # uniform-areal-density (thin-shell) inertia, principal moments ~[0.97, 14.29,
+    # 14.84] -> strongly PROLATE, hi/lo ~15.3, near-axisymmetric (two high axes
+    # within 4%), spin/low axis = the mesh's long (array-span) axis. Encoded at
+    # hi/lo ~15.3 with the two high axes widened to ~12% apart (real bus + boom +
+    # RWI asymmetry; keeps them observable). Inertia archetype is close to Bepi's
+    # (both extreme prolate) -- they differ mainly in FRONTEND geometry, which is
+    # the reason both were chosen. Absolute scale arbitrary (ratios drive tumble).
+    inertia:
+        inertia_type: custom
+        Jx: 46000.0   # high  (perp to array span)
+        Jy: 41000.0   # high  (perp to array span; reduced by the mag boom)
+        Jz: 3000.0    # low   (along solar-array span = natural spin axis)
+    # TODO verify with a test render: set so the mesh's solar-array span axis
+    # aligns with the body low-inertia (Jz) spin axis. The OBJ-export axis remap
+    # makes the rotation unreliable to derive analytically.
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+RF_Venus-express:
+    # ESA Venus Express: small box bus (~1.7 m) with two solar wings (long axis).
+    # PARAMETRIC, MESH-INFORMED: ratios computed from the rendered blend mesh
+    # (RF_Venus-express, render-scale extent 5.0 x 2.0 x 1.6 m) uniform-areal-
+    # density (thin-shell) inertia over 135914 triangles -> principal moments
+    # ~[5.79, 32.10, 33.36] (lo, mid, hi). PROLATE, hi/lo ~5.76, two high axes
+    # within ~4% (near-axisymmetric); spin/low axis = the mesh's long (solar-
+    # array span) axis. Milder anisotropy than Bepi/Juice (~13-15x) -> an
+    # intermediate-anisotropy archetype distinct from the existing models.
+    # Absolute scale is arbitrary (torque-free tumble depends only on ratios);
+    # encoded x1000 to match the other custom entries' magnitudes.
+    inertia:
+        inertia_type: custom
+        Jx: 33360.0   # high  (perp to array span)
+        Jy: 32100.0   # high  (perp to array span)
+        Jz: 5790.0    # low   (along solar-array span = natural spin axis)
+    # Left 0,0,0 (tumble looks natural, as with Bepi/Juice/IBEX); precise
+    # inertia-axis-to-mesh alignment is a TODO verified by inspect render.
+    model_rotation_euler:
+        x: 0.0
+        y: 0.0
+        z: 0.0
 RF_Target:
     # Inertia (ESA Target satellite, box approximation)
     # Dimensions: 1.0 x 1.0 x 1.0 m, mass ~100 kg
