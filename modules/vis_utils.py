@@ -33,23 +33,34 @@ def _depth_vis_and_mask_from_rrpo(
     depth: np.ndarray,
     target_dist: float,
     cmap_name: str = "magma",
+    near_window_frac: float = 0.05,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Returns:
       rgb: HxWx3 float32 in [0,1]
-      mask: HxW bool (True = near object)
+      mask: HxW bool — True for pixels whose depth is within
+            ±near_window_frac * target_dist of target_dist (i.e., on the
+            target body at the expected viewing distance).
     """
-    # TODO JD we should see if this is proper
     valid = np.isfinite(depth) & (depth > 0)
 
-    dmin = float(np.min(depth[valid]))
-    dmax = float(np.max(depth[valid]))
+    if target_dist is not None and target_dist > 0:
+        tol = float(near_window_frac) * float(target_dist)
+        near = valid & (np.abs(depth - float(target_dist)) <= tol)
+    else:
+        near = valid
+
+    if valid.any():
+        dmin = float(np.min(depth[valid]))
+        dmax = float(np.max(depth[valid]))
+    else:
+        dmin, dmax = 0.0, 1.0
     denom = (dmax - dmin) if (dmax > dmin) else 1.0
 
     x = (depth - dmin) / denom
     x = np.clip(x, 0.0, 1.0)
 
-    cmap = mpl.colormaps.get_cmap(cmap_name)  # or mpl.colormaps[cmap_name]
+    cmap = mpl.colormaps.get_cmap(cmap_name)
     rgb = cmap(x)[..., :3].astype(np.float32)
-    rgb[~valid] = 0.0  # background black
-    return rgb, valid
+    rgb[~valid] = 0.0
+    return rgb, near

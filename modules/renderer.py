@@ -82,10 +82,68 @@ class BlenderRenderer:
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
 
         self.scene = bpy.context.scene
+        # Use a linear/Standard view transform instead of scene.blend's baked-in
+        # AgX. AgX is a cinematic film curve that crushes midtones and rolls off
+        # highlights — wrong for a radiometric / feature-extraction render, which
+        # should reflect the near-linear sensor response. (2026-06-04)
+        self.scene.view_settings.view_transform = "Standard"
         self.world = self.scene.world
         self.scene.render.engine = self.config.render.engine
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
+
+        # Centered render-border crop. Cycles renders only the (crop_w x crop_h)
+        # window centred on the principal point; the output PNG is exactly
+        # (crop_w, crop_h). Camera intrinsics stay full-frame; the crop origin
+        # is exposed via render_crop_info() for downstream coordinate mapping.
+        crop_px = self.config.render.crop_to_border_px
+        full_w, full_h = self.config.camera.resolution
+        self._crop_origin_px = (0, 0)
+        self._crop_size_px = (full_w, full_h)
+        if crop_px is not None:
+            crop_w, crop_h = int(crop_px[0]), int(crop_px[1])
+            if crop_w <= 0 or crop_h <= 0 or crop_w > full_w or crop_h > full_h:
+                raise ValueError(
+                    f"crop_to_border_px {crop_px} must be positive and fit within "
+                    f"resolution {self.config.camera.resolution}"
+                )
+            cx, cy = full_w / 2.0, full_h / 2.0
+            # Nudge the max bounds by 0.25 pixels to defeat Blender's float-to-pixel
+            # truncation: when border_max*W lands exactly on an integer pixel boundary,
+            # IEEE 754 representation can place the result a fraction below the integer
+            # and Blender drops the last column/row (we observed 255 px output for a
+            # 256 px request at 5472 wide). 0.25 px is comfortably below the next pixel
+            # boundary regardless of whether Blender uses floor/ceil/round internally.
+            x0 = (cx - crop_w / 2.0) / full_w
+            x1 = (cx + crop_w / 2.0 + 0.25) / full_w
+            # Blender's border y axis is bottom-origin; vertical centring is
+            # symmetric, so the same expression works regardless.
+            y0 = (cy - crop_h / 2.0) / full_h
+            y1 = (cy + crop_h / 2.0 + 0.25) / full_h
+            self.scene.render.use_border = True
+            self.scene.render.use_crop_to_border = True
+            self.scene.render.border_min_x = x0
+            self.scene.render.border_max_x = x1
+            self.scene.render.border_min_y = y0
+            self.scene.render.border_max_y = y1
+            self._crop_origin_px = (int(round((cx - crop_w / 2.0))), int(round((cy - crop_h / 2.0))))
+            self._crop_size_px = (crop_w, crop_h)
+            self._log_info(
+                "Render crop enabled: %dx%d centred at (%d, %d) in full %dx%d frame; "
+                "border=(x:[%.4f, %.4f], y:[%.4f, %.4f])",
+                crop_w, crop_h, int(cx), int(cy), full_w, full_h, x0, x1, y0, y1,
+            )
+        else:
+            self.scene.render.use_border = False
+            self.scene.render.use_crop_to_border = False
+
+        # Expose crop window to the GT addon via scene custom properties so its
+        # depth/normal/seg/optical-flow outputs can be sliced to match the saved
+        # RGB crop instead of dumping full-sensor (5472x3648) annotations.
+        self.scene["_sisifos_crop_origin_x"] = int(self._crop_origin_px[0])
+        self.scene["_sisifos_crop_origin_y"] = int(self._crop_origin_px[1])
+        self.scene["_sisifos_crop_size_x"] = int(self._crop_size_px[0])
+        self.scene["_sisifos_crop_size_y"] = int(self._crop_size_px[1])
 
         # Enable GPU rendering using the best available Cycles backend.
         if self.config.render.engine == "CYCLES":
@@ -440,6 +498,36 @@ class BlenderRenderer:
     def get_all_models(self) -> list[bpy.types.Object]:
         """Get all RF_* models."""
         return [o for o in bpy.data.objects if o.parent is None and o.name.startswith("RF_")]
+
+    def render_crop_info(self) -> dict:
+        """Crop + intrinsics metadata for downstream pixel-coordinate mapping.
+
+        Returns a dict that fully describes how the cropped output relates to
+        the full-frame camera model: full-frame resolution, crop origin/size in
+        full-frame pixels, and full-frame intrinsics (focal length in mm and
+        pixels). When no crop is active, crop_origin_px = (0, 0) and
+        crop_size_px = full-frame resolution.
+        """
+        full_w, full_h = self.config.camera.resolution
+        return {
+            "full_frame_resolution_px": [int(full_w), int(full_h)],
+            "crop_origin_px": [int(self._crop_origin_px[0]), int(self._crop_origin_px[1])],
+            "crop_size_px": [int(self._crop_size_px[0]), int(self._crop_size_px[1])],
+            "crop_principal_point_in_crop_px": [
+                full_w / 2.0 - self._crop_origin_px[0],
+                full_h / 2.0 - self._crop_origin_px[1],
+            ],
+            "focal_length_mm": float(self.config.camera.focal_length),
+            "focal_length_px": float(self.config.camera.focal_length_px),
+            "sensor_width_mm": float(self.config.camera.effective_sensor_width_mm),
+            "pixel_size_um": (
+                float(self.config.camera.pixel_size_um)
+                if self.config.camera.pixel_size_um is not None
+                else float(self.config.camera.effective_sensor_width_mm)
+                * 1000.0
+                / float(full_w)
+            ),
+        }
 
     def render_frame_v2(
         self,

@@ -1,7 +1,7 @@
 # Imaging math — 12U distance sweep
 
 This document reconstructs the math chain that produced the 12U-at-distance image set rendered from
-[`configs/examples/cubesat_12u_distance_sweep.json`](../configs/examples/cubesat_12u_distance_sweep.json).
+[`configs/nro/cubesat_12u_distance_sweep.json`](../configs/nro/cubesat_12u_distance_sweep.json).
 It is intended to be readable end-to-end and to make every numeric value reproducible.
 
 The target is a 12U CubeSat envelope of **1.0 × 0.2 × 0.2 m** (long axis × short × short),

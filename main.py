@@ -131,6 +131,13 @@ def run_sisfos_with_config(config: SceneConfig, renders_base_dir: Path):
     logger.info("%s", config.setup)
     cam, sun = renderer.setup_total()
 
+    # Persist crop + intrinsics metadata once per agent folder so downstream
+    # tooling can map cropped pixel coordinates back to the full-frame camera.
+    crop_info_path = renders_base_dir / "crop_info.json"
+    with open(crop_info_path, "w") as f:
+        json.dump(renderer.render_crop_info(), f, indent=2)
+    logger.info("[Session] Wrote crop/intrinsics metadata: %s", crop_info_path)
+
     all_models = renderer.get_models_in_blend()
     logger.info(f"Available models in the blend: {all_models}")
 

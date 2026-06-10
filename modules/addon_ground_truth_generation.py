@@ -92,12 +92,20 @@ _ENVIRONMENT_OBJECTS = {"Earth", "Clouds", "Atmo"}
 
 
 def _extract_target_mesh(scene):
+    # Vertices are baked into the world frame at cache time (matrix_world
+    # applied, including any non-uniform parent scale). Per-frame rigid-body
+    # motion of the target is then handled in depth_from_trimesh by
+    # transforming the camera through M_cache @ inv(M_now). Storing local
+    # verts and relying on per-frame matrix_world for ray-cast was buggy when
+    # the parent had a non-identity scale: inv(M_now) carried 1/scale into
+    # the camera transform, yielding an anisotropically-shrunk object-frame
+    # camera distance and a silhouette ~10²× too large.
     depsgraph = bpy.context.evaluated_depsgraph_get()
     all_verts = []
     all_faces = []
     vert_offset = 0
     ref_obj_name = None
-    ref_mat_inv = None
+    ref_world_at_cache = None
     for obj in scene.objects:
         if obj.type != "MESH" or obj.hide_render:
             continue
@@ -116,18 +124,14 @@ def _extract_target_mesh(scene):
         tri = np.empty(n_tris * 3, dtype=int)
         mesh.loop_triangles.foreach_get("vertices", tri)
         local_verts = co.reshape(n_verts, 3)
+        # Bake matrix_world into vertices so the cached mesh has correct
+        # world-frame dimensions. This freezes inter-object relative pose at
+        # cache time; valid for a single rigid target body.
+        M = np.array(obj_eval.matrix_world, dtype=float)
+        verts = (M[:3, :3] @ local_verts.T).T + M[:3, 3]
         if ref_obj_name is None:
             ref_obj_name = obj.name
-            ref_mat_inv = np.array(obj_eval.matrix_world.inverted(), dtype=float)
-            verts = local_verts
-        else:
-            # This cache assumes all target geometry is rigid relative to the
-            # first target object. If another independently moving satellite is
-            # added to the scene, this combined BVH becomes invalid and the BVH
-            # strategy must be revised or rebuilt when relative poses change.
-            mat = np.array(obj_eval.matrix_world, dtype=float)
-            rel = ref_mat_inv @ mat
-            verts = (rel[:3, :3] @ local_verts.T).T + rel[:3, 3]
+            ref_world_at_cache = M
         faces = tri.reshape(n_tris, 3)
         all_verts.append(verts)
         all_faces.append(faces + vert_offset)
@@ -136,11 +140,13 @@ def _extract_target_mesh(scene):
     if not all_verts:
         return {
             "ref_obj_name": None,
+            "ref_world_at_cache": np.eye(4),
             "vertices": np.zeros((0, 3), dtype=float),
             "faces": np.zeros((0, 3), dtype=int),
         }
     return {
         "ref_obj_name": ref_obj_name,
+        "ref_world_at_cache": ref_world_at_cache,
         "vertices": np.concatenate(all_verts, axis=0),
         "faces": np.concatenate(all_faces, axis=0),
     }
@@ -157,6 +163,7 @@ def _build_depth_cache(scene) -> dict:
     mesh = trimesh.Trimesh(vertices=target_mesh["vertices"], faces=target_mesh["faces"], process=False)
     return {
         "ref_obj_name": target_mesh["ref_obj_name"],
+        "ref_world_at_cache": target_mesh["ref_world_at_cache"],
         "is_empty": mesh.is_empty,
         "intersector": None if mesh.is_empty else _make_ray_intersector(mesh),
     }
@@ -172,9 +179,12 @@ def _ensure_depth_cache(scene) -> dict:
 
 
 def _ensure_camera_ray_cache(scene) -> dict:
+    # Cast rays only for the saved (cropped) image region. Avoids building a
+    # full-sensor (5472x3648 ≈ 20M) ray array when the saved annotations are
+    # 256x256, and ensures the depth output shape matches the cropped raw image.
     scene_cache = _get_scene_cache(scene)
-    res_x, res_y = get_scene_resolution(scene)
-    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+    res_x, res_y = get_effective_resolution(scene)
+    f_x, f_y, c_x, c_y = get_effective_camera_parameters_intrinsic(scene)
     signature = (res_x, res_y, float(f_x), float(f_y), float(c_x), float(c_y))
     ray_cache = scene_cache.get("ray_cache")
     if ray_cache is None or ray_cache["signature"] != signature:
@@ -204,26 +214,34 @@ def depth_from_trimesh(scene, extrinsic_mat: np.ndarray) -> np.ndarray:
     if ref_obj is None or ref_obj.hide_render:
         return np.zeros((res_y, res_x), dtype=np.float32)
 
-    T_WO = np.array(ref_obj.matrix_world, dtype=float)
-    T_OW = _invert_T(T_WO)
-    T_WC = _invert_T(T_CW)
-    T_OC = T_OW @ T_WC
+    # Cached mesh lives in world frame at cache time (matrix_world fully
+    # baked in). Compose the rigid-body motion of the target since cache
+    # time and apply its inverse to the camera, so we can ray-cast in the
+    # mesh's frozen cache frame. M_cache and M_now both carry parent scale;
+    # use np.linalg.inv (not _invert_T, which assumes rigid) so the scales
+    # cancel cleanly to give a rigid cache-from-now transform.
+    M_cache = depth_cache["ref_world_at_cache"]
+    M_now = np.array(ref_obj.matrix_world, dtype=float)
+    T_cacheW_nowW = M_cache @ np.linalg.inv(M_now)  # cache-world ← now-world
+    T_WC = _invert_T(T_CW)  # camera → now-world (rigid)
+    T_C_cache = T_cacheW_nowW @ T_WC  # camera → cache-world (rigid)
 
-    origins_O = np.repeat(T_OC[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
-    dirs_O = (T_OC[:3, :3] @ dirs_C.T).T
+    origins = np.repeat(T_C_cache[:3, 3].reshape(1, 3), res_x * res_y, axis=0)
+    dirs = (T_C_cache[:3, :3] @ dirs_C.T).T
 
-    locs_O, ray_idx, _tri_idx = depth_cache["intersector"].intersects_location(
-        origins_O,
-        dirs_O,
+    locs, ray_idx, _tri_idx = depth_cache["intersector"].intersects_location(
+        origins,
+        dirs,
         multiple_hits=False,
     )
 
     depth_z = np.full((res_x * res_y,), -1.0, dtype=np.float32)
-    if locs_O.shape[0] == 0:
+    if locs.shape[0] == 0:
         return depth_z.reshape(res_y, res_x)
 
-    T_CO = T_CW @ T_WO
-    locs_C = _transform_points(T_CO, locs_O)
+    # Hit positions (in cache-world) → current camera frame.
+    T_cache_C = _invert_T(T_C_cache)
+    locs_C = _transform_points(T_cache_C, locs)
     z = locs_C[:, 2]
     max_dist = float(scene.camera.data.clip_end)
     valid = (z > 0) & (z <= max_dist) & np.isfinite(z)
@@ -236,6 +254,51 @@ def get_scene_resolution(scene):
     resolution_x = scene.render.resolution_x * resolution_scale  # [pixels]
     resolution_y = scene.render.resolution_y * resolution_scale  # [pixels]
     return int(resolution_x), int(resolution_y)
+
+
+def _get_render_crop(scene):
+    """Active render-crop window in pixels (x0, y0, w, h), or None.
+
+    Reads custom scene properties stamped by BlenderRenderer (renderer.py)
+    when use_border + use_crop_to_border are active. Returns None when no
+    meaningful crop is set (full frame).
+    """
+    if not (scene.render.use_border and scene.render.use_crop_to_border):
+        return None
+    if "_sisifos_crop_size_x" not in scene or "_sisifos_crop_size_y" not in scene:
+        return None
+    full_w, full_h = get_scene_resolution(scene)
+    w = int(scene["_sisifos_crop_size_x"])
+    h = int(scene["_sisifos_crop_size_y"])
+    if w >= full_w and h >= full_h:
+        return None
+    x0 = int(scene["_sisifos_crop_origin_x"])
+    y0 = int(scene["_sisifos_crop_origin_y"])
+    return (x0, y0, w, h)
+
+
+def get_effective_resolution(scene):
+    """Resolution of saved annotations: crop size if cropping, else full frame."""
+    crop = _get_render_crop(scene)
+    if crop is not None:
+        _, _, w, h = crop
+        return w, h
+    return get_scene_resolution(scene)
+
+
+def get_effective_camera_parameters_intrinsic(scene):
+    """Intrinsics shifted to the cropped image frame when render crop is active.
+
+    Focal length is unchanged (no zoom across crop); principal point shifts by
+    the crop origin so c_x, c_y are expressed in cropped-image coordinates.
+    """
+    f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+    crop = _get_render_crop(scene)
+    if crop is not None:
+        x0, y0, _, _ = crop
+        c_x = c_x - x0
+        c_y = c_y - y0
+    return f_x, f_y, c_x, c_y
 
 
 def get_sensor_size(sensor_fit, sensor_x, sensor_y):
@@ -431,6 +494,12 @@ def load_file_data_to_numpy(scene, tmp_file_path, data_map):
     res_x, res_y = get_scene_resolution(scene)
     pixels_numpy.resize((res_y, res_x, 4))  # Numpy works with (y, x, channels)
     pixels_numpy = np.flip(pixels_numpy, 0)  # flip vertically (in Blender y in the image points up instead of down)
+    # If render crop is active, slice the EXR to the rendered region so all
+    # downstream arrays (normal/depth/seg/optflow) match the saved RGB shape.
+    crop = _get_render_crop(scene)
+    if crop is not None:
+        x0, y0, w, h = crop
+        pixels_numpy = pixels_numpy[y0:y0 + h, x0:x0 + w, :]
     if data_map == "Normal":
         normal = pixels_numpy[:, :, 0:3]
         return normal
@@ -626,13 +695,14 @@ def load_handler_render_init(scene):
         cam = scene.camera
         ## img file format
         dict_cam_info["img_format"] = render.image_settings.file_format
-        ## camera image resolution
-        res_x, res_y = get_scene_resolution(scene)
+        ## camera image resolution (cropped if render crop is active, matching
+        ## the shape of the saved annotations and RGB)
+        res_x, res_y = get_effective_resolution(scene)
         dict_cam_info["img_res_x"] = res_x
         dict_cam_info["img_res_y"] = res_y
-        ## camera intrinsic matrix parameters
+        ## camera intrinsic matrix parameters (principal point shifted to crop)
         cam_mat_intr = {}
-        f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+        f_x, f_y, c_x, c_y = get_effective_camera_parameters_intrinsic(scene)
         cam_mat_intr["f_x"] = f_x
         cam_mat_intr["f_y"] = f_y
         cam_mat_intr["c_x"] = c_x
@@ -698,8 +768,10 @@ def load_handler_after_rend_frame(
                     # Remove homogeneous row
                     extrinsic_mat0 = extrinsic_mat0[:3, :]
                     extrinsic_mat1 = extrinsic_mat1[:3, :]
-            # Intrinsic mat is the same for both stereo cameras
-            f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+            # Intrinsic mat is the same for both stereo cameras. Use the
+            # effective intrinsics (principal point shifted to the cropped
+            # image frame) so the saved K matches the saved annotation arrays.
+            f_x, f_y, c_x, c_y = get_effective_camera_parameters_intrinsic(scene)
             intrinsic_mat = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]])
         """ Objects' pose """
         obj_poses = None
@@ -830,7 +902,7 @@ class MyAddonProperties(PropertyGroup):
 
     def get_cam_intrinsic(self):
         scene = bpy.context.scene
-        f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+        f_x, f_y, c_x, c_y = get_effective_camera_parameters_intrinsic(scene)
         intrinsic_mat = np.array([[f_x, 0, c_x], [0, f_y, c_y], [0, 0, 1]])
         return intrinsic_mat.flatten("F").tolist()
 
@@ -918,7 +990,7 @@ class RENDER_PT_gt_generator(GroundTruthGeneratorPanel):
         # Get camera parameters
         """ show intrinsic parameters """
         layout.label(text="Intrinsic parameters [pixels]:")
-        f_x, f_y, c_x, c_y = get_camera_parameters_intrinsic(scene)
+        f_x, f_y, c_x, c_y = get_effective_camera_parameters_intrinsic(scene)
 
         box_intr = self.layout.box()
         col_intr = box_intr.column()

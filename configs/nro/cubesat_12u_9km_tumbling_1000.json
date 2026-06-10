@@ -1,0 +1,91 @@
+{
+  "base_config": {
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
+    "objects": {
+      "Target": {
+        "name": "Target",
+        "blend_path": "assets/spacecraft_models_0_5.blend"
+      },
+      "Earth": {
+        "name": "Earth",
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
+      },
+      "Clouds": {
+        "name": "Clouds",
+        "blend_path": null,
+        "scale_factor": 10.0
+      },
+      "Atmo": {
+        "name": "Atmo",
+        "blend_path": null,
+        "scale_factor": 10.0
+      }
+    },
+    "camera": {
+      "focal_length": 650.0,
+      "pixel_size_um": 2.4,
+      "resolution": [5472, 3648],
+      "f_number": 7.6,
+      "psf_fwhm_px": 0.68,
+      "wavelength_nm": 550.0,
+      "sensor_fit": "HORIZONTAL",
+      "clip_start": 1e-05,
+      "clip_end": 5000000.0,
+      "lens_flare": 0.01,
+      "exposure_time_s": 0.05555556
+    },
+    "render": {
+      "engine": "CYCLES",
+      "samples": 16,
+      "earth_dist_scale_factor": 0.001,
+      "crop_to_border_px": [256, 256]
+    },
+    "setup": {
+      "earth_mode": "off",
+      "stars_mode": "off",
+      "enable_blur": "off",
+      "enable_glare": "off",
+      "render_frames": true,
+      "generate_video": true,
+      "video_fps": 10
+    },
+    "trajectory_type": "trajectory_generator",
+    "trajectory": {
+      "path_mode": "tumbling",
+      "seed": 1462526110,
+      "num_agents": 1,
+      "num_mc": 1,
+      "R0_const": 9000.0,
+      "tend": 100.0,
+      "tstep": 0.1,
+      "mu_ref": 398600441800000.0,
+      "h_orbit": 550000.0,
+      "R_earth": 6371000.0,
+      "IMAGE_MAX_DT_S": 0.1,
+      "MIN_F2F_PX_MED": 3.0,
+      "SUN_ALIGN_ENABLE": true,
+      "SUN_ALIGN_CONE_DEG": 12.0,
+      "SUN_ALIGN_JITTER_D": 4.0,
+      "EARTH_BACKGROUND_ENABLE": true,
+      "camera_lookat_mode": "I",
+      "inertia_config": {
+        "inertia_type": "custom",
+        "Jx": 0.273,
+        "Jy": 0.260,
+        "Jz": 0.160
+      }
+    },
+    "save_depth": true,
+    "save_normals": false,
+    "save_optical_flow": false,
+    "save_segmentation": false,
+    "save_obj_poses": false,
+    "save_scene_plots": false,
+    "frame_ids": null,
+    "selected_model": "RF_Hubble",
+    "model_scale_xyz": [0.08778, 0.01010, 0.01395]
+  },
+  "sweep_parameters": {}
+}

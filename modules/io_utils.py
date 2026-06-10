@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -95,16 +97,35 @@ def handle_gt_from_npz(
     if "segmentation_masks" in data:
         seg = data["segmentation_masks"]
         plt.imsave(str(gt_seg_dir / f"{base}_Seg.png"), _id_to_color(seg))
-        mask = seg == 1
+        # vision_blender segments by per-object/material index, NOT by the
+        # pass_index the renderer assigns to "Target" (the spacecraft surfaces
+        # carry their material indices, e.g. {2,3,6,7,8,...}; the bare "Target"
+        # empty has no pixels). So `seg == 1` masked out everything. Foreground
+        # = any non-background index; with earth_mode=off the only background is
+        # index 0 (empty space + camera/sun/light), so `seg != 0` is the clean
+        # target silhouette (verified: drops the bg noise floor, keeps shadowed
+        # target pixels). NOTE: relies on Earth/Clouds/Atmo not being rendered.
+        mask = seg != 0
 
-    # Create masked images
+    # Create masked images. Three things can go wrong here that we need to
+    # tolerate gracefully:
+    #   1) Neither segmentation nor depth was saved -> no mask available.
+    #   2) Render border crop is on -> rendered_img is the cropped frame but
+    #      vision_blender's depth_map / segmentation_masks come back at the
+    #      full-frame resolution. We can't index a small image with a big mask.
+    # In either case we just copy the raw render through unmasked rather than
+    # crashing - the cropped onboard-style frames don't need masking anyway.
     ensure_dir(Path(masked_images_dir))
     rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
     rendered_img = plt.imread(rendered_img_path)
-    masked_img = np.zeros_like(rendered_img)
-    if mask is None:
+    if mask is None and "depth_map" in data:
         mask = near_mask
-    masked_img[mask] = rendered_img[mask]
+    img_h, img_w = rendered_img.shape[:2]
+    if mask is None or mask.shape[:2] != (img_h, img_w):
+        masked_img = rendered_img
+    else:
+        masked_img = np.zeros_like(rendered_img)
+        masked_img[mask] = rendered_img[mask]
     masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
     plt.imsave(masked_img_path, masked_img)
 
@@ -128,8 +149,13 @@ def images_to_video_blender_sequence(
     output_path: str | Path,
     fps: int = 24,
 ) -> str:
-    """
-    Assemble a video from pre-rendered frames using Blender's sequence editor.
+    """Assemble a video from pre-rendered frames via ffmpeg.
+
+    Uses a concat-demuxer list so the input ordering is exactly the supplied
+    image_filenames sequence (handles non-contiguous frame ranges). The pad
+    filter rounds width/height up to the next even number, which is required
+    by H.264 and works around the Blender render-border off-by-one that
+    occasionally leaves an odd-width crop (e.g. 255x256 instead of 256x256).
 
     Args:
         image_dir: Directory containing rendered frames.
@@ -140,65 +166,62 @@ def images_to_video_blender_sequence(
     if not image_filenames:
         raise ValueError("Cannot generate video: no image filenames provided.")
 
-    image_dir = Path(image_dir)
-    output_path = Path(output_path)
-    abs_output = output_path.resolve()
+    image_dir = Path(image_dir).resolve()
+    output_path = Path(output_path).resolve()
 
-    abs_dir = image_dir.resolve()
     frames = []
     for name in image_filenames:
-        p = abs_dir / name
-        if p.exists():
-            frames.append({"name": p.name})
+        if (image_dir / name).exists():
+            frames.append(name)
         else:
-            logger.warning("Skipping missing frame in video assembly: %s", p)
+            logger.warning("Skipping missing frame in video assembly: %s", image_dir / name)
 
     if not frames:
         raise ValueError("Cannot generate video: no existing frames found in image_dir.")
 
-    render_scene = bpy.data.scenes.new(name="SISIFOS_VideoAssembly")
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError("ffmpeg not found in PATH; cannot assemble video.")
+
+    # ffmpeg's concat demuxer takes a plain text list of `file '<name>'` /
+    # `duration <seconds>` pairs. The last entry must be repeated without a
+    # duration (a documented quirk that ensures the final frame is encoded).
+    list_path = image_dir / ".video_concat_list.txt"
+    duration = 1.0 / float(fps)
+    with open(list_path, "w") as f:
+        for name in frames:
+            f.write(f"file '{name}'\n")
+            f.write(f"duration {duration}\n")
+        f.write(f"file '{frames[-1]}'\n")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loglevel", "error",
+        "-f", "concat",
+        "-safe", "0",
+        "-i", str(list_path),
+        "-vsync", "vfr",
+        # pad: round W/H up to next multiple of 2; format=yuv420p for broad H.264 compat
+        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
+        "-c:v", "libx264",
+        "-crf", "18",
+        "-preset", "fast",
+        "-r", str(int(fps)),
+        str(output_path),
+    ]
+
     try:
-        render_scene.sequence_editor_create()
-        seq = render_scene.sequence_editor
-        first_frame_path = abs_dir / frames[0]["name"]
-
-        seq.sequences.new_image(
-            name="RenderFrames",
-            filepath=str(first_frame_path),
-            channel=1,
-            frame_start=1,
-        )
-        image_strip = seq.sequences_all["RenderFrames"]
-        # new_image already creates the first element, so append the rest.
-        for frame in frames[1:]:
-            image_strip.elements.append(frame["name"])
-
-        # Match output dimensions to source frames to avoid stretching/cropping.
-        first_img = bpy.data.images.load(str(first_frame_path), check_existing=True)
-        src_w, src_h = int(first_img.size[0]), int(first_img.size[1])
-
-        render_scene.frame_start = 1
-        render_scene.frame_end = len(frames)
-        render_scene.render.use_sequencer = True
-        render_scene.render.resolution_x = src_w
-        render_scene.render.resolution_y = src_h
-        bpy.data.images.remove(first_img)  # cleanup loaded image to avoid memory bloat
-        render_scene.render.resolution_percentage = 100
-        render_scene.render.pixel_aspect_x = 1.0
-        render_scene.render.pixel_aspect_y = 1.0
-        render_scene.render.fps = int(fps)
-        render_scene.render.fps_base = 1.0
-        render_scene.render.image_settings.file_format = "FFMPEG"
-        render_scene.render.ffmpeg.format = "MPEG4"
-        render_scene.render.ffmpeg.codec = "H264"
-        render_scene.render.ffmpeg.constant_rate_factor = "HIGH"
-        render_scene.render.ffmpeg.ffmpeg_preset = "GOOD"
-        render_scene.render.ffmpeg.gopsize = 12
-        render_scene.render.ffmpeg.audio_codec = "NONE"
-        render_scene.render.filepath = str(abs_output)
-
-        bpy.ops.render.render(animation=True, scene=render_scene.name)
-        logger.info("Video generated successfully: %s", abs_output)
-        return str(abs_output)
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     finally:
-        bpy.data.scenes.remove(render_scene)
+        list_path.unlink(missing_ok=True)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg video assembly failed (returncode={result.returncode}): {result.stderr.strip()}"
+        )
+
+    logger.info(
+        "Video generated successfully via ffmpeg (auto-padded to even dims): %s",
+        output_path,
+    )
+    return str(output_path)

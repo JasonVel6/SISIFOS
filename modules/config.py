@@ -115,6 +115,14 @@ class RenderConfig(BaseModel):
     samples: int = 32
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
+    # Optional fixed centered render crop. When set, Cycles renders only a
+    # (crop_w, crop_h) pixel window centered on the principal point and saves
+    # an image of exactly those dimensions (mimics the on-board pattern of
+    # processing only a windowed ROI around the tracked target). The full-
+    # frame camera intrinsics are preserved and the crop origin/size are
+    # written to camera_info.json so the SLAM frontend can map cropped pixel
+    # coordinates back to the full-frame model. None disables cropping.
+    crop_to_border_px: tuple[int, int] | None = None
 
 
 class SetupConfig(BaseModel):
