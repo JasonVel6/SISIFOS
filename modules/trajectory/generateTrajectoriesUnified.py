@@ -333,6 +333,11 @@ def generate_trajectories_dynamical(
     sun_dir_G = np.zeros((config.num_mc, nbSteps, 3))
     el_G = np.zeros((config.num_mc, nbSteps))
     az_G = np.zeros((config.num_mc, nbSteps))
+    # Per-frame inertial sun az/el actually used for rendering. Equals the scalar
+    # az_I/el_I broadcast, EXCEPT in SUN_TRACK_CAMERA ("headlight") mode where it is
+    # recomputed from each frame's camera line of sight (see the j-loop below).
+    az_I_pf = np.zeros((config.num_mc, nbSteps))
+    el_I_pf = np.zeros((config.num_mc, nbSteps))
 
     H_GI_G = np.zeros((config.num_mc, nbSteps, 3))
     H_GI_I = np.zeros((config.num_mc, nbSteps, 3))
@@ -536,11 +541,36 @@ def generate_trajectories_dynamical(
             H_GI_I[mc_trial, j] = R_IG[mc_trial, j] @ H_GI_G[mc_trial, j]
 
             r_OG_G[mc_trial, j] = -R_IG[mc_trial, j].T @ r_GO_I[mc_trial, j]
+
+            # Sun az/el used for THIS frame. Default: the fixed frame-0 placement.
+            az_use, el_use = az_I[mc_trial], el_I[mc_trial]
+            if config.SUN_TRACK_CAMERA:
+                # Headlight: put the sun on the camera->target line of sight at frame j,
+                # so the camera-facing side is front-lit every frame (same geometry as
+                # the SUN_ALIGN block, evaluated per-frame instead of once at frame 0).
+                r_CG_I_j = (
+                    state_C_I[mc_trial, 0, j, 0:3] - state_A_I[mc_trial, j, 0:3]
+                ) - R_IG[mc_trial, j] @ r_AG_G
+                if np.linalg.norm(r_CG_I_j) > 0:
+                    # r_CG_I_j points G->camera; using it as the light-travel vector
+                    # front-lights the camera-facing side (verified empirically: this
+                    # sign gives ~95% lit vs the opposite's ~28% back-lit. NOTE the
+                    # one-time SUN_ALIGN block uses the opposite/back-lit sign).
+                    u_sun_I_j = r_CG_I_j / np.linalg.norm(r_CG_I_j)
+                    cone_deg = config.SUN_ALIGN_CONE_DEG
+                    if cone_deg > 0:
+                        up = np.array([0.0, 0.0, 1.0])
+                        if abs(u_sun_I_j @ up) > 0.95:
+                            up = np.array([0.0, 1.0, 0.0])
+                        u_sun_I_j = rodrigues(u_sun_I_j, up, np.deg2rad(cone_deg))
+                    az_use, el_use = _vecI_to_azel(u_sun_I_j)
+            az_I_pf[mc_trial, j] = az_use
+            el_I_pf[mc_trial, j] = el_use
             sun_dir_G[mc_trial, j] = R_IG[mc_trial, j].T @ np.array(
                 [
-                    np.cos(el_I[mc_trial]) * np.cos(az_I[mc_trial]),
-                    np.cos(el_I[mc_trial]) * np.sin(az_I[mc_trial]),
-                    np.sin(el_I[mc_trial]),
+                    np.cos(el_use) * np.cos(az_use),
+                    np.cos(el_use) * np.sin(az_use),
+                    np.sin(el_use),
                 ]
             )
             az_G[mc_trial, j] = math.degrees(math.atan2(sun_dir_G[mc_trial, j, 1], sun_dir_G[mc_trial, j, 0]))
@@ -825,6 +855,14 @@ def generate_trajectories_dynamical(
         v_GO_I_mc = v_GO_I[mc_trial]
         az_I_mc = az_I[mc_trial]
         el_I_mc = el_I[mc_trial]
+        # Per-frame inertial sun (deg) for camera_traj: headlight -> per-frame values,
+        # otherwise the constant frame-0 placement broadcast to every frame.
+        if config.SUN_TRACK_CAMERA:
+            sun_az_I_deg = np.rad2deg(az_I_pf[mc_trial])
+            sun_el_I_deg = np.rad2deg(el_I_pf[mc_trial])
+        else:
+            sun_az_I_deg = np.full(nbSteps, np.rad2deg(az_I_mc))
+            sun_el_I_deg = np.full(nbSteps, np.rad2deg(el_I_mc))
 
         # Generate plots
         plot_trial_trajectories(
@@ -876,8 +914,8 @@ def generate_trajectories_dynamical(
                 q_IG=q_IG_mc,
                 r_CO_I=state_C_I_mc_ag[:, 0:3],
                 q_IC=q_IC_mc_ag,
-                sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
-                sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                sun_az_I=sun_az_I_deg,
+                sun_el_I=sun_el_I_deg,
             )
 
             write_gtvalues(
@@ -935,8 +973,8 @@ def generate_trajectories_dynamical(
                     output_dir=agent_folder,
                     p_C_I=state_C_I_mc_ag[:, 0:3],
                     p_G_I=r_GO_I_mc,
-                    sun_az_I=np.full(nbSteps, np.rad2deg(az_I_mc)),
-                    sun_el_I=np.full(nbSteps, np.rad2deg(el_I_mc)),
+                    sun_az_I=sun_az_I_deg,
+                    sun_el_I=sun_el_I_deg,
                     timestamps=timestamps,
                     r_CG_arr=r_CG_G_mc_ag,
                     q_IG_arr=q_IG_mc,

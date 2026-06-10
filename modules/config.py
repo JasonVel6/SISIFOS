@@ -312,6 +312,12 @@ class TrajectoryConfig(BaseModel):
     SUN_ALIGN_JITTER_D: float = 4.0
     # Earth-in-background alignment: Sun -> Camera -> Target -> Earth
     EARTH_BACKGROUND_ENABLE: bool = True
+    # "Headlight" mode: recompute the sun along the camera->target line of sight
+    # EVERY frame (not just frame 0), so the camera-facing side stays front-lit
+    # through the whole tumble. Non-physical (sun tracks the camera) but removes
+    # illumination as a confound. SUN_ALIGN_CONE_DEG still applies as an off-axis
+    # offset for directional shading. Overrides the one-time sun placement above.
+    SUN_TRACK_CAMERA: bool = False
     # ---------- Constants / environment ----------
     mu_ref: float = 3.986004418e14  # Earth mu (m^3/s^2)
     h_orbit: float = 550e3  # circular altitude (m)
