@@ -499,7 +499,11 @@ def generate_trajectories_dynamical(
             ] @ r_AG_G
             r_CG_G0 = R_IG[mc_trial, j0].T @ r_CG_I0
             if np.linalg.norm(r_CG_G0) > 0:
-                u_LOS_G = -r_CG_G0 / np.linalg.norm(r_CG_G0)
+                # Use +r_CG (G->camera) as the light-travel vector so the sun sits
+                # on the camera side and FRONT-lights the target. The previous
+                # -r_CG put the sun on the far side (back-lit ~28% vs ~95% lit),
+                # contradicting this mode's intent (verified via SUN_TRACK_CAMERA).
+                u_LOS_G = r_CG_G0 / np.linalg.norm(r_CG_G0)
                 cone_deg = config.SUN_ALIGN_CONE_DEG + (rng_sun.random() - 0.5) * 2.0 * config.SUN_ALIGN_JITTER_D
                 cone_rad = np.deg2rad(max(0.0, cone_deg))
                 up = np.array([0.0, 0.0, 1.0])
