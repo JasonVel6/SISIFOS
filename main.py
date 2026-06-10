@@ -300,7 +300,11 @@ def prepare_image_list(config: SceneConfig, renders_base_dir: Path):
 def run_sweep(sweep_config: SweepConfig):
     configs = sweep_config.generate_sweep_configs()
 
-    output_dir = Path("./renders") / get_timestamp_folder()
+    # Allow a fixed output dir (opt-in via env var) so a render can be resumed
+    # into the same dataset folder across multiple invocations. Default behaviour
+    # (a fresh timestamped dir) is unchanged when the env var is unset.
+    _fixed = os.environ.get("SISIFOS_OUTPUT_DIR")
+    output_dir = Path(_fixed) if _fixed else Path("./renders") / get_timestamp_folder()
     ensure_dir(output_dir)
 
     setup_logger(log_file=output_dir / "run.log")
