@@ -1,0 +1,155 @@
+{
+  "_template_notes": {
+    "purpose": "Render-free SISIFOS template for feature/feature-propagation experiments: physics-informed relative navigation near a target RSO. Synthetic SatSLAM frontend consumes the GT trajectory + GT body params (inertia, COM, omega) + sensor measurements this generates; it does NOT read rendered images, so 'setup.render_frames' is false here.",
+    "how_to_use": "Copy this file, rename it (drop the leading underscore), edit ONLY the EXPERIMENT LEVERS below for your regime, then run: python main.py --config configs/<your_config>.json. Leave camera/objects/render blocks as-is for render-free runs.",
+    "experiment_levers": {
+      "trajectory.inertia_config": "GT inertia tensor = the primary inertia-OBSERVABILITY axis. inertia_type one of {sphere, cylinder, box, custom}. 'custom' (Jx,Jy,Jz diagonal) is the cleanest knob: near-equal Jx~Jy~Jz = near-spherical = WEAK observability; strongly separated principal moments = STRONG observability. Convention: X=highest inertial axis, Z=lowest. NOTE: for the synthetic frontend the .blend mesh is irrelevant (landmarks are random 3D points), so vary inertia HERE, not via selected_model.",
+      "trajectory.path_mode": "Relative-motion regime: 'tumbling' (target spins, full rel-dyn coupling — main case), 'inertial' (CRO/inertial drift, no spin), 'hill' (LVLH/Clohessy-Wiltshire). Tumbling is what exercises the rel-dyn factor + health monitor.",
+      "trajectory.omega_min_deg / omega_max_deg": "Tumbling spin-rate band (deg/s); a uniform draw in [min,max] sets |omega|. Slow (0.5-1.5) reduces linearization drift but weakens dynamics excitation; fast (3-5) excites dynamics but stresses the propagator. BOTH null => generator's historical 3-5 override (NOT the 0.5-2 init default).",
+      "trajectory.r_AG_G": "GT center of mass offset [x,y,z] (m), COM relative to geometric frame G. COM is a RECOVERED/free parameter on this branch (do NOT pin at GT). Magnitude + dominant axis drive COM observability; align dominant component with the low-inertia/long physical axis for the strongest cue.",
+      "trajectory.R0_const": "Nominal target range (m). MATCHED-FOOTPRINT PER-TARGET policy: range scales with the target's long axis so every target presents the SAME apparent pixel size (fairest cross-target inertia/COM comparison). Fixed ratio R_Hubble:R_INTEGRAL = 13:5 = 2.6. Baseline ranges: RF_Hubble (13 m) = 100 m (~65% frame on a wide f~25 mm inspection lens, comfortable tumble/CRO-parallax margin); RF_Integral (5 m) = 38.5 m (~40 m). Both well-resolved (hundreds of px) in the proximity-inspection regime; COM observable for both. For feature-based visual SLAM the target must be RESOLVED -- 9 km = poorly-resolved/unresolved (CubeSat ~30px even on the telescope rig) = NOT a feature-SLAM regime. For the synthetic frontend range is observability-redundant (abstract landmarks), so this is chosen for physical realism + transfer to the real frontend. Default below = 100 m (Hubble); use 38.5 m for INTEGRAL.",
+      "trajectory.tend / tstep": "Arc length and integration step (s). Frame count after f2f gating ~ tend/IMAGE_MAX_DT_S. tend=500, tstep=0.1 typically yields a multi-hundred-to-1k-frame arc that clears the convergence transient.",
+      "selected_model": "RF_* mesh root. Affects RENDERING ONLY (irrelevant for synthetic frontend). Defaults pull inertia/rotation from modules/spacecraft_defaults.yaml. Known: RF_Hubble (cylinder, near-axisymmetric), RF_Integral (box, cruciform — front-end aliasing), RF_CubeSat12U (custom), RF_Target (unit). If you set inertia_config explicitly it OVERRIDES the model default.",
+      "camera_optics_caveat": "The camera block below is a WIDE INSPECTION lens (f=25 mm, px 3.45 um -> f_px~7246) matched to close proximity range. CRITICAL: the synthetic frontend projects landmarks through THESE intrinsics (Config.yaml fx/fy), so the lens MUST match the range or target-scale landmarks fly off-frame (the telescope rig f=650 mm at 100 m projects a 10 m cloud ~27000 px wide on a 5472 px sensor -> tracking starves -> backend marginalization crash). At the matched ranges this lens puts both targets at ~half-frame (Hubble 13 m @ 100 m -> 942 px; INTEGRAL 5 m @ 38.5 m -> 941 px).",
+      "duration_tend_kfInterval": "tend=500 s @ tstep/IMAGE_MAX_DT_S=0.1 (fps 10) -> ~5000 frames. Duration is set by the INERTIA-observability timescale = torque-free precession period (measured: ~400-500 s at fast spin 3-5 deg/s for anisotropic inertia, ~1000-2000 s at slow spin, infinite/zero for near-sphere). 500 s covers >=1 precession period for fast/strong cells and clears the convergence transient (~200 KF). The rel-dyn inertia dt-sweet-spot (~1 s) is a SatSLAM RUN knob (FrontEnd.kfInterval~10 at fps 10), NOT a dataset parameter.",
+      "sweep_parameters": "Cartesian-product sweep map: '<dotted.path>': [v1, v2, ...]. Each combo generates a dataset. Empty {} = single dataset from base_config. Example sweeps shown (commented via _example key) below."
+    }
+  },
+  "base_config": {
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
+    "objects": {
+      "Target": {
+        "name": "Target",
+        "blend_path": "assets/spacecraft_models_0_5.blend"
+      },
+      "Earth": {
+        "name": "Earth",
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
+      },
+      "Clouds": {
+        "name": "Clouds",
+        "blend_path": null,
+        "scale_factor": 10.0
+      },
+      "Atmo": {
+        "name": "Atmo",
+        "blend_path": null,
+        "scale_factor": 10.0
+      }
+    },
+    "camera": {
+      "focal_length": 25.0,
+      "pixel_size_um": 3.45,
+      "resolution": [
+        1920,
+        1200
+      ],
+      "f_number": 2.8,
+      "psf_fwhm_px": 0.68,
+      "wavelength_nm": 550.0,
+      "sensor_fit": "HORIZONTAL",
+      "clip_start": 1e-05,
+      "clip_end": 5000000.0,
+      "lens_flare": 0.01,
+      "exposure_time_s": 0.05555556
+    },
+    "render": {
+      "engine": "CYCLES",
+      "samples": 16,
+      "earth_dist_scale_factor": 0.001,
+      "crop_to_border_px": [
+        256,
+        256
+      ]
+    },
+    "setup": {
+      "_comment": "render_frames=false => skip Blender; trajectory + GT + measurements only (synthetic-frontend ready).",
+      "earth_mode": "off",
+      "stars_mode": "off",
+      "enable_blur": "off",
+      "enable_glare": "off",
+      "render_frames": false,
+      "generate_video": false,
+      "video_fps": 10
+    },
+    "trajectory_type": "trajectory_generator",
+    "trajectory": {
+      "_comment": "EXPERIMENT LEVERS live here. See _template_notes.experiment_levers above.",
+      "path_mode": "tumbling",
+      "seed": 1462526110,
+      "illumination_seed": 647817024,
+      "num_agents": 1,
+      "num_mc": 1,
+      "R0_const": 100.0,
+      "tend": 500.0,
+      "tstep": 0.1,
+      "omega_min_deg": 1.0,
+      "omega_max_deg": 3.0,
+      "r_AG_G": [
+        0.1,
+        0.05,
+        0.15
+      ],
+      "tumbling_span_frac": 0.20,
+      "camera_lookat_mode": "I",
+      "SUN_ALIGN_ENABLE": true,
+      "SUN_ALIGN_CONE_DEG": 12.0,
+      "SUN_ALIGN_JITTER_D": 4.0,
+      "EARTH_BACKGROUND_ENABLE": false,
+      "mu_ref": 398600441800000.0,
+      "h_orbit": 550000.0,
+      "R_earth": 6371000.0,
+      "IMAGE_MAX_DT_S": 0.1,
+      "MIN_F2F_PX_MED": 3.0,
+      "inertia_config": {
+        "_comment": "Inertia-observability lever. 'custom' diagonal is cleanest. These values = anisotropic (well-separated) => strong observability. For a weak-observability (near-spherical) regime set Jx~Jy~Jz.",
+        "inertia_type": "custom",
+        "Jx": 0.273,
+        "Jy": 0.26,
+        "Jz": 0.16
+      }
+    },
+    "save_depth": false,
+    "save_normals": false,
+    "save_optical_flow": false,
+    "save_segmentation": false,
+    "save_obj_poses": false,
+    "save_scene_plots": false,
+    "frame_ids": null,
+    "selected_model": "RF_Hubble",
+    "model_scale_xyz": [
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "sweep_parameters": {},
+  "_example_sweep_parameters": {
+    "_comment": "Move into 'sweep_parameters' (and delete this key) to sweep. Cartesian product over all listed paths.",
+    "trajectory.path_mode": [
+      "tumbling",
+      "inertial"
+    ],
+    "trajectory.omega_max_deg": [
+      1.5,
+      3.0,
+      5.0
+    ],
+    "trajectory.inertia_config": [
+      {
+        "inertia_type": "custom",
+        "Jx": 0.273,
+        "Jy": 0.26,
+        "Jz": 0.16
+      },
+      {
+        "inertia_type": "custom",
+        "Jx": 0.2,
+        "Jy": 0.2,
+        "Jz": 0.2
+      }
+    ]
+  }
+}

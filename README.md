@@ -6,6 +6,11 @@ SISIFOS can be used with spacecraft models from sources such as **ESA SciFleet**
 
 This project is an independent research tool and is **not affiliated with, endorsed by, or sponsored by** NASA, ESA, or any other organization.
 
+> **Generating datasets for SatSLAM?** See the dedicated runbook
+> [docs/satslam-dataset-generation.md](docs/satslam-dataset-generation.md) — per-model
+> inertia/focal/range setup, the clean-foreground render recipe, common-seed multi-model
+> generation, the resume/merge tooling, and how SatSLAM consumes the output.
+
 ## Quick start
 
 ### 1) Setup & Activate Environment

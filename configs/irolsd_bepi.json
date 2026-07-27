@@ -1,0 +1,61 @@
+{
+  "_notes": "IRoLSD training-data render config: BEPICOLOMBO fixed-pose/swept-Sun + depth. trajectory_type='filepath' consumes a camera_traj.csv produced by scripts/irolsd/gen_fixedpose_sweptsun.py (pose held fixed per group, Sun swept). Earth+stars OFF => depth is spacecraft-only (paper Eq. 24) and background depth = -1. save_depth ON. Crop 1024x1024 (>=480 for label-gen; even dims). Range is set on the GENERATOR (--range), not here; trajectory_filepath must point at the Agent_0 dir the generator wrote. render_frames must be TRUE (set by the render driver).",
+  "base_config": {
+    "scene_blend_path": "assets/scene.blend",
+    "hdri_path": "assets/starmap_2020_16k.exr",
+    "objects": {
+      "Target": {
+        "name": "Target",
+        "blend_path": "assets/spacecraft_models_0_51.blend"
+      },
+      "Earth": {
+        "name": "Earth",
+        "blend_path": "assets/Earth.blend",
+        "scale_factor": 10.0
+      },
+      "Clouds": { "name": "Clouds", "blend_path": null, "scale_factor": 10.0 },
+      "Atmo": { "name": "Atmo", "blend_path": null, "scale_factor": 10.0 }
+    },
+    "camera": {
+      "_notes": "MATCHES full/bepi-5000-s1 (the reference domain the frontend sees): 80mm / 6.469um px / 1024^2 native, f_px=12367. At range ~68m Bepi fills ~55% of frame, well-lit with clear structural lines. Do NOT swap back to the wide 25mm template lens (Bepi came out tiny + dark).",
+      "focal_length": 80.0,
+      "pixel_size_um": 6.469,
+      "resolution": [1024, 1024],
+      "f_number": 2.8,
+      "psf_fwhm_px": 0.68,
+      "wavelength_nm": 550.0,
+      "sensor_fit": "HORIZONTAL",
+      "clip_start": 1e-05,
+      "clip_end": 5000000.0,
+      "lens_flare": 0.01,
+      "exposure_time_s": 0.05555556
+    },
+    "render": {
+      "engine": "CYCLES",
+      "samples": 32,
+      "earth_dist_scale_factor": 0.001,
+      "crop_to_border_px": null
+    },
+    "setup": {
+      "earth_mode": "off",
+      "stars_mode": "off",
+      "enable_blur": "off",
+      "enable_glare": "off",
+      "render_frames": true,
+      "generate_video": false,
+      "video_fps": 10
+    },
+    "trajectory_type": "filepath",
+    "trajectory_filepath": "REPLACE_WITH_AGENT0_DIR",
+    "save_depth": true,
+    "save_normals": false,
+    "save_optical_flow": false,
+    "save_segmentation": true,
+    "save_obj_poses": false,
+    "save_scene_plots": false,
+    "frame_ids": null,
+    "selected_model": "RF_Bepi-mcs",
+    "model_scale_xyz": [1.0, 1.0, 1.0]
+  },
+  "sweep_parameters": {}
+}
