@@ -1,0 +1,24 @@
+# Blender-free trajectory generation (generate_trajectories.py).
+#
+#   python3 -m venv ~/.venvs/sisifos-traj
+#   ~/.venvs/sisifos-traj/bin/pip install -r requirements-trajectory.txt
+#
+# This is the whole dependency set for trajectory + ground-truth generation.
+# It deliberately omits the render-side deps in pyproject.toml (trimesh,
+# embreex, rtree, tqdm), which need a compiler and are unused without Blender.
+#
+# mathutils is Blender's math library, published standalone on PyPI as a source
+# distribution (needs a C/C++ toolchain). 5.x uses a Python 3.13+ C API, so
+# older interpreters must pin 3.3.0 — building 5.1.0 on 3.10 fails with
+# "PyLong_AsInt was not declared in this scope".
+mathutils==3.3.0; python_version < "3.13"
+mathutils>=5.1.0; python_version >= "3.13"
+
+numpy>=2.2.6
+scipy>=1.15.3
+pydantic>=2.12.5
+pyyaml>=6.0.3
+matplotlib>=3.10.8
+
+# Optional: only needed to run `pytest tests` (the Blender-only modules skip).
+# pytest>=9.0.2

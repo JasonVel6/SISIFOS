@@ -11,6 +11,10 @@ This project is an independent research tool and is **not affiliated with, endor
 > inertia/focal/range setup, the clean-foreground render recipe, common-seed multi-model
 > generation, the resume/merge tooling, and how SatSLAM consumes the output.
 
+> **Only need trajectories, not images?** `generate_trajectories.py` produces the
+> trajectory and ground-truth files without Blender — six pip packages, no GPU, no
+> `.blend` assets. See [docs/trajectory-only-generation.md](docs/trajectory-only-generation.md).
+
 ## Quick start
 
 ### 1) Setup & Activate Environment

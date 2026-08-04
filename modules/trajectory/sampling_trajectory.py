@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 from mathutils import Quaternion, Vector
 
-from modules.io_utils import ensure_dir
 from modules.log_utils import get_logger
+from modules.path_utils import ensure_dir
 from modules.trajectory.plot_figure import generate_scene_plots
 from modules.trajectory.trajectory_io import write_camera_trajectory
 from modules.trajectory.trajectory_math import (

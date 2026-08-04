@@ -1,23 +1,19 @@
 import os
 import shutil
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
-import bpy
 import matplotlib.pyplot as plt
 import numpy as np
 
 from .log_utils import get_logger
+
+# Re-exported for backwards compatibility: these live in path_utils so the
+# Blender-free entry points can use them without importing bpy.
+from .path_utils import create_image_list, ensure_dir, get_timestamp_folder  # noqa: F401
 from .vis_utils import _depth_vis_and_mask_from_rrpo, _flow_to_rgb, _id_to_color, _norm_to_rgb
 
 logger = get_logger()
-
-
-def ensure_dir(path: Path) -> Path:
-    path = Path(path)
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def format_R_RPO(value: float) -> str:
@@ -25,10 +21,6 @@ def format_R_RPO(value: float) -> str:
         return f"R{int(round(value))}"
     # one decimal place, replace '.' with 'p'
     return f"R{str(round(value, 1)).replace('.', 'p')}"
-
-
-def get_timestamp_folder():
-    return datetime.now().strftime("%Y-%m-%d_%H%M")
 
 
 def handle_gt_from_npz(
@@ -128,19 +120,6 @@ def handle_gt_from_npz(
         masked_img[mask] = rendered_img[mask]
     masked_img_path = os.path.join(masked_images_dir, raw_image_filename)
     plt.imsave(masked_img_path, masked_img)
-
-
-def create_image_list(renders_base_dir: str, timestamps: list, image_paths):
-    """
-    Create imgList.txt with timestamp-image pairs.
-    """
-    imglist_path = os.path.join(renders_base_dir, "imgList.txt")
-    with open(imglist_path, "w") as f:
-        for i in range(len(timestamps)):
-            ts = timestamps[i]
-            f.write(f"{ts:.6f} {image_paths[i]}\n")
-    logger.info("  Created: %s", imglist_path)
-    return imglist_path
 
 
 def images_to_video_blender_sequence(

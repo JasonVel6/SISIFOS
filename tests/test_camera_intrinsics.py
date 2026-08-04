@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from modules.addon_ground_truth_generation import get_camera_parameters_intrinsic
+# The GT addon imports bpy; skip outside Blender so the Blender-free trajectory
+# install can still run `pytest tests`.
+pytest.importorskip("bpy", reason="requires Blender's bpy (run via tests/run_in_blender.py)")
+
+from modules.addon_ground_truth_generation import get_camera_parameters_intrinsic  # noqa: E402
 from modules.config import CameraConfig
 
 

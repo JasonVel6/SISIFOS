@@ -7,13 +7,17 @@ Defines the configuration schema for the trajectory generator and renderer
 
 import copy
 import itertools
+from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
-spacecraft_default_filepath = "modules/spacecraft_defaults.yaml"
+# Resolve relative to this file, not the process cwd, so the package imports
+# from any working directory (entry points are run from the repo root, but
+# library consumers and Blender-free drivers are not).
+spacecraft_default_filepath = Path(__file__).resolve().parent / "spacecraft_defaults.yaml"
 with open(spacecraft_default_filepath) as f:
     spacecraft_defaults = yaml.safe_load(f)
 

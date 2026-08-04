@@ -3,9 +3,14 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pytest
 
-from main import run_sweep
-from modules.config import SweepConfig
+# main.py pulls in the renderer; skip the whole module outside Blender so the
+# Blender-free trajectory install can still run `pytest tests`.
+pytest.importorskip("bpy", reason="requires Blender's bpy (run via tests/run_in_blender.py)")
+
+from main import run_sweep  # noqa: E402
+from modules.config import SweepConfig  # noqa: E402
 
 
 class TestE2EPipeline:
