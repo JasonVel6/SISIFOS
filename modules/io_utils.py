@@ -107,8 +107,19 @@ def handle_gt_from_npz(
     #      full-frame resolution. We can't index a small image with a big mask.
     # In either case we just copy the raw render through unmasked rather than
     # crashing - the cropped onboard-style frames don't need masking anyway.
+    #   3) The beauty pass was written as scene-linear OPEN_EXR (render.output_format
+    #      = "OPEN_EXR") -> matplotlib cannot read EXR, and an 8-bit masked preview
+    #      would defeat the point of tapping linear radiance in the first place.
+    #      Masking for those runs happens downstream in the radiometric/sensor
+    #      pipeline, which consumes the raw EXR plus the Seg NPZ written above.
     ensure_dir(Path(masked_images_dir))
     rendered_img_path = os.path.join(raw_images_dir, raw_image_filename)
+    if Path(raw_image_filename).suffix.lower() != ".png":
+        logger.info(
+            "  Masked preview skipped for non-PNG beauty pass (%s); GT/Seg still written.",
+            raw_image_filename,
+        )
+        return
     rendered_img = plt.imread(rendered_img_path)
     if mask is None and "depth_map" in data:
         mask = near_mask

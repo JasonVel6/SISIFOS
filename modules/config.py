@@ -117,6 +117,22 @@ class RenderConfig(BaseModel):
 
     engine: str = "CYCLES"
     samples: int = 32
+    # Output encoding. "PNG" (default) preserves the historical behaviour: the
+    # beauty pass goes through Blender's display transform (exposure -> view
+    # transform -> sRGB -> 8-bit), which is DISPLAY-REFERRED and lossy.
+    # "OPEN_EXR" writes the scene-referred LINEAR radiance instead, taken before
+    # exposure, view transform and quantization -- verified by probe: a world at
+    # 0.25 scene-linear reads 0.249627 in EXR under both Standard and AgX and at
+    # both 0 and +2 EV, while the PNG moves 136 -> 254. Use OPEN_EXR whenever a
+    # radiometric / sensor-noise model must be applied in the correct order.
+    output_format: Literal["PNG", "OPEN_EXR"] = "PNG"
+    # Bit depth for the beauty pass. PNG accepts "8"/"16"; OPEN_EXR "16"/"32".
+    # Left None to follow the format default (8 for PNG, 32 for OPEN_EXR).
+    color_depth: Literal["8", "16", "32"] | None = None
+    # Cycles sampling seed. Blender's default is 0 with animated seed off, which
+    # is already deterministic, but pin it explicitly so reproducibility does not
+    # depend on an unstated default.
+    cycles_seed: int = 0
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
     # Optional fixed centered render crop. When set, Cycles renders only a

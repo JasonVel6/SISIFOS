@@ -77,6 +77,11 @@ class BlenderRenderer:
             len(list(root.children_recursive)),
         )
 
+    @property
+    def _beauty_ext(self) -> str:
+        """File extension Blender appends for the configured beauty format."""
+        return ".exr" if self.config.render.output_format == "OPEN_EXR" else ".png"
+
     def setup_total(self):
         self._log_info("Loading scene: %s", self.config.scene_blend_path)
         bpy.ops.wm.open_mainfile(filepath=self.config.scene_blend_path)
@@ -91,6 +96,30 @@ class BlenderRenderer:
         self.scene.render.engine = self.config.render.engine
         self.scene.cycles.samples = self.config.render.samples
         self.scene.render.resolution_x, self.scene.render.resolution_y = self.config.camera.resolution
+
+        # Beauty-pass encoding. Default "PNG" reproduces the historical
+        # display-referred output exactly; "OPEN_EXR" taps scene-linear radiance
+        # BEFORE the exposure/view-transform/quantization chain above, which is
+        # the only correct insertion point for a radiometric sensor model.
+        # Order matters: set the format first, then the depth, because the valid
+        # color_depth enum is format-dependent (PNG 8/16, OPEN_EXR 16/32).
+        img_settings = self.scene.render.image_settings
+        img_settings.file_format = self.config.render.output_format
+        depth = self.config.render.color_depth
+        if depth is None:
+            depth = "32" if self.config.render.output_format == "OPEN_EXR" else "8"
+        img_settings.color_depth = depth
+        self._log_info(
+            "Beauty pass: format=%s color_depth=%s (%s)",
+            self.config.render.output_format,
+            depth,
+            "scene-linear, pre-tone-map" if self.config.render.output_format == "OPEN_EXR" else "display-referred",
+        )
+
+        # Pin the sampling seed rather than relying on Blender's unstated
+        # default, so a re-render is reproducible by declaration.
+        self.scene.cycles.seed = self.config.render.cycles_seed
+        self.scene.cycles.use_animated_seed = False
 
         # Centered render-border crop. Cycles renders only the (crop_w x crop_h)
         # window centred on the principal point; the output PNG is exactly
@@ -636,7 +665,7 @@ class BlenderRenderer:
         # Restore exposure
         self.scene.view_settings.exposure = base_ev
 
-        return f"frame_{stem}.png"
+        return f"frame_{stem}{self._beauty_ext}"
 
     def render_frame_motion_blur_traj(
         self,
@@ -701,4 +730,4 @@ class BlenderRenderer:
         self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
         bpy.ops.render.render(write_still=True)
 
-        return f"frame_{stem}.png"
+        return f"frame_{stem}{self._beauty_ext}"
