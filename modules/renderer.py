@@ -121,6 +121,19 @@ class BlenderRenderer:
         self.scene.cycles.seed = self.config.render.cycles_seed
         self.scene.cycles.use_animated_seed = False
 
+        # Denoising. None leaves scene.blend's setting alone (historical
+        # behaviour: OIDN ON). Radiometric masters set it False so the beauty
+        # pass is un-filtered Monte Carlo radiance rather than a learned
+        # estimate of it.
+        if self.config.render.use_denoising is not None:
+            self.scene.cycles.use_denoising = self.config.render.use_denoising
+        self._log_info(
+            "Cycles: samples=%d seed=%d denoising=%s",
+            self.config.render.samples,
+            self.config.render.cycles_seed,
+            self.scene.cycles.use_denoising,
+        )
+
         # Centered render-border crop. Cycles renders only the (crop_w x crop_h)
         # window centred on the principal point; the output PNG is exactly
         # (crop_w, crop_h). Camera intrinsics stay full-frame; the crop origin

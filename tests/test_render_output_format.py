@@ -35,3 +35,11 @@ class TestRenderOutputFormat:
 
     def test_cycles_seed_is_settable(self):
         assert RenderConfig(cycles_seed=20260816).cycles_seed == 20260816
+
+    def test_denoising_default_defers_to_scene_blend(self):
+        """None must not silently flip the corpus's historical OIDN-on renders."""
+        assert RenderConfig().use_denoising is None
+
+    def test_denoising_can_be_disabled_for_radiometric_masters(self):
+        assert RenderConfig(use_denoising=False).use_denoising is False
+        assert RenderConfig(use_denoising=True).use_denoising is True

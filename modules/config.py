@@ -133,6 +133,15 @@ class RenderConfig(BaseModel):
     # is already deterministic, but pin it explicitly so reproducibility does not
     # depend on an unstated default.
     cycles_seed: int = 0
+    # Cycles denoising (OpenImageDenoise). scene.blend ships with this ENABLED,
+    # so every render in the existing corpus is OIDN-denoised -- the beauty pass
+    # is a learned spatial estimate of radiance, not raw radiance. That is fine
+    # for imagery but wrong as the reference for a noise study: you would be
+    # adding synthetic noise on top of an image whose spatial noise was already
+    # filtered out, in the near-black regime where the filter is least reliable.
+    # None preserves whatever scene.blend sets (historical behaviour); set False
+    # explicitly for radiometric masters.
+    use_denoising: bool | None = None
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
     # Optional fixed centered render crop. When set, Cycles renders only a
