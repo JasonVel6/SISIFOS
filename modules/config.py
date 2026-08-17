@@ -157,6 +157,15 @@ class RenderConfig(BaseModel):
     # self-reflected light with PSF energy borrowed from neighbouring pixels.
     # Default off; enabling it costs one extra EXR per frame.
     save_prepsf_beauty: bool = False
+    # Cycles adaptive sampling. scene.blend ships this ENABLED with
+    # adaptive_threshold 0.01 and adaptive_min_samples 0, which makes `samples`
+    # a MAXIMUM rather than a count: Cycles stops sampling a pixel once its
+    # estimated noise clears the threshold. That preferentially UNDER-samples
+    # dark regions, where absolute noise is small even when relative noise is
+    # huge -- i.e. exactly the regime a shadow/noise study measures. Set False
+    # for radiometric convergence ladders so a sample count means a sample
+    # count. None preserves scene.blend's setting (historical behaviour).
+    use_adaptive_sampling: bool | None = None
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
     # Optional fixed centered render crop. When set, Cycles renders only a

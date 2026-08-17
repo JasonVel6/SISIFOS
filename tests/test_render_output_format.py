@@ -49,6 +49,14 @@ class TestRenderOutputFormat:
         assert RenderConfig().save_prepsf_beauty is False
         assert RenderConfig(save_prepsf_beauty=True).save_prepsf_beauty is True
 
+    def test_adaptive_sampling_default_preserves_scene_blend(self):
+        """None must not silently change how deeply existing renders sample."""
+        assert RenderConfig().use_adaptive_sampling is None
+
+    def test_adaptive_sampling_can_be_disabled(self):
+        """Off is required for a ladder where `samples` must mean a count."""
+        assert RenderConfig(use_adaptive_sampling=False).use_adaptive_sampling is False
+
     def test_denoising_can_be_disabled_for_radiometric_masters(self):
         assert RenderConfig(use_denoising=False).use_denoising is False
         assert RenderConfig(use_denoising=True).use_denoising is True

@@ -127,11 +127,20 @@ class BlenderRenderer:
         # estimate of it.
         if self.config.render.use_denoising is not None:
             self.scene.cycles.use_denoising = self.config.render.use_denoising
+        if self.config.render.use_adaptive_sampling is not None:
+            self.scene.cycles.use_adaptive_sampling = self.config.render.use_adaptive_sampling
+        # Log the RESOLVED values, not the requested ones: with adaptive
+        # sampling on, `samples` is only an upper bound and the log would
+        # otherwise overstate how deeply the frame was actually sampled.
         self._log_info(
-            "Cycles: samples=%d seed=%d denoising=%s",
-            self.config.render.samples,
-            self.config.render.cycles_seed,
+            "Cycles RESOLVED: samples=%d seed=%d denoising=%s adaptive=%s "
+            "adaptive_threshold=%g adaptive_min_samples=%d",
+            self.scene.cycles.samples,
+            self.scene.cycles.seed,
             self.scene.cycles.use_denoising,
+            self.scene.cycles.use_adaptive_sampling,
+            self.scene.cycles.adaptive_threshold,
+            self.scene.cycles.adaptive_min_samples,
         )
 
         # Centered render-border crop. Cycles renders only the (crop_w x crop_h)
