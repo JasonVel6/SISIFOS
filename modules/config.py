@@ -150,6 +150,13 @@ class RenderConfig(BaseModel):
     # illumination-support mask: a dark material in full sun is still "lit",
     # and a bright material in shadow is still "unlit".
     save_light_passes: bool = False
+    # Raw combined image straight off Render Layers, i.e. BEFORE the compositor
+    # PSF blur and glare. Differencing it against the composited beauty pass is
+    # the only way to separate optical spill from genuine indirect illumination:
+    # "beauty > 0 but no direct light" otherwise conflates physically valid
+    # self-reflected light with PSF energy borrowed from neighbouring pixels.
+    # Default off; enabling it costs one extra EXR per frame.
+    save_prepsf_beauty: bool = False
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
     # Optional fixed centered render crop. When set, Cycles renders only a

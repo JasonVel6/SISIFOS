@@ -45,6 +45,10 @@ class TestRenderOutputFormat:
         assert RenderConfig().save_light_passes is False
         assert RenderConfig(save_light_passes=True).save_light_passes is True
 
+    def test_prepsf_beauty_is_opt_in(self):
+        assert RenderConfig().save_prepsf_beauty is False
+        assert RenderConfig(save_prepsf_beauty=True).save_prepsf_beauty is True
+
     def test_denoising_can_be_disabled_for_radiometric_masters(self):
         assert RenderConfig(use_denoising=False).use_denoising is False
         assert RenderConfig(use_denoising=True).use_denoising is True

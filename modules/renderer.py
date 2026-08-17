@@ -349,10 +349,9 @@ class BlenderRenderer:
         # bleed as "illuminated". These sockets carry the light actually
         # delivered to the surface.
         self._light_pass_node = None
-        if self.config.render.save_light_passes:
-            view_layer = self.scene.view_layers[0]
-            view_layer.use_pass_diffuse_direct = True
-            view_layer.use_pass_glossy_direct = True
+        want_light = self.config.render.save_light_passes
+        want_prepsf = self.config.render.save_prepsf_beauty
+        if want_light or want_prepsf:
             lp = c_nodes.new("CompositorNodeOutputFile")
             lp.name = "output_light_passes"
             lp.label = "output_light_passes"
@@ -361,11 +360,25 @@ class BlenderRenderer:
             lp.format.color_depth = "32"
             lp.format.color_mode = "RGB"
             lp.file_slots.clear()
-            for socket_name in ("DiffDir", "GlossDir"):
+            slots = []
+            if want_light:
+                view_layer = self.scene.view_layers[0]
+                view_layer.use_pass_diffuse_direct = True
+                view_layer.use_pass_glossy_direct = True
+                slots += ["DiffDir", "GlossDir"]
+            if want_prepsf:
+                # The raw combined image straight off Render Layers. Differencing
+                # it against the composited beauty pass separates PSF/glare spill
+                # from light that genuinely reached the surface indirectly --
+                # "non-direct beauty" is otherwise a mixture of the two.
+                slots += ["Image"]
+            for socket_name in slots:
                 lp.file_slots.new(socket_name)
                 c_links.new(rl.outputs[socket_name], lp.inputs[socket_name])
             self._light_pass_node = lp
-            self._log_info("Light passes enabled: DiffDir + GlossDir (pre-PSF, pre-glare)")
+            self._log_info(
+                "Extra passes (pre-PSF, pre-glare): %s", ", ".join(slots)
+            )
 
         vb = self.scene.vision_blender
         vb.bool_save_depth = self.config.save_depth
