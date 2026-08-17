@@ -142,6 +142,14 @@ class RenderConfig(BaseModel):
     # None preserves whatever scene.blend sets (historical behaviour); set False
     # explicitly for radiometric masters.
     use_denoising: bool | None = None
+    # Write the direct-light passes (DiffDir, GlossDir) alongside the beauty
+    # pass. Tapped straight off Render Layers, BEFORE the compositor PSF blur,
+    # so they record where direct light was geometrically DELIVERED rather than
+    # where it ended up after ~1 px of optical bleed. In Cycles these are
+    # lighting terms unmodulated by albedo, which is what makes them a valid
+    # illumination-support mask: a dark material in full sun is still "lit",
+    # and a bright material in shadow is still "unlit".
+    save_light_passes: bool = False
     # We scale the earth and bring it closer to the camera to help rendering
     earth_dist_scale_factor: float = 0.001
     # Optional fixed centered render crop. When set, Cycles renders only a

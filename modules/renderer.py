@@ -341,6 +341,32 @@ class BlenderRenderer:
             prev_socket = glare.outputs["Image"]
 
         c_links.new(prev_socket, comp.inputs["Image"])
+
+        # Illumination-support passes, tapped from Render Layers DIRECTLY --
+        # deliberately upstream of the PSF blur and glare wired above. The blur
+        # spreads light ~1 px into geometrically shadowed pixels, so a mask
+        # derived from the composited beauty pass would count that optical
+        # bleed as "illuminated". These sockets carry the light actually
+        # delivered to the surface.
+        self._light_pass_node = None
+        if self.config.render.save_light_passes:
+            view_layer = self.scene.view_layers[0]
+            view_layer.use_pass_diffuse_direct = True
+            view_layer.use_pass_glossy_direct = True
+            lp = c_nodes.new("CompositorNodeOutputFile")
+            lp.name = "output_light_passes"
+            lp.label = "output_light_passes"
+            lp.location = (600, -400)
+            lp.format.file_format = "OPEN_EXR"
+            lp.format.color_depth = "32"
+            lp.format.color_mode = "RGB"
+            lp.file_slots.clear()
+            for socket_name in ("DiffDir", "GlossDir"):
+                lp.file_slots.new(socket_name)
+                c_links.new(rl.outputs[socket_name], lp.inputs[socket_name])
+            self._light_pass_node = lp
+            self._log_info("Light passes enabled: DiffDir + GlossDir (pre-PSF, pre-glare)")
+
         vb = self.scene.vision_blender
         vb.bool_save_depth = self.config.save_depth
         vb.bool_save_normals = self.config.save_normals
@@ -672,6 +698,10 @@ class BlenderRenderer:
         stem = f"{str(frame_id).zfill(N_digits)}"
 
         self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
+        # File Output nodes write <base_path>/<slot><frame>.exr on their own, so
+        # they only need the directory; the frame number follows frame_set().
+        if getattr(self, "_light_pass_node", None) is not None:
+            self._light_pass_node.base_path = str(output_dir.resolve() / "LightPasses")
         self.scene.frame_set(frame_id)
         bpy.ops.render.render(write_still=True)
 
@@ -741,6 +771,8 @@ class BlenderRenderer:
         # stem = f"{frame_id:04d}_{exp_tag}_{sun_tag}_{mode_suffix}"
         stem = f"{str(frame_id1).zfill(N_digits)}_blurred"
         self.scene.render.filepath = str(output_dir.resolve() / f"frame_{stem}")
+        if getattr(self, "_light_pass_node", None) is not None:
+            self._light_pass_node.base_path = str(output_dir.resolve() / "LightPasses")
         bpy.ops.render.render(write_still=True)
 
         return f"frame_{stem}{self._beauty_ext}"

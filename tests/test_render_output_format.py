@@ -40,6 +40,11 @@ class TestRenderOutputFormat:
         """None must not silently flip the corpus's historical OIDN-on renders."""
         assert RenderConfig().use_denoising is None
 
+    def test_light_passes_are_opt_in(self):
+        """Default off: existing renders must not gain extra output files."""
+        assert RenderConfig().save_light_passes is False
+        assert RenderConfig(save_light_passes=True).save_light_passes is True
+
     def test_denoising_can_be_disabled_for_radiometric_masters(self):
         assert RenderConfig(use_denoising=False).use_denoising is False
         assert RenderConfig(use_denoising=True).use_denoising is True
